@@ -22,7 +22,7 @@ On a machine that is not Unraid, create those directories or change the bind mou
 | `PORT` | `8765` | Web UI, REST and MCP |
 | `PUID` / `PGID` | `99` / `100` | Volume owner |
 | `WAKEHUB_SECRET_KEY` | generated file | Encrypts the API token and device passwords |
-| `WAKEHUB_CORS` | `*` | Browser origins allowed to call the API |
+| `WAKEHUB_CORS` | empty | Browser origins allowed to call the API. Empty blocks cross-origin calls |
 
 Config lives in `/config`. SQLite lives in `/data`.
 
@@ -32,7 +32,7 @@ Config lives in `/config`. SQLite lives in `/data`.
 
 **Community Applications.** The template is `unraid/wake-hub.xml`. Use the same appdata paths, host networking, and `NET_RAW`. The port variable is `8765`.
 
-**Update.** Pull `ghcr.io/davidmcferrin-spec/wake-hub:latest` and recreate the container. The database and key stay on the appdata share. Images are built for `linux/amd64` and `linux/arm64` by `.github/workflows/image.yml`.
+**Update.** Pull `ghcr.io/davidmcferrin-spec/wake-hub:latest` and recreate the container. The database and key stay on the appdata share. Images are built for `linux/amd64` and `linux/arm64` by `.github/workflows/image.yml`. GitHub Container Registry packages are private by default. Either make the package public or run `docker login ghcr.io` on the Unraid host before the pull.
 
 ## What you can control
 
@@ -73,7 +73,7 @@ Base URL: `http://<unraid-host>:8765`
 
 Auth: `Authorization: Bearer <token>`
 
-Copy the token from Wake Hub settings. When the UI has no password, a browser on the LAN can also read it from `GET /api/v1/ui/session`. Server-side callers should store the token themselves. Do not send PDU, AMT, JetKVM, plug or UPS passwords back out of Wake Hub; those endpoints never return them.
+The API token is printed in the container log and written to `/config/token` on startup. The web UI requires a password. On first run, enter that token plus a new password of at least 8 characters. After you sign in, Settings can show the token. `GET /api/v1/ui/session` does not return the token unless the browser already has a valid session cookie. Server-side callers should store the token themselves. Do not send PDU, AMT, JetKVM, plug or UPS passwords back out of Wake Hub; those endpoints never return them.
 
 List devices:
 
@@ -94,7 +94,7 @@ curl -s -X POST \
 
 The response includes `sent`, `reachable` and `elapsed_s`. `reachable` is `null` when the device has no host to probe.
 
-CORS: set `WAKEHUB_CORS`, or the settings page, to the origin of a browser app such as `http://192.168.1.10:8080`. `*` allows any origin. Server-side calls do not use CORS.
+CORS defaults to empty, so a web page on another origin cannot call the API. Set `WAKEHUB_CORS`, or the settings page, to the origin of a browser app such as `http://192.168.1.10:8080`. Use `*` only when you intend to allow any origin. Server-side calls do not use CORS.
 
 The same token works for MCP:
 

@@ -12,8 +12,8 @@ from typing import Any, Callable
 
 import httpx
 
-from wakehub.clients.synaccess import parse_status
-from wakehub.errors import NotFound, WakeHubError
+from wakehub.clients.synaccess import parse_status, synaccess_realm
+from wakehub.errors import Conflict, NotFound, WakeHubError
 from wakehub.hub import Hub
 from wakehub.inventory import add_device, utcnow
 from wakehub.oui import vendor
@@ -37,6 +37,9 @@ def default_cidr() -> str:
 
 
 def start_scan(hub: Hub, cidr: str | None = None, discover: Discover | None = None) -> dict[str, Any]:
+    running = hub.query_one("SELECT id FROM scans WHERE status = 'running'")
+    if running is not None:
+        raise Conflict("a scan is already running")
     network = _network(cidr or default_cidr())
     scan_id = hub.write(
         "INSERT INTO scans (cidr, status, progress, total, message, created_at) VALUES (?, 'running', 0, ?, '', ?)",
@@ -158,21 +161,29 @@ def discover_subnet(cidr: str, progress: Callable[[int, int], None]) -> list[dic
             if done % 16 == 0 or done == total:
                 progress(done, total)
     arp = _arp_table()
-    found = []
-    for ip in live:
+    for ip, mac in arp.items():
+        try:
+            if ipaddress.ip_address(ip) in network and ip not in live and mac:
+                live.append(ip)
+        except ValueError:
+            continue
+
+    def describe(ip: str) -> dict[str, Any]:
         mac = arp.get(ip, "")
         kinds, detail = _fingerprint(ip, mac)
-        found.append(
-            {
-                "ip": ip,
-                "mac": mac or None,
-                "hostname": _hostname(ip),
-                "vendor": vendor(mac),
-                "kinds": kinds,
-                "detail": detail,
-            }
-        )
-    return found
+        return {
+            "ip": ip,
+            "mac": mac or None,
+            "hostname": _hostname(ip),
+            "vendor": vendor(mac),
+            "kinds": kinds,
+            "detail": detail,
+        }
+
+    if not live:
+        return []
+    with ThreadPoolExecutor(max_workers=min(32, len(live))) as pool:
+        return list(pool.map(describe, live))
 
 
 def _network(cidr: str) -> ipaddress.IPv4Network:
@@ -201,14 +212,13 @@ def _arp_table() -> dict[str, str]:
 
 
 def _hostname(ip: str) -> str:
+    from concurrent.futures import ThreadPoolExecutor as _Pool
+
     try:
-        socket.setdefaulttimeout(0.4)
-        name = socket.gethostbyaddr(ip)[0]
-        return name
-    except OSError:
+        with _Pool(max_workers=1) as pool:
+            return pool.submit(socket.gethostbyaddr, ip).result(timeout=0.4)[0]
+    except (OSError, TimeoutError):
         return ""
-    finally:
-        socket.setdefaulttimeout(None)
 
 
 def _fingerprint(ip: str, mac: str) -> tuple[list[str], dict[str, Any]]:
@@ -241,7 +251,7 @@ def _port_open(ip: str, port: int) -> bool:
 def _http_kinds(ip: str) -> list[str]:
     kinds = []
     try:
-        with httpx.Client(timeout=0.6, verify=False) as client:
+        with httpx.Client(timeout=0.6, verify=True) as client:
             status = client.get(f"http://{ip}/device/status")
             if status.status_code == 200 and "isSetup" in status.text:
                 kinds.append("jetkvm")
@@ -249,7 +259,9 @@ def _http_kinds(ip: str) -> list[str]:
             if shelly.status_code == 200 and "gen" in shelly.text:
                 kinds.append("shelly")
             pdu = client.get(f"http://{ip}/cmd.cgi?$A5")
-            if pdu.status_code == 200:
+            if pdu.status_code == 401 and synaccess_realm(pdu.headers.get("www-authenticate", "")):
+                kinds.append("synaccess")
+            elif pdu.status_code == 200:
                 try:
                     parse_status(pdu.text)
                     kinds.append("synaccess")

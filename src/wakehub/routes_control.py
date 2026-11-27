@@ -52,6 +52,7 @@ class PduIn(BaseModel):
     host: str
     port: int = 80
     use_tls: bool = False
+    insecure_tls: bool = False
     username: str = "admin"
     password: str | None = None
     outlet_names: dict[str, str] | None = None
@@ -62,6 +63,7 @@ class PduPatch(BaseModel):
     host: str | None = None
     port: int | None = None
     use_tls: bool | None = None
+    insecure_tls: bool | None = None
     username: str | None = None
     password: str | None = None
     outlet_names: dict[str, str] | None = None
@@ -77,7 +79,7 @@ class AmtIn(BaseModel):
     host: str
     port: int | None = None
     use_tls: bool = False
-    insecure_tls: bool = True
+    insecure_tls: bool = False
     username: str = "admin"
     password: str
     device_id: int | None = None
@@ -99,7 +101,7 @@ class JetIn(BaseModel):
     host: str
     port: int | None = None
     use_tls: bool = False
-    insecure_tls: bool = True
+    insecure_tls: bool = False
     password: str | None = None
     device_id: int | None = None
 
@@ -128,6 +130,7 @@ class PlugIn(BaseModel):
     username: str = ""
     password: str | None = None
     protocol: str = "auto"
+    insecure_tls: bool = False
     switch_id: int = 0
     device_id: int | None = None
 
@@ -140,6 +143,7 @@ class PlugPatch(BaseModel):
     username: str | None = None
     password: str | None = None
     protocol: str | None = None
+    insecure_tls: bool | None = None
     switch_id: int | None = None
     device_id: int | None = None
 

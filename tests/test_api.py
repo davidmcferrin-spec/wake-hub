@@ -109,9 +109,9 @@ def test_rotate_token_and_ui_password(client, hub):
 
 
 def test_session_does_not_leak_the_token(client, hub):
+    client.headers.pop("Authorization", None)
     response = client.get("/api/v1/ui/session", headers={"Origin": "http://evil.example"})
     assert response.status_code == 401
-    body = response.json()
-    assert "token" not in body
+    assert "token" not in response.json()
     assert hub.token not in response.text
-    assert response.headers.get("access-control-allow-origin") is None
+    assert "access-control-allow-origin" not in {key.lower() for key in response.headers}

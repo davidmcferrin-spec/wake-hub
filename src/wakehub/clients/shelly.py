@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
-import ssl
-from urllib.request import HTTPDigestAuthHandler, HTTPPasswordMgrWithDefaultRealm, Request, build_opener
+
+import httpx
 
 from wakehub.errors import UpstreamError
 
@@ -40,26 +40,28 @@ def _num(value):
 
 
 class ShellyClient:
-    def __init__(self, host: str, username: str = "", password: str = "", *, port: int = 80, use_tls: bool = False, switch_id: int = 0, timeout: float = 8, poster=None):
+    def __init__(
+        self,
+        host: str,
+        username: str = "",
+        password: str = "",
+        *,
+        port: int = 80,
+        use_tls: bool = False,
+        insecure_tls: bool = False,
+        switch_id: int = 0,
+        timeout: float = 8,
+        poster=None,
+        http: httpx.Client | None = None,
+    ):
         scheme = "https" if use_tls else "http"
         self.base = f"{scheme}://{host}:{port}"
         self.switch_id = switch_id
         self._timeout = timeout
         self._poster = poster
-        if poster is None and username:
-            manager = HTTPPasswordMgrWithDefaultRealm()
-            manager.add_password(None, self.base, username, password)
-            handlers = [HTTPDigestAuthHandler(manager)]
-            if use_tls:
-                context = ssl.create_default_context()
-                context.check_hostname = False
-                context.verify_mode = ssl.CERT_NONE
-                import urllib.request
-
-                handlers.append(urllib.request.HTTPSHandler(context=context))
-            self._opener = build_opener(*handlers)
-        else:
-            self._opener = build_opener()
+        self._owns = http is None and poster is None
+        auth = httpx.DigestAuth(username, password) if username else None
+        self._http = http or httpx.Client(auth=auth, timeout=timeout, verify=not insecure_tls)
 
     def info(self) -> dict:
         return parse_shelly_info(self._json("GET", "/shelly", None))
@@ -83,15 +85,12 @@ class ShellyClient:
         if self._poster is not None:
             status, text = self._poster(method, path, raw)
         else:
-            request = Request(self.base + path, data=raw, method=method)
-            if raw is not None:
-                request.add_header("Content-Type", "application/json")
             try:
-                with self._opener.open(request, timeout=self._timeout) as response:
-                    status = response.status
-                    text = response.read().decode("utf-8", errors="replace")
-            except OSError as exc:
+                response = self._http.request(method, self.base + path, content=raw, headers={"Content-Type": "application/json"} if raw else None)
+            except httpx.HTTPError as exc:
                 raise UpstreamError(f"Shelly request failed: {exc}") from exc
+            status = response.status_code
+            text = response.text
         if status == 401:
             raise UpstreamError("Shelly rejected the digest credentials")
         if status >= 400:

@@ -163,7 +163,7 @@ class AmtClient:
         *,
         port: int = 16992,
         use_tls: bool = False,
-        insecure_tls: bool = True,
+        insecure_tls: bool = False,
         timeout: float = 15,
         poster=None,
     ):
@@ -195,8 +195,7 @@ class AmtClient:
         if action == "shutdown":
             current = self.power_state()
             if current["available"] and 12 not in current["available"]:
-                code = POWER_COMMANDS["off"]
-                action = "off"
+                raise WakeHubError("this AMT firmware does not advertise graceful shutdown")
         self._post(build_power_change(self.uri, code))
         parsed = parse_method_return(self._last_body)
         return {"action": action, "power_state": code, "return_value": parsed}

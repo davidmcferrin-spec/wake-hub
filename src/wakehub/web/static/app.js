@@ -72,12 +72,18 @@ function deviceCard(device) {
       <p class="sub">Broadcast ${escapeHtml(device.broadcast)}:${device.wol_port}</p>
       <div class="tags">${tags}</div>
       <div class="row-actions">
-        <button type="button" class="primary" data-cap="wake_device" data-id="${device.id}">Wake</button>
-        <button type="button" class="ghost" data-cap="power_action" data-id="${device.id}">Power on</button>
-        <button type="button" class="ghost" data-cap="device_status" data-id="${device.id}">Status</button>
-        <button type="button" class="ghost" data-cap="get_device" data-id="${device.id}">Edit</button>
-        <button type="button" class="ghost" data-cap="device_metrics" data-id="${device.id}">Metrics</button>
-        <button type="button" class="ghost" data-cap="set_device_enabled" data-id="${device.id}" data-enabled="${device.enabled ? "0" : "1"}">${device.enabled ? "Disable" : "Enable"}</button>
+        <label class="sub">Method <select class="method-picker" aria-label="Power method"><option value="auto">auto</option><option value="wol">wol</option><option value="pdu">pdu</option><option value="amt">amt</option><option value="jetkvm">jetkvm</option><option value="plug">plug</option><option value="ups">ups</option></select></label>
+        <input class="wake-timeout" name="timeout" type="number" placeholder="timeout" aria-label="Wake timeout">
+        <button type="button" class="primary" data-cap="wake_device" data-fields="timeout" data-id="${device.id}">Wake</button>
+        <button type="button" class="ghost" data-cap="power_action" data-fields="action,confirm,method" data-action="on" data-id="${device.id}">On</button>
+        <button type="button" class="danger" data-cap="power_action" data-fields="action,confirm,method" data-action="off" data-id="${device.id}">Off</button>
+        <button type="button" class="danger" data-cap="power_action" data-fields="action,confirm,method" data-action="cycle" data-id="${device.id}">Cycle</button>
+        <button type="button" class="danger" data-cap="power_action" data-fields="action,confirm,method" data-action="reboot" data-id="${device.id}">Reboot</button>
+        <button type="button" class="danger" data-cap="power_action" data-fields="action,confirm,method" data-action="shutdown" data-id="${device.id}">Shutdown</button>
+        <button type="button" class="ghost" data-cap="device_status" data-fields="" data-id="${device.id}">Status</button>
+        <button type="button" class="ghost" data-cap="get_device" data-fields="" data-id="${device.id}">Edit</button>
+        <button type="button" class="ghost" data-cap="device_metrics" data-fields="limit" data-id="${device.id}">Metrics</button>
+        <button type="button" class="ghost" data-cap="set_device_enabled" data-fields="enabled" data-id="${device.id}" data-enabled="${device.enabled ? "0" : "1"}">${device.enabled ? "Disable" : "Enable"}</button>
       </div>
     </article>`;
 }
@@ -148,10 +154,34 @@ function editorHtml() {
       </div>
       <label class="check"><input type="checkbox" name="enabled" ${!device || device.enabled ? "checked" : ""}> Enabled</label>
       <div class="row-actions" style="margin-top:0.8rem">
+        <div>
+          <label for="link-pdu">Linked PDU</label>
+          <input id="link-pdu" name="pdu_id" type="number" placeholder="pdu id">
+        </div>
+        <div>
+          <label for="link-outlet">Outlet</label>
+          <input id="link-outlet" name="outlet" type="number" placeholder="outlet">
+        </div>
+        <div>
+          <label for="link-amt">Linked AMT</label>
+          <input id="link-amt" name="amt_id" type="number" placeholder="amt id">
+        </div>
+        <div>
+          <label for="link-jet">Linked JetKVM</label>
+          <input id="link-jet" name="jetkvm_id" type="number" placeholder="jetkvm id">
+        </div>
+        <div>
+          <label for="link-plug">Linked plug</label>
+          <input id="link-plug" name="plug_id" type="number" placeholder="plug id">
+        </div>
+        <div>
+          <label for="link-ups">Linked UPS</label>
+          <input id="link-ups" name="ups_id" type="number" placeholder="ups id">
+        </div>
         ${device
-          ? `<button type="submit" data-cap="update_device">Save</button>`
-          : `<button type="submit" data-cap="add_device">Add device</button>`}
-        ${device ? `<button type="button" class="danger" data-cap="remove_device" data-id="${device.id}">Remove</button>` : ""}
+          ? `<button type="submit" data-cap="update_device" data-fields="broadcast,enabled,host,mac,methods,name,notes,reach_mode,reach_port,reach_timeout,secureon,tags,wake_strategy,wol_port">Save</button>`
+          : `<button type="submit" data-cap="add_device" data-fields="broadcast,enabled,host,mac,methods,name,notes,reach_mode,reach_port,reach_timeout,secureon,tags,wake_strategy,wol_port">Add device</button>`}
+        ${device ? `<button type="button" class="danger" data-cap="remove_device" data-fields="" data-id="${device.id}">Remove</button>` : ""}
         <button type="button" class="ghost" id="close-editor">Close</button>
       </div>
     </form>`;
@@ -161,8 +191,13 @@ function renderDevices() {
   const cards = state.devices.map(deviceCard).join("") || `<div class="empty">No devices yet. Add one, then send a magic packet.</div>`;
   $("view").innerHTML = `
     <div class="toolbar">
+      <form id="filter-form" class="inline">
+        <input name="q" placeholder="Search" aria-label="Search">
+        <input name="tag" placeholder="Tag" aria-label="Tag">
+        <button type="submit" data-cap="list_devices" data-fields="q,tag">Filter</button>
+      </form>
       <button type="button" class="primary" id="new-device">Add device</button>
-      <button type="button" class="ghost" data-cap="list_status">Refresh status</button>
+      <button type="button" class="ghost" data-cap="list_status" data-fields="">Refresh status</button>
     </div>
     <section class="grid">${cards}</section>
     ${state.metrics && state.metrics.length && typeof sparkline === "function" ? `<div class="card">${sparkline(state.metrics)}</div>` : ""}
@@ -179,21 +214,30 @@ function renderHistory() {
       <td>${item.ok ? "ok" : "failed"}</td>
       <td>${escapeHtml(item.detail)}</td>
     </tr>`).join("");
-  $("view").innerHTML = rows
-    ? `<table><thead><tr><th>Time</th><th>Source</th><th>Target</th><th>Action</th><th>Result</th><th>Detail</th></tr></thead><tbody>${rows}</tbody></table>`
-    : `<div class="empty">No power actions yet.</div>`;
+  $("view").innerHTML = `
+    <form id="history-form" class="toolbar">
+      <input name="device_id" type="number" placeholder="device id" aria-label="Device id">
+      <input name="limit" type="number" value="100" aria-label="Limit">
+      <button type="submit" data-cap="list_actions" data-fields="device_id,limit">Refresh log</button>
+    </form>
+    ${rows
+      ? `<table><thead><tr><th>Time</th><th>Source</th><th>Target</th><th>Action</th><th>Result</th><th>Detail</th></tr></thead><tbody>${rows}</tbody></table>`
+      : `<div class="empty">No power actions yet.</div>`}`;
 }
 
 function renderSettings() {
   const settings = state.settings || { ui_password_set: false, cors_origins: [] };
   $("view").innerHTML = `
-    <section class="panel" style="padding:1rem" data-cap="get_access_token">
+    <section class="panel" style="padding:1rem" data-cap="get_settings" data-fields="">
+      <h2>Browser access</h2>
+    </section>
+    <section class="panel" style="padding:1rem" data-cap="get_access_token" data-fields="">
       <h2>API token</h2>
       <p class="lede">The REST API and MCP both require this bearer token. It is shown here because the UI is the place you copy it from.</p>
       <p class="token" id="token-value">${escapeHtml(state.token)}</p>
       <div class="row-actions">
         <button type="button" class="ghost" id="copy-token">Copy</button>
-        <button type="button" class="danger" data-cap="rotate_token">Rotate token</button>
+        <button type="button" class="danger" data-cap="rotate_token" data-fields="">Rotate token</button>
       </div>
     </section>
     <form id="settings-form" class="editor">
@@ -208,7 +252,7 @@ function renderSettings() {
       <input id="retention" name="metrics_retention_days" type="number" value="${settings.metrics_retention_days || 30}">
       <label class="check"><input type="checkbox" name="clear_ui_password"> Remove the UI password</label>
       <div class="row-actions" style="margin-top:0.8rem">
-        <button type="submit" data-cap="update_settings">Save settings</button>
+        <button type="submit" data-cap="update_settings" data-fields="clear_ui_password,cors_origins,metrics_poll_seconds,metrics_retention_days,ui_password">Save settings</button>
       </div>
     </form>`;
 }
@@ -263,6 +307,16 @@ function formData(form) {
   return Object.fromEntries(new FormData(form).entries());
 }
 
+function linkedMethods(data) {
+  const methods = [{ kind: "wol" }];
+  if (data.pdu_id) methods.push({ kind: "pdu", pdu_id: Number(data.pdu_id), outlet: Number(data.outlet || 1) });
+  if (data.amt_id) methods.push({ kind: "amt", amt_id: Number(data.amt_id) });
+  if (data.jetkvm_id) methods.push({ kind: "jetkvm", jetkvm_id: Number(data.jetkvm_id) });
+  if (data.plug_id) methods.push({ kind: "plug", plug_id: Number(data.plug_id) });
+  if (data.ups_id) methods.push({ kind: "ups", ups_id: Number(data.ups_id) });
+  return methods;
+}
+
 function devicePayload(form) {
   const data = formData(form);
   const tags = data.tags ? data.tags.split(",").map((item) => item.trim()).filter(Boolean) : [];
@@ -275,6 +329,7 @@ function devicePayload(form) {
     notes: data.notes || "",
     tags,
     enabled: form.elements.enabled.checked,
+    methods: linkedMethods(data),
     reach_mode: data.reach_mode,
     reach_port: data.reach_port ? Number(data.reach_port) : null,
     reach_timeout: Number(data.reach_timeout || 30),
@@ -465,7 +520,19 @@ async function boot() {
 }
 
 document.body.addEventListener("click", (event) => {
-  onClick(event).catch((error) => showBanner(error.message, true));
+  const nav = event.target.closest("[data-page]");
+  if (nav && nav.closest("aside")) {
+    show(nav.dataset.page).catch((error) => showBanner(error.message, true));
+    return;
+  }
+  const control = event.target.closest("[data-cap]");
+  if (!control || control.type === "submit") return;
+  const handler = window.CONTROL_HANDLERS && window.CONTROL_HANDLERS[control.dataset.cap];
+  if (!handler) {
+    onClick(event).catch((error) => showBanner(error.message, true));
+    return;
+  }
+  Promise.resolve(handler(control)).catch((error) => showBanner(error.message, true));
 });
 document.body.addEventListener("submit", (event) => {
   onSubmit(event).catch((error) => showBanner(error.message, true));

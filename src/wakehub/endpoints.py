@@ -14,7 +14,7 @@ from wakehub.clients.ups import PysnmpTransport, UpsClient
 from wakehub.crypto import decrypt, encrypt
 from wakehub.errors import NotFound, WakeHubError
 from wakehub.hub import Hub
-from wakehub.inventory import utcnow
+from wakehub.inventory import utcnow, validate_host
 
 TABLES = {
     "pdu": "pdus",
@@ -58,6 +58,7 @@ def public_pdu(row) -> dict[str, Any]:
         "host": row["host"],
         "port": row["port"],
         "use_tls": bool(row["use_tls"]),
+        "insecure_tls": bool(row["insecure_tls"]),
         "username": row["username"],
         "password_set": bool(row["password_enc"]),
         "outlet_names": json.loads(row["outlet_names"]),
@@ -107,6 +108,7 @@ def public_plug(row) -> dict[str, Any]:
         "port": row["port"],
         "username": row["username"],
         "password_set": bool(row["password_enc"]),
+        "insecure_tls": bool(row["insecure_tls"]),
         "protocol": row["protocol"],
         "switch_id": row["switch_id"],
         "device_id": row["device_id"],
@@ -141,9 +143,9 @@ def _console(row) -> str:
 
 def _require_host(payload: dict[str, Any]) -> str:
     host = (payload.get("host") or "").strip()
-    if not host or any(ch.isspace() for ch in host):
+    if not host:
         raise WakeHubError("host is required")
-    return host
+    return validate_host(host)
 
 
 def _require_name(payload: dict[str, Any]) -> str:
@@ -164,6 +166,7 @@ def add_pdu(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
             "host": _require_host(payload),
             "port": int(payload.get("port") or 80),
             "use_tls": 1 if payload.get("use_tls") else 0,
+            "insecure_tls": 1 if payload.get("insecure_tls") else 0,
             "username": payload.get("username") or "admin",
             "password_enc": _secret(hub, payload.get("password")),
             "outlet_names": json.dumps(payload.get("outlet_names") or {}),
@@ -171,10 +174,10 @@ def add_pdu(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
     )
     item_id = hub.write(
         """
-        INSERT INTO pdus (name, host, port, use_tls, username, password_enc, outlet_names, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO pdus (name, host, port, use_tls, insecure_tls, username, password_enc, outlet_names, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        tuple(fields[key] for key in ("name", "host", "port", "use_tls", "username", "password_enc", "outlet_names", "created_at", "updated_at")),
+        tuple(fields[key] for key in ("name", "host", "port", "use_tls", "insecure_tls", "username", "password_enc", "outlet_names", "created_at", "updated_at")),
     )
     return public_pdu(_row(hub, "pdu", item_id))
 
@@ -187,7 +190,7 @@ def update_pdu(hub: Hub, pdu_id: int, payload: dict[str, Any]) -> dict[str, Any]
     names = payload.get("outlet_names")
     hub.write(
         """
-        UPDATE pdus SET name=?, host=?, port=?, use_tls=?, username=?, password_enc=?, outlet_names=?, updated_at=?
+        UPDATE pdus SET name=?, host=?, port=?, use_tls=?, insecure_tls=?, username=?, password_enc=?, outlet_names=?, updated_at=?
         WHERE id=?
         """,
         (
@@ -195,6 +198,7 @@ def update_pdu(hub: Hub, pdu_id: int, payload: dict[str, Any]) -> dict[str, Any]
             payload.get("host") or current["host"],
             int(payload.get("port") if payload.get("port") is not None else current["port"]),
             int(payload["use_tls"]) if "use_tls" in payload else current["use_tls"],
+            int(payload["insecure_tls"]) if "insecure_tls" in payload else current["insecure_tls"],
             payload.get("username") if payload.get("username") is not None else current["username"],
             password,
             json.dumps(names) if names is not None else current["outlet_names"],
@@ -218,6 +222,7 @@ def pdu_client(hub: Hub, pdu_id: int) -> tuple[Any, SynaccessClient]:
         _plain(hub, row["password_enc"]),
         port=row["port"],
         use_tls=bool(row["use_tls"]),
+        insecure_tls=bool(row["insecure_tls"]),
     )
     return row, client
 
@@ -235,7 +240,7 @@ def add_amt(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
             "host": _require_host(payload),
             "port": int(payload.get("port") or (16993 if payload.get("use_tls") else 16992)),
             "use_tls": 1 if payload.get("use_tls") else 0,
-            "insecure_tls": 0 if payload.get("insecure_tls") is False else 1,
+            "insecure_tls": 1 if payload.get("insecure_tls") else 0,
             "username": payload.get("username") or "admin",
             "password_enc": _secret(hub, payload.get("password")),
             "device_id": payload.get("device_id"),
@@ -320,7 +325,7 @@ def add_jetkvm(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
             "host": _require_host(payload),
             "port": int(payload.get("port") or (443 if payload.get("use_tls") else 80)),
             "use_tls": 1 if payload.get("use_tls") else 0,
-            "insecure_tls": 0 if payload.get("insecure_tls") is False else 1,
+            "insecure_tls": 1 if payload.get("insecure_tls") else 0,
             "password_enc": _secret(hub, payload.get("password")),
             "device_id": payload.get("device_id"),
         }
@@ -408,6 +413,7 @@ def add_plug(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
             "port": int(payload.get("port") or 80),
             "username": payload.get("username") or "",
             "password_enc": _secret(hub, payload.get("password")),
+            "insecure_tls": 1 if payload.get("insecure_tls") else 0,
             "protocol": protocol,
             "switch_id": int(payload.get("switch_id") or 0),
             "device_id": payload.get("device_id"),
@@ -416,8 +422,8 @@ def add_plug(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
     item_id = hub.write(
         """
         INSERT INTO plugs (
-            name, kind, host, port, username, password_enc, protocol, switch_id, device_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            name, kind, host, port, username, password_enc, insecure_tls, protocol, switch_id, device_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             fields["name"],
@@ -426,6 +432,7 @@ def add_plug(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
             fields["port"],
             fields["username"],
             fields["password_enc"],
+            fields["insecure_tls"],
             fields["protocol"],
             fields["switch_id"],
             fields["device_id"],
@@ -446,7 +453,7 @@ def update_plug(hub: Hub, plug_id: int, payload: dict[str, Any]) -> dict[str, An
     hub.write(
         """
         UPDATE plugs
-        SET name=?, kind=?, host=?, port=?, username=?, password_enc=?, protocol=?, switch_id=?, device_id=?, updated_at=?
+        SET name=?, kind=?, host=?, port=?, username=?, password_enc=?, insecure_tls=?, protocol=?, switch_id=?, device_id=?, updated_at=?
         WHERE id=?
         """,
         (
@@ -456,6 +463,7 @@ def update_plug(hub: Hub, plug_id: int, payload: dict[str, Any]) -> dict[str, An
             int(payload.get("port") if payload.get("port") is not None else current["port"]),
             payload.get("username") if payload.get("username") is not None else current["username"],
             password,
+            int(payload["insecure_tls"]) if "insecure_tls" in payload else current["insecure_tls"],
             payload.get("protocol") or current["protocol"],
             int(payload.get("switch_id") if payload.get("switch_id") is not None else current["switch_id"]),
             payload["device_id"] if "device_id" in payload else current["device_id"],
@@ -475,7 +483,14 @@ def plug_client(hub: Hub, plug_id: int):
     row = _row(hub, "plug", plug_id)
     password = _plain(hub, row["password_enc"])
     if row["kind"] == "shelly":
-        client = ShellyClient(row["host"], row["username"], password, port=row["port"], switch_id=row["switch_id"])
+        client = ShellyClient(
+            row["host"],
+            row["username"],
+            password,
+            port=row["port"],
+            switch_id=row["switch_id"],
+            insecure_tls=bool(row["insecure_tls"]),
+        )
     elif row["kind"] == "kasa":
         client = KasaClient(row["host"], row["username"], password, protocol=row["protocol"], port=row["port"])
     else:

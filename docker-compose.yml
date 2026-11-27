@@ -1,5 +1,4 @@
-# Host networking is required so Wake-on-LAN broadcasts leave the container
-# and ARP discovery can see the LAN.
+# Host networking is required so Wake-on-LAN broadcasts and ARP discovery reach the LAN.
 services:
   wake-hub:
     build: .

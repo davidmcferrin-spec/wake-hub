@@ -254,7 +254,7 @@ def create_app(hub: Hub) -> FastAPI:
         title="Wake Hub",
         version=__version__,
         lifespan=lifespan,
-        summary="LAN power control for Wake-on-LAN. PDU, AMT, JetKVM, plugs and UPS land in the next change.",
+        summary="LAN power control for Wake-on-LAN, Synaccess, Intel AMT, JetKVM, Shelly, Kasa and CyberPower UPS.",
         description=(
             "Versioned REST API at /api/v1. Send Authorization: Bearer <token>. "
             "The token is written to /config/token and the container log. "

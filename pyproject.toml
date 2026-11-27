@@ -13,6 +13,8 @@ dependencies = [
   "cryptography>=43",
   "pydantic>=2.9",
   "pysnmp>=7.1",
+  "aiortc>=1.9",
+  "websockets>=13",
 ]
 
 [project.optional-dependencies]

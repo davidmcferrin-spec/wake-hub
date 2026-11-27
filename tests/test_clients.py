@@ -8,7 +8,9 @@ from wakehub.clients.kasa import (
     KlapSession,
     auth_hash_v1,
     handshake1_hash,
+    handshake1_hash_v1,
     handshake2_hash,
+    handshake2_hash_v1,
     parse_energy,
     parse_sysinfo,
     xor_decrypt,
@@ -31,6 +33,10 @@ def test_synaccess_np1601_status_is_bank_current():
     assert len(status.outlets) == 16
     assert status.bank_amps == (1.20, 0.40)
     assert status.temperature_c == 27
+    prefixed = parse_status("$A0,0000000000000011,1.20,0.40,XX")
+    assert prefixed.outlets[0].on is True
+    assert prefixed.bank_amps == (1.20, 0.40)
+    assert prefixed.temperature_c is None
     parse_result("$A0\n")
     client = SynaccessClient(
         "10.0.0.5",
@@ -103,6 +109,8 @@ def test_kasa_xor_and_klap_vectors():
     assert auth.hex() == "9d6ce791ce44316e9e52fc1bc9d36496"
     assert handshake1_hash(local, remote, auth).hex() == "e13bb39c47f0a7bbd9356ee8b3468778ee6209f3864071128b5248231c1aa3a8"
     assert handshake2_hash(local, remote, auth).hex() == "8aaef31a1dbfb44003d8667c6ae190c10e406e2dfbc7d408cf70fb40b32cc01a"
+    assert handshake1_hash_v1(local, remote, auth) == __import__("hashlib").sha256(local + auth).digest()
+    assert handshake2_hash_v1(local, remote, auth) == __import__("hashlib").sha256(remote + auth).digest()
     session = KlapSession.derive(local, remote, auth)
     assert session.key.hex() == "98168e67f7beab02d61ea5a81aee8628"
     sequence, blob = session.encrypt(b'{"system":{"set_relay_state":{"state":1}}}')
@@ -130,7 +138,8 @@ def test_ups_mib_scaling_and_destructive_commands():
     assert status["current_a"] == 2.1
     assert status["power_w"] == 240
     graceful = command_set("shutdown", delay_seconds=60)
-    assert graceful[0] == (OIDS["shutoff_delay"], 6000)
-    assert graceful[1] == (OIDS["ups_off"], 3)
-    assert command_set("turn_off") == [(OIDS["ups_off"], 2)]
+    assert graceful[0] == (OIDS["shutoff_delay"], 6000, "TimeTicks")
+    assert graceful[1] == (OIDS["ups_off"], 3, "Integer")
+    assert command_set("turn_off") == [(OIDS["ups_off"], 2, "Integer")]
     assert command_set("outlet_off", outlet=2)[0][1] == 2
+    assert status["runtime_raw"]["value"] == 180000

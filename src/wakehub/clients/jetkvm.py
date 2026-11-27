@@ -97,7 +97,7 @@ class JetKvmClient:
         *,
         port: int = 80,
         use_tls: bool = False,
-        insecure_tls: bool = True,
+        insecure_tls: bool = False,
         timeout: float = 8,
         http: httpx.Client | None = None,
         rpc=None,

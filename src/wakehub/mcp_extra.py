@@ -22,15 +22,15 @@ def register(server) -> None:
 
     @server.tool()
     @expose
-    def add_pdu(name: str, host: str, username: str = "admin", password: str = "", port: int = 80, use_tls: bool = False) -> dict[str, Any]:
-        """Add a Synaccess netBooter by IP. The password is stored encrypted."""
-        return ends.add_pdu(get_hub(), {"name": name, "host": host, "username": username, "password": password, "port": port, "use_tls": use_tls})
+    def add_pdu(name: str, host: str, username: str = "admin", password: str = "", port: int = 80, use_tls: bool = False, insecure_tls: bool = False, outlet_names: dict[str, str] | None = None) -> dict[str, Any]:
+        """Add a Synaccess netBooter by IP. The password is stored encrypted. insecure_tls skips certificate checks for that PDU only."""
+        return ends.add_pdu(get_hub(), {"name": name, "host": host, "username": username, "password": password, "port": port, "use_tls": use_tls, "insecure_tls": insecure_tls, "outlet_names": outlet_names})
 
     @server.tool()
     @expose
-    def update_pdu(pdu_id: int, name: str | None = None, host: str | None = None, username: str | None = None, password: str | None = None, port: int | None = None) -> dict[str, Any]:
+    def update_pdu(pdu_id: int, name: str | None = None, host: str | None = None, username: str | None = None, password: str | None = None, port: int | None = None, use_tls: bool | None = None, insecure_tls: bool | None = None, outlet_names: dict[str, str] | None = None) -> dict[str, Any]:
         """Edit a PDU. Omit a field to leave it unchanged."""
-        payload = {key: value for key, value in {"name": name, "host": host, "username": username, "password": password, "port": port}.items() if value is not None}
+        payload = {key: value for key, value in {"name": name, "host": host, "username": username, "password": password, "port": port, "use_tls": use_tls, "insecure_tls": insecure_tls, "outlet_names": outlet_names}.items() if value is not None}
         return ends.update_pdu(get_hub(), pdu_id, payload)
 
     @server.tool()
@@ -60,15 +60,15 @@ def register(server) -> None:
 
     @server.tool()
     @expose
-    def add_amt(name: str, host: str, password: str, username: str = "admin", port: int | None = None, use_tls: bool = False, insecure_tls: bool = True, device_id: int | None = None) -> dict[str, Any]:
+    def add_amt(name: str, host: str, password: str, username: str = "admin", port: int | None = None, use_tls: bool = False, insecure_tls: bool = False, device_id: int | None = None) -> dict[str, Any]:
         """Add an Intel AMT or vPro endpoint. Port 16992 is HTTP and 16993 is TLS. insecure_tls allows that device's self-signed certificate."""
         return ends.add_amt(get_hub(), {"name": name, "host": host, "password": password, "username": username, "port": port, "use_tls": use_tls, "insecure_tls": insecure_tls, "device_id": device_id})
 
     @server.tool()
     @expose
-    def update_amt(amt_id: int, name: str | None = None, host: str | None = None, password: str | None = None, port: int | None = None, device_id: int | None = None) -> dict[str, Any]:
+    def update_amt(amt_id: int, name: str | None = None, host: str | None = None, password: str | None = None, port: int | None = None, use_tls: bool | None = None, insecure_tls: bool | None = None, username: str | None = None, device_id: int | None = None) -> dict[str, Any]:
         """Edit an AMT endpoint."""
-        payload = {key: value for key, value in {"name": name, "host": host, "password": password, "port": port, "device_id": device_id}.items() if value is not None}
+        payload = {key: value for key, value in {"name": name, "host": host, "password": password, "port": port, "use_tls": use_tls, "insecure_tls": insecure_tls, "username": username, "device_id": device_id}.items() if value is not None}
         return ends.update_amt(get_hub(), amt_id, payload)
 
     @server.tool()
@@ -92,15 +92,15 @@ def register(server) -> None:
 
     @server.tool()
     @expose
-    def add_jetkvm(name: str, host: str, password: str = "", port: int | None = None, use_tls: bool = False, device_id: int | None = None) -> dict[str, Any]:
-        """Add a JetKVM by IP. Leave password empty when the device is in no-password mode."""
-        return ends.add_jetkvm(get_hub(), {"name": name, "host": host, "password": password, "port": port, "use_tls": use_tls, "device_id": device_id})
+    def add_jetkvm(name: str, host: str, password: str = "", port: int | None = None, use_tls: bool = False, insecure_tls: bool = False, device_id: int | None = None) -> dict[str, Any]:
+        """Add a JetKVM by IP. Leave password empty when the device is in no-password mode. insecure_tls skips certificate checks for that device only."""
+        return ends.add_jetkvm(get_hub(), {"name": name, "host": host, "password": password, "port": port, "use_tls": use_tls, "insecure_tls": insecure_tls, "device_id": device_id})
 
     @server.tool()
     @expose
-    def update_jetkvm(jetkvm_id: int, name: str | None = None, host: str | None = None, password: str | None = None, port: int | None = None, device_id: int | None = None) -> dict[str, Any]:
+    def update_jetkvm(jetkvm_id: int, name: str | None = None, host: str | None = None, password: str | None = None, port: int | None = None, use_tls: bool | None = None, insecure_tls: bool | None = None, device_id: int | None = None) -> dict[str, Any]:
         """Edit a JetKVM endpoint."""
-        payload = {key: value for key, value in {"name": name, "host": host, "password": password, "port": port, "device_id": device_id}.items() if value is not None}
+        payload = {key: value for key, value in {"name": name, "host": host, "password": password, "port": port, "use_tls": use_tls, "insecure_tls": insecure_tls, "device_id": device_id}.items() if value is not None}
         return ends.update_jetkvm(get_hub(), jetkvm_id, payload)
 
     @server.tool()
@@ -118,9 +118,9 @@ def register(server) -> None:
 
     @server.tool()
     @expose
-    def jetkvm_power(jetkvm_id: int, action: str, confirm: bool = False) -> dict[str, Any]:
-        """JetKVM power. ATX actions are power-short, power-long and reset. DC actions are dc-on and dc-off. power-long, reset and dc-off require confirm=true."""
-        return actions.jetkvm_power(get_hub(), jetkvm_id, action, confirm=confirm, source="mcp")
+    def jetkvm_power(jetkvm_id: int, action: str, confirm: bool = False, extension: str = "auto") -> dict[str, Any]:
+        """JetKVM power. ATX actions are power-short, power-long and reset. DC actions are dc-on and dc-off. power-long, reset and dc-off require confirm=true. extension is auto, atx-power, or dc-power."""
+        return actions.jetkvm_power(get_hub(), jetkvm_id, action, confirm=confirm, source="mcp", extension=extension)
 
     @server.tool()
     @expose
@@ -139,15 +139,15 @@ def register(server) -> None:
 
     @server.tool()
     @expose
-    def add_plug(name: str, kind: str, host: str, username: str = "", password: str = "", protocol: str = "auto", switch_id: int = 0, device_id: int | None = None) -> dict[str, Any]:
+    def add_plug(name: str, kind: str, host: str, username: str = "", password: str = "", protocol: str = "auto", port: int = 80, insecure_tls: bool = False, switch_id: int = 0, device_id: int | None = None) -> dict[str, Any]:
         """Add a plug. kind is shelly or kasa. Kasa protocol is auto, xor (port 9999) or klap. Kasa username is the TP-Link account email."""
-        return ends.add_plug(get_hub(), {"name": name, "kind": kind, "host": host, "username": username, "password": password, "protocol": protocol, "switch_id": switch_id, "device_id": device_id})
+        return ends.add_plug(get_hub(), {"name": name, "kind": kind, "host": host, "username": username, "password": password, "protocol": protocol, "port": port, "insecure_tls": insecure_tls, "switch_id": switch_id, "device_id": device_id})
 
     @server.tool()
     @expose
-    def update_plug(plug_id: int, name: str | None = None, host: str | None = None, password: str | None = None, protocol: str | None = None, device_id: int | None = None) -> dict[str, Any]:
+    def update_plug(plug_id: int, name: str | None = None, host: str | None = None, password: str | None = None, protocol: str | None = None, kind: str | None = None, port: int | None = None, username: str | None = None, insecure_tls: bool | None = None, switch_id: int | None = None, device_id: int | None = None) -> dict[str, Any]:
         """Edit a plug."""
-        payload = {key: value for key, value in {"name": name, "host": host, "password": password, "protocol": protocol, "device_id": device_id}.items() if value is not None}
+        payload = {key: value for key, value in {"name": name, "host": host, "password": password, "protocol": protocol, "kind": kind, "port": port, "username": username, "insecure_tls": insecure_tls, "switch_id": switch_id, "device_id": device_id}.items() if value is not None}
         return ends.update_plug(get_hub(), plug_id, payload)
 
     @server.tool()
@@ -165,9 +165,9 @@ def register(server) -> None:
 
     @server.tool()
     @expose
-    def plug_power(plug_id: int, action: str, confirm: bool = False) -> dict[str, Any]:
-        """Switch a plug. action is on, off, toggle or cycle. off and cycle require confirm=true."""
-        return actions.plug_power(get_hub(), plug_id, action, confirm=confirm, source="mcp")
+    def plug_power(plug_id: int, action: str, confirm: bool = False, cycle_seconds: float = 5) -> dict[str, Any]:
+        """Switch a plug. action is on, off, toggle or cycle. off, cycle, and a toggle that would turn the plug off require confirm=true."""
+        return actions.plug_power(get_hub(), plug_id, action, confirm=confirm, source="mcp", cycle_seconds=cycle_seconds)
 
     @server.tool()
     @expose
@@ -183,9 +183,9 @@ def register(server) -> None:
 
     @server.tool()
     @expose
-    def update_ups(ups_id: int, name: str | None = None, host: str | None = None, community: str | None = None, snmp_version: str | None = None, device_id: int | None = None) -> dict[str, Any]:
+    def update_ups(ups_id: int, name: str | None = None, host: str | None = None, community: str | None = None, snmp_version: str | None = None, port: int | None = None, v3_user: str | None = None, v3_auth_proto: str | None = None, v3_auth: str | None = None, v3_priv_proto: str | None = None, v3_priv: str | None = None, device_id: int | None = None) -> dict[str, Any]:
         """Edit a UPS card."""
-        payload = {key: value for key, value in {"name": name, "host": host, "community": community, "snmp_version": snmp_version, "device_id": device_id}.items() if value is not None}
+        payload = {key: value for key, value in {"name": name, "host": host, "community": community, "snmp_version": snmp_version, "port": port, "v3_user": v3_user, "v3_auth_proto": v3_auth_proto, "v3_auth": v3_auth, "v3_priv_proto": v3_priv_proto, "v3_priv": v3_priv, "device_id": device_id}.items() if value is not None}
         return ends.update_ups(get_hub(), ups_id, payload)
 
     @server.tool()

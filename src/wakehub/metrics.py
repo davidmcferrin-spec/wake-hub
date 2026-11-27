@@ -7,7 +7,6 @@ import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from wakehub.errors import WakeHubError
 from wakehub.hub import Hub
 from wakehub.inventory import utcnow
 
@@ -95,6 +94,7 @@ def collect_once(hub: Hub) -> int:
     written += _collect_pdus(hub)
     written += _collect_plugs(hub)
     written += _collect_ups(hub)
+    written += _collect_jetkvm(hub)
     _purge(hub)
     return written
 
@@ -110,7 +110,7 @@ def _collect_pdus(hub: Hub) -> int:
                 status = client.status()
             finally:
                 client.close()
-        except (WakeHubError, OSError) as exc:
+        except Exception as exc:
             log.info("pdu %s metrics skipped: %s", pdu["id"], exc)
             continue
         samples = [(f"bank{index}_amps", amps, "A") for index, amps in enumerate(status.bank_amps, start=1)]
@@ -129,7 +129,7 @@ def _collect_plugs(hub: Hub) -> int:
         try:
             _row, client = plug_client(hub, plug["id"])
             status = client.status()
-        except (WakeHubError, OSError) as exc:
+        except Exception as exc:
             log.info("plug %s metrics skipped: %s", plug["id"], exc)
             continue
         samples = []
@@ -149,7 +149,7 @@ def _collect_ups(hub: Hub) -> int:
         try:
             _row, client = ups_client(hub, card["id"])
             status = client.status()
-        except (WakeHubError, OSError) as exc:
+        except Exception as exc:
             log.info("ups %s metrics skipped: %s", card["id"], exc)
             continue
         samples = []
@@ -166,6 +166,27 @@ def _collect_ups(hub: Hub) -> int:
                 samples.append((metric, status[metric], unit))
         record(hub, "ups", card["id"], card.get("device_id"), samples)
         count += len(samples)
+    return count
+
+
+def _collect_jetkvm(hub: Hub) -> int:
+    from wakehub.power import jetkvm_status
+
+    count = 0
+    for item in hub.query("SELECT id, device_id FROM jetkvm_endpoints"):
+        try:
+            status = jetkvm_status(hub, item["id"])
+        except Exception as exc:
+            log.info("jetkvm %s metrics skipped: %s", item["id"], exc)
+            continue
+        dc = status.get("dc") or {}
+        samples = []
+        for metric, unit in (("voltage_v", "V"), ("current_a", "A"), ("power_w", "W")):
+            if dc.get(metric) is not None:
+                samples.append((metric, dc[metric], unit))
+        if samples:
+            record(hub, "jetkvm", item["id"], item["device_id"], samples)
+            count += len(samples)
     return count
 
 

@@ -66,6 +66,7 @@ def build_server() -> MCPServer:
         reach_port: int | None = None,
         reach_timeout: float = 30,
         wake_strategy: str = "wol_only",
+        methods: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Add a device. mac is required later to wake it. broadcast is the directed broadcast address. wol_port is usually 9 or 7. reach_mode is icmp or tcp. wake_strategy is wol_only or power_then_wol."""
         return records.add_device(
@@ -84,6 +85,7 @@ def build_server() -> MCPServer:
                 "reach_port": reach_port,
                 "reach_timeout": reach_timeout,
                 "wake_strategy": wake_strategy,
+                "methods": methods,
             },
         )
 
@@ -104,6 +106,7 @@ def build_server() -> MCPServer:
         reach_port: int | None = None,
         reach_timeout: float | None = None,
         wake_strategy: str | None = None,
+        methods: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Edit a device. Omit a field to leave it unchanged. Pass an empty mac or secureon to clear it."""
         payload: dict[str, Any] = {}
@@ -121,6 +124,7 @@ def build_server() -> MCPServer:
             "reach_port": reach_port,
             "reach_timeout": reach_timeout,
             "wake_strategy": wake_strategy,
+            "methods": methods,
         }.items():
             if value is not None:
                 payload[key] = value
@@ -193,6 +197,8 @@ def build_server() -> MCPServer:
         ui_password: str | None = None,
         clear_ui_password: bool = False,
         cors_origins: list[str] | None = None,
+        metrics_poll_seconds: int | None = None,
+        metrics_retention_days: int | None = None,
     ) -> dict[str, Any]:
         """Change settings. Set ui_password to require a password in the browser. clear_ui_password removes it. cors_origins is the list of allowed browser origins. An empty list blocks cross-origin calls."""
         payload: dict[str, Any] = {"clear_ui_password": clear_ui_password}
@@ -200,6 +206,10 @@ def build_server() -> MCPServer:
             payload["ui_password"] = ui_password
         if cors_origins is not None:
             payload["cors_origins"] = cors_origins
+        if metrics_poll_seconds is not None:
+            payload["metrics_poll_seconds"] = metrics_poll_seconds
+        if metrics_retention_days is not None:
+            payload["metrics_retention_days"] = metrics_retention_days
         return records.update_settings(get_hub(), payload)
 
     @server.tool()

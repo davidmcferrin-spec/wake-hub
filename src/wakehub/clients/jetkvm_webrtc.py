@@ -19,7 +19,7 @@ def rpc_call(base: str, cookie: str, method: str, params: dict | None, timeout: 
         return asyncio.run(_rpc_call(base, cookie, method, params, timeout))
     except UpstreamError:
         raise
-    except OSError as exc:
+    except (OSError, TimeoutError) as exc:
         raise UpstreamError(f"JetKVM WebRTC failed: {exc}") from exc
 
 
@@ -37,19 +37,24 @@ async def _rpc_call(base: str, cookie: str, method: str, params: dict | None, ti
     connection = RTCPeerConnection()
     channel = connection.createDataChannel("rpc")
     connection.addTransceiver("video", direction="recvonly")
-    loop: asyncio.Future = asyncio.get_running_loop().create_future()
+    opened = asyncio.Event()
+    result: asyncio.Future = asyncio.get_running_loop().create_future()
+
+    @channel.on("open")
+    def on_open() -> None:
+        opened.set()
 
     @channel.on("message")
     def on_message(message) -> None:
-        if loop.done():
+        if result.done():
             return
         try:
             payload = parse_rpc(message if isinstance(message, str) else message.decode("utf-8"))
         except UpstreamError as exc:
-            loop.set_exception(exc)
+            result.set_exception(exc)
             return
         if payload.get("id") == 1 and "result" in payload:
-            loop.set_result(payload.get("result"))
+            result.set_result(payload.get("result"))
 
     try:
         async with websockets.connect(url, additional_headers=headers, open_timeout=timeout) as socket:
@@ -58,25 +63,34 @@ async def _rpc_call(base: str, cookie: str, method: str, params: dict | None, ti
             await connection.setLocalDescription(offer)
             description = {"type": connection.localDescription.type, "sdp": connection.localDescription.sdp}
             await socket.send(json.dumps(signaling_offer(description)))
-            while True:
-                raw = await asyncio.wait_for(socket.recv(), timeout)
-                if raw in ("ping", "pong"):
-                    continue
-                message = json.loads(raw)
-                kind = message.get("type")
-                if kind == "answer":
-                    from wakehub.clients.jetkvm import parse_signaling_answer
 
-                    answer = parse_signaling_answer(message)
-                    await connection.setRemoteDescription(RTCSessionDescription(sdp=answer["sdp"], type=answer.get("type") or "answer"))
-                elif kind == "new-ice-candidate" and message.get("data"):
-                    from aiortc.sdp import candidate_from_sdp
+            async def read_signaling() -> None:
+                from wakehub.clients.jetkvm import parse_signaling_answer
 
-                    data = message["data"]
-                    if data.get("candidate"):
-                        await connection.addIceCandidate(candidate_from_sdp(data["candidate"]))
-                if channel.readyState == "open":
-                    channel.send(rpc_request(method, params, 1))
-                    return await asyncio.wait_for(loop, timeout)
+                while not result.done():
+                    raw = await asyncio.wait_for(socket.recv(), timeout)
+                    if raw in ("ping", "pong"):
+                        continue
+                    message = json.loads(raw)
+                    kind = message.get("type")
+                    if kind == "answer":
+                        answer = parse_signaling_answer(message)
+                        await connection.setRemoteDescription(
+                            RTCSessionDescription(sdp=answer["sdp"], type=answer.get("type") or "answer")
+                        )
+                    elif kind == "new-ice-candidate" and message.get("data"):
+                        from aiortc.sdp import candidate_from_sdp
+
+                        data = message["data"]
+                        if data.get("candidate"):
+                            await connection.addIceCandidate(candidate_from_sdp(data["candidate"]))
+
+            reader = asyncio.create_task(read_signaling())
+            try:
+                await asyncio.wait_for(opened.wait(), timeout)
+                channel.send(rpc_request(method, params, 1))
+                return await asyncio.wait_for(result, timeout)
+            finally:
+                reader.cancel()
     finally:
         await connection.close()

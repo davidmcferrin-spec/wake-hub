@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS pdus (
     host TEXT NOT NULL,
     port INTEGER NOT NULL DEFAULT 80,
     use_tls INTEGER NOT NULL DEFAULT 0,
+    insecure_tls INTEGER NOT NULL DEFAULT 0,
     username TEXT NOT NULL DEFAULT '',
     password_enc TEXT,
     outlet_names TEXT NOT NULL DEFAULT '{}',
@@ -65,7 +66,7 @@ CREATE TABLE IF NOT EXISTS amt_endpoints (
     host TEXT NOT NULL,
     port INTEGER NOT NULL DEFAULT 16992,
     use_tls INTEGER NOT NULL DEFAULT 0,
-    insecure_tls INTEGER NOT NULL DEFAULT 1,
+    insecure_tls INTEGER NOT NULL DEFAULT 0,
     username TEXT NOT NULL DEFAULT 'admin',
     password_enc TEXT NOT NULL,
     device_id INTEGER,
@@ -79,7 +80,7 @@ CREATE TABLE IF NOT EXISTS jetkvm_endpoints (
     host TEXT NOT NULL,
     port INTEGER NOT NULL DEFAULT 80,
     use_tls INTEGER NOT NULL DEFAULT 0,
-    insecure_tls INTEGER NOT NULL DEFAULT 1,
+    insecure_tls INTEGER NOT NULL DEFAULT 0,
     password_enc TEXT,
     device_id INTEGER,
     created_at TEXT NOT NULL,
@@ -94,6 +95,7 @@ CREATE TABLE IF NOT EXISTS plugs (
     port INTEGER NOT NULL DEFAULT 80,
     username TEXT NOT NULL DEFAULT '',
     password_enc TEXT,
+    insecure_tls INTEGER NOT NULL DEFAULT 0,
     protocol TEXT NOT NULL DEFAULT 'auto',
     switch_id INTEGER NOT NULL DEFAULT 0,
     device_id INTEGER,
@@ -156,6 +158,12 @@ CREATE INDEX IF NOT EXISTS metric_lookup ON metric_samples (source_kind, source_
 """
 
 
+def _ensure_column(conn: sqlite3.Connection, table: str, name: str, declaration: str) -> None:
+    have = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if name not in have:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
+
+
 def connect(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, check_same_thread=False)
@@ -163,4 +171,7 @@ def connect(path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(SCHEMA)
+    _ensure_column(conn, "pdus", "insecure_tls", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(conn, "plugs", "insecure_tls", "INTEGER NOT NULL DEFAULT 0")
+    conn.commit()
     return conn

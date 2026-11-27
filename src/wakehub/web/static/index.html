@@ -10,13 +10,13 @@
   <div id="setup" class="gate hidden">
     <form id="setup-form" class="gate-card">
       <p class="eyebrow">Wake Hub</p>
-      <h1>Set a password</h1>
-      <p class="lede">The API token is in the container log and in /config/token. Use it once to set a UI password of at least 8 characters.</p>
+      <h1>First-run setup</h1>
+      <p class="lede">Set a UI password. The API token is in the container log and in /config/token. This page does not reveal it.</p>
       <label for="setup-token">API token</label>
       <input id="setup-token" name="api_token" type="password" autocomplete="off" required>
-      <label for="setup-password">New password</label>
+      <label for="setup-password">UI password</label>
       <input id="setup-password" name="password" type="password" autocomplete="new-password" minlength="8" required>
-      <button type="submit" data-cap="ui_setup">Save password</button>
+      <button type="submit" data-cap="ui_setup" data-fields="api_token,password">Save password</button>
       <p id="setup-error" class="error" role="alert"></p>
     </form>
   </div>
@@ -25,15 +25,15 @@
     <form id="login-form" class="gate-card">
       <p class="eyebrow">Wake Hub</p>
       <h1>Sign in</h1>
-      <p class="lede">This browser session needs the UI password. The API token stays on the settings page after you sign in.</p>
+      <p class="lede">The UI password is required. The API token stays on the settings page after you sign in.</p>
       <label for="ui-password">Password</label>
       <input id="ui-password" name="password" type="password" autocomplete="current-password" minlength="8" required>
-      <button type="submit" data-cap="ui_login">Sign in</button>
+      <button type="submit" data-cap="ui_login" data-fields="password">Sign in</button>
       <p id="login-error" class="error" role="alert"></p>
     </form>
   </div>
 
-  <div id="app" class="shell hidden" data-cap="get_ui_session">
+  <div id="app" class="shell hidden" data-cap="get_ui_session" data-fields="">
     <aside class="sidebar">
       <div class="brand">
         <span class="brand-mark">WH</span>
@@ -44,7 +44,7 @@
       </div>
       <nav>
         <button type="button" data-page="devices" data-cap="list_devices">Devices</button>
-        <button type="button" data-page="scan" data-cap="list_scans">Scan</button>
+        <button type="button" data-page="scan" data-cap="list_scans" data-fields="">Scan</button>
         <button type="button" data-page="power" data-cap="list_pdus">Power</button>
         <button type="button" data-page="history" data-cap="list_actions">History</button>
         <button type="button" data-page="settings" data-cap="get_settings">Settings</button>

@@ -67,12 +67,29 @@ def auth_hash_v2(username: str, password: str) -> bytes:
     return hashlib.sha256(user + secret).digest()
 
 
-def handshake1_hash(local_seed: bytes, remote_seed: bytes, auth_hash: bytes) -> bytes:
+def handshake1_hash_v1(local_seed: bytes, remote_seed: bytes, auth_hash: bytes) -> bytes:
+    # Older KLAP proves the login with the local seed and the auth hash.
+    return hashlib.sha256(local_seed + auth_hash).digest()
+
+
+def handshake2_hash_v1(local_seed: bytes, remote_seed: bytes, auth_hash: bytes) -> bytes:
+    return hashlib.sha256(remote_seed + auth_hash).digest()
+
+
+def handshake1_hash_v2(local_seed: bytes, remote_seed: bytes, auth_hash: bytes) -> bytes:
     return hashlib.sha256(local_seed + remote_seed + auth_hash).digest()
 
 
-def handshake2_hash(local_seed: bytes, remote_seed: bytes, auth_hash: bytes) -> bytes:
+def handshake2_hash_v2(local_seed: bytes, remote_seed: bytes, auth_hash: bytes) -> bytes:
     return hashlib.sha256(remote_seed + local_seed + auth_hash).digest()
+
+
+def handshake1_hash(local_seed: bytes, remote_seed: bytes, auth_hash: bytes) -> bytes:
+    return handshake1_hash_v2(local_seed, remote_seed, auth_hash)
+
+
+def handshake2_hash(local_seed: bytes, remote_seed: bytes, auth_hash: bytes) -> bytes:
+    return handshake2_hash_v2(local_seed, remote_seed, auth_hash)
 
 
 @dataclass
@@ -99,7 +116,8 @@ class KlapSession:
         encryptor = Cipher(algorithms.AES(self.key), modes.CBC(iv)).encryptor()
         ciphertext = encryptor.update(padded) + encryptor.finalize()
         signature = hashlib.sha256(self.signature_key + iv[12:] + ciphertext).digest()
-        self.sequence = sequence + 1
+        # The device decrypts with the seq in the URL, so advance only after the frame exists.
+        self.sequence = _next_seq(sequence)
         return sequence, signature + ciphertext
 
     def decrypt(self, sequence: int, payload: bytes) -> bytes:
@@ -118,6 +136,13 @@ class KlapSession:
             return unpadder.update(padded) + unpadder.finalize()
         except ValueError as exc:
             raise UpstreamError("KLAP response padding was invalid") from exc
+
+
+def _next_seq(sequence: int) -> int:
+    wrapped = (sequence + 1) & 0xFFFFFFFF
+    if wrapped >= 0x80000000:
+        wrapped -= 0x100000000
+    return wrapped
 
 
 def relay_command(on: bool) -> dict:
@@ -252,13 +277,19 @@ class KasaClient:
         if self.email or self.password:
             hashes.extend([auth_hash_v2("", ""), auth_hash_v1("", "")])
         chosen = None
+        confirm_hash = None
         for candidate in hashes:
-            if secrets.compare_digest(handshake1_hash(local, remote, candidate), server_hash):
+            if secrets.compare_digest(handshake1_hash_v2(local, remote, candidate), server_hash):
                 chosen = candidate
+                confirm_hash = handshake2_hash_v2(local, remote, candidate)
                 break
-        if chosen is None:
+            if secrets.compare_digest(handshake1_hash_v1(local, remote, candidate), server_hash):
+                chosen = candidate
+                confirm_hash = handshake2_hash_v1(local, remote, candidate)
+                break
+        if chosen is None or confirm_hash is None:
             raise UpstreamError("KLAP credentials were rejected")
-        confirm = handshake2_hash(local, remote, chosen)
+        confirm = confirm_hash
         self._cookie = cookie
         status, _body, cookie = self._post("/app/handshake2", confirm)
         if cookie:

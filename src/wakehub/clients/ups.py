@@ -32,6 +32,18 @@ OIDS = {
     "turn_on": UPS + ".6.2.6.0",
     "battery_test": UPS + ".7.2.2.0",
 }
+STATUS_OIDS = (
+    "model",
+    "battery_status",
+    "capacity_pct",
+    "runtime_ticks",
+    "input_voltage_raw",
+    "output_status",
+    "output_voltage_raw",
+    "load_pct",
+    "current_raw",
+    "power_w",
+)
 OUTLET_PREFIX = UPS + ".8.1.1.1.2."
 
 OUTPUT_STATUS = {
@@ -59,11 +71,17 @@ def outlet_oid(index: int) -> str:
     return OUTLET_PREFIX + str(index)
 
 
+def _unpack(value: object) -> tuple[object, str | None]:
+    if isinstance(value, dict) and "value" in value:
+        return value.get("value"), value.get("asn_type")
+    return value, None
+
+
 def status_from_varbinds(values: dict[str, object]) -> dict:
     """Turn a fixture or a live GET into the fields the UI and metrics use."""
 
     def raw(name: str):
-        value = values.get(OIDS[name])
+        value, _asn = _unpack(values.get(OIDS[name]))
         if value is None or value == "":
             return None
         if isinstance(value, (bytes, bytearray)):
@@ -81,7 +99,13 @@ def status_from_varbinds(values: dict[str, object]) -> dict:
 
     output_code = number("output_status")
     battery_code = number("battery_status")
-    runtime = number("runtime_ticks")
+    runtime_value, runtime_asn = _unpack(values.get(OIDS["runtime_ticks"]))
+    runtime = None
+    if runtime_value not in (None, ""):
+        try:
+            runtime = float(runtime_value)
+        except (TypeError, ValueError):
+            runtime = None
     return {
         "model": raw("model") or "",
         "output_status": OUTPUT_STATUS.get(int(output_code), "unknown") if output_code is not None else "unknown",
@@ -89,6 +113,7 @@ def status_from_varbinds(values: dict[str, object]) -> dict:
         "battery": BATTERY_STATUS.get(int(battery_code), "unknown") if battery_code is not None else "unknown",
         "capacity_pct": number("capacity_pct"),
         "runtime_s": None if runtime is None else runtime / 100,
+        "runtime_raw": None if runtime is None else {"value": runtime_value, "asn_type": runtime_asn},
         "input_voltage_v": _tenths(number("input_voltage_raw")),
         "output_voltage_v": _tenths(number("output_voltage_raw")),
         "load_pct": number("load_pct"),
@@ -97,39 +122,39 @@ def status_from_varbinds(values: dict[str, object]) -> dict:
     }
 
 
-def command_set(action: str, *, delay_seconds: int | None = None, outlet: int | None = None) -> list[tuple[str, int]]:
-    """The SNMP SETs for one UPS action, in order."""
-    sets: list[tuple[str, int]] = []
+def command_set(action: str, *, delay_seconds: int | None = None, outlet: int | None = None) -> list[tuple[str, int, str]]:
+    """The SNMP SETs for one UPS action, in order. The third item is the ASN type."""
+    sets: list[tuple[str, int, str]] = []
     if action in {"shutdown", "turn_off"} and delay_seconds:
         delay = max(60, min(int(delay_seconds), 5940))
-        # TimeTicks are hundredths of a second in the MIB.
-        sets.append((OIDS["shutoff_delay"], delay * 100))
-        sets.append((OIDS["ups_off"], 3))
+        # The MIB types this delay as TimeTicks, which are hundredths of a second.
+        sets.append((OIDS["shutoff_delay"], delay * 100, "TimeTicks"))
+        sets.append((OIDS["ups_off"], 3, "Integer"))
         return sets
     if action in {"shutdown", "turn_off"}:
-        sets.append((OIDS["ups_off"], 2))
+        sets.append((OIDS["ups_off"], 2, "Integer"))
         return sets
     if action == "reboot":
-        sets.append((OIDS["reboot"], 2))
+        sets.append((OIDS["reboot"], 2, "Integer"))
         return sets
     if action == "sleep":
-        sets.append((OIDS["sleep"], 3 if delay_seconds else 2))
+        sets.append((OIDS["sleep"], 3 if delay_seconds else 2, "Integer"))
         return sets
     if action == "turn_on":
-        sets.append((OIDS["turn_on"], 2))
+        sets.append((OIDS["turn_on"], 2, "Integer"))
         return sets
     if action == "battery_test":
-        sets.append((OIDS["battery_test"], 2))
+        sets.append((OIDS["battery_test"], 2, "Integer"))
         return sets
     if action == "outlet_on":
-        sets.append((outlet_oid(outlet or 0), 1))
+        sets.append((outlet_oid(outlet or 0), 1, "Integer"))
         return sets
     if action == "outlet_off":
-        sets.append((outlet_oid(outlet or 0), 2))
+        sets.append((outlet_oid(outlet or 0), 2, "Integer"))
         return sets
     if action == "outlet_cycle":
-        sets.append((outlet_oid(outlet or 0), 2))
-        sets.append((outlet_oid(outlet or 0), 1))
+        sets.append((outlet_oid(outlet or 0), 2, "Integer"))
+        sets.append((outlet_oid(outlet or 0), 1, "Integer"))
         return sets
     raise WakeHubError(
         "UPS action must be shutdown, reboot, turn_off, turn_on, sleep, battery_test, outlet_on, outlet_off, or outlet_cycle"
@@ -152,9 +177,9 @@ class MemorySnmp:
     def get(self, oids: list[str]) -> dict[str, object]:
         return {oid: self.values[oid] for oid in oids if oid in self.values}
 
-    def set(self, oid: str, value: int) -> None:
-        self.sets.append((oid, value))
-        self.values[oid] = value
+    def set(self, oid: str, value: int, asn_type: str = "Integer") -> None:
+        self.sets.append((oid, value, asn_type))
+        self.values[oid] = {"value": value, "asn_type": asn_type}
 
 
 class PysnmpTransport:
@@ -173,8 +198,8 @@ class PysnmpTransport:
     def get(self, oids: list[str]) -> dict[str, object]:
         return asyncio.run(self._get(oids))
 
-    def set(self, oid: str, value: int) -> None:
-        asyncio.run(self._set(oid, value))
+    def set(self, oid: str, value: int, asn_type: str = "Integer") -> None:
+        asyncio.run(self._set(oid, value, asn_type))
 
     async def _get(self, oids: list[str]) -> dict[str, object]:
         engine, auth, target, context, ObjectType, ObjectIdentity, get_cmd = await self._session()
@@ -189,18 +214,19 @@ class PysnmpTransport:
         self._check(error, status, index)
         return {_oid_text(item[0]): _value(item[1]) for item in varbinds}
 
-    async def _set(self, oid: str, value: int) -> None:
-        from pysnmp.proto.rfc1902 import Integer32
+    async def _set(self, oid: str, value: int, asn_type: str) -> None:
+        from pysnmp.proto.rfc1902 import Integer32, TimeTicks
 
         engine, auth, target, context, ObjectType, ObjectIdentity, _get = await self._session()
         from pysnmp.hlapi.v3arch.asyncio import set_cmd
 
+        encoded = TimeTicks(value) if asn_type == "TimeTicks" else Integer32(value)
         error, status, index, _binds = await set_cmd(
             engine,
             auth,
             target,
             context,
-            ObjectType(ObjectIdentity(oid), Integer32(value)),
+            ObjectType(ObjectIdentity(oid), encoded),
             lookupMib=False,
         )
         self._check(error, status, index)
@@ -262,31 +288,38 @@ def _oid_text(identity) -> str:
 
 
 def _value(item):
+    asn_type = type(item).__name__
     if hasattr(item, "prettyPrint"):
         text = item.prettyPrint()
         if text.lstrip("-").isdigit():
-            return int(text)
-        return text
-    return item
+            return {"value": int(text), "asn_type": asn_type}
+        return {"value": text, "asn_type": asn_type}
+    return {"value": item, "asn_type": asn_type}
 
 
 class UpsClient:
-    def __init__(self, transport):
+    def __init__(self, transport, *, cycle_pause: float = 2):
         self.transport = transport
+        self.cycle_pause = cycle_pause
 
     def status(self) -> dict:
         try:
-            values = self.transport.get(list(OIDS.values()))
+            values = self.transport.get([OIDS[name] for name in STATUS_OIDS])
         except OSError as exc:
             raise UpstreamError(f"UPS SNMP request failed: {exc}") from exc
         return status_from_varbinds(values)
 
     def act(self, action: str, *, delay_seconds: int | None = None, outlet: int | None = None) -> dict:
+        import time
+
         applied = []
-        for oid, value in command_set(action, delay_seconds=delay_seconds, outlet=outlet):
+        steps = command_set(action, delay_seconds=delay_seconds, outlet=outlet)
+        for index, (oid, value, asn_type) in enumerate(steps):
+            if action == "outlet_cycle" and index > 0 and self.cycle_pause:
+                time.sleep(self.cycle_pause)
             try:
-                self.transport.set(oid, value)
+                self.transport.set(oid, value, asn_type)
             except OSError as exc:
                 raise UpstreamError(f"UPS SNMP set failed: {exc}") from exc
-            applied.append({"oid": oid, "value": value})
+            applied.append({"oid": oid, "value": value, "asn_type": asn_type})
         return {"action": action, "sets": applied}

@@ -21,6 +21,7 @@ from wakehub.inventory import _get_row, _require_enabled, record_action, wake_de
 
 PLUG_ACTIONS = {"on", "off", "toggle", "cycle"}
 PDU_ACTIONS = {"on", "off", "reboot"}
+DEVICE_ACTIONS = {"on", "off", "cycle", "reboot", "shutdown"}
 
 
 def dispatch_device(
@@ -32,6 +33,8 @@ def dispatch_device(
     confirm: bool = False,
     source: str,
 ) -> dict[str, Any]:
+    if action not in DEVICE_ACTIONS:
+        raise WakeHubError("action must be on, off, cycle, reboot, or shutdown")
     require_confirm(action, confirm)
     row = _get_row(hub, device_id)
     _require_enabled(hub, row, source, action)
@@ -59,6 +62,18 @@ def dispatch_device(
     if chosen["kind"] == "amt":
         return amt_power(hub, chosen["amt_id"], action, confirm=confirm, source=source)
     if chosen["kind"] == "jetkvm":
+        if action == "on":
+            state = jetkvm_status(hub, chosen["jetkvm_id"])
+            atx = state.get("atx") or {}
+            if "power_led" not in atx:
+                raise WakeHubError("JetKVM power LED could not be read; refusing a press that might shut the machine down")
+            if atx.get("power_led"):
+                return {
+                    "jetkvm_id": chosen["jetkvm_id"],
+                    "action": "on",
+                    "noop": True,
+                    "reason": "power LED is already on",
+                }
         jet_action = {"on": "power-short", "off": "power-long", "shutdown": "power-long", "reboot": "reset", "cycle": "reset"}.get(action)
         if jet_action is None:
             raise WakeHubError(f"JetKVM cannot {action}")
@@ -102,11 +117,7 @@ def set_pdu_outlet(hub: Hub, pdu_id: int, outlet: int, action: str, *, confirm: 
     if action not in PDU_ACTIONS:
         raise WakeHubError("PDU action must be on, off, or reboot")
     if action in {"off", "reboot"}:
-        require_confirm(action if action != "reboot" else "reboot", confirm if action != "reboot" else confirm)
-        if action == "reboot":
-            require_confirm("reboot", confirm)
-        else:
-            require_confirm("off", confirm)
+        require_confirm("off" if action == "off" else "reboot", confirm)
     row, client = pdu_client(hub, pdu_id)
     try:
         if action == "on":
@@ -151,6 +162,10 @@ def plug_power(hub: Hub, plug_id: int, action: str, *, confirm: bool, source: st
         require_confirm("off" if action == "off" else "cycle", confirm)
     row, client = plug_client(hub, plug_id)
     try:
+        if action == "toggle":
+            current = client.status()
+            if current.get("on"):
+                require_confirm("off", confirm)
         if action == "on":
             result = client.set_on(True)
         elif action == "off":
