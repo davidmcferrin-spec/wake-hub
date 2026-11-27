@@ -146,7 +146,8 @@ function applyDevicePills() {
 async function pollStatus(force) {
   if (state.pollInFlight || state.confirming || document.hidden || !state.token) return;
   if (!force && Date.now() < (state.pollHold || 0)) return;
-  if (state.page !== "devices" && state.page !== "power") return;
+  const page = state.page;
+  if (page !== "devices" && page !== "power" && page !== "scan" && page !== "history") return;
   state.pollInFlight = true;
   state.pollHold = Date.now() + 400;
   try {
@@ -374,7 +375,7 @@ function methodRow(method, open) {
     <div class="row-actions">
       <button type="button" class="ghost" data-move="up">Up</button>
       <button type="button" class="ghost" data-move="down">Down</button>
-      <button type="button" class="ghost test-method">Test</button>
+      <button type="button" class="ghost test-method" data-cap="test_target" data-fields="broadcast,community,confirm,host,insecure_tls,kind,mac,password,plug_kind,port,snmp_version,use_tls,username">Test</button>
       <button type="button" class="danger" data-remove-method="1">Remove</button>
     </div>
   </details>`;
@@ -971,11 +972,11 @@ window.pollHistory = async function () {
   if (state.historyQuiet && Date.now() < state.historyQuiet) return;
   const form = document.getElementById("history-form");
   if (!form) return;
+  const filter = state.historyFilter || { device_id: "", limit: "100" };
+  const limit = Math.max(1, Number(filter.limit) || 100);
   const params = new URLSearchParams();
-  const deviceId = form.elements.device_id && form.elements.device_id.value;
-  const limit = (form.elements.limit && form.elements.limit.value) || "100";
-  if (deviceId) params.set("device_id", deviceId);
-  params.set("limit", limit);
+  if (filter.device_id) params.set("device_id", String(filter.device_id));
+  params.set("limit", String(limit));
   try {
     const rows = await api("GET", `/api/v1/actions?${params}`);
     state.actions = rows;
@@ -990,12 +991,12 @@ window.pollHistory = async function () {
     if (!body) return;
     const have = new Set([...body.querySelectorAll("[data-action-id]")].map((row) => row.dataset.actionId));
     const newer = rows.filter((item) => !have.has(String(item.id)));
-    if (!newer.length) return;
     const scroller = document.scrollingElement;
     const top = scroller ? scroller.scrollTop : 0;
     for (let index = newer.length - 1; index >= 0; index -= 1) {
       body.insertAdjacentHTML("afterbegin", historyRow(newer[index]));
     }
+    while (body.children.length > limit) body.lastElementChild.remove();
     if (scroller) scroller.scrollTop = top;
   } catch (_error) {
     state.historyQuiet = Date.now() + 20000;
@@ -1013,15 +1014,6 @@ function renderHistory() {
     ${rows
       ? `<table id="history-table"><thead><tr><th>Time</th><th>Source</th><th>Target</th><th>Action</th><th>Result</th><th>Detail</th></tr></thead><tbody>${rows}</tbody></table>`
       : `<div class="empty"><p>Nothing has been switched yet. Wake a device and the result will show here.</p></div>`}`;
-  const form = document.getElementById("history-form");
-  if (form) {
-    form.addEventListener("input", () => {
-      state.historyFilter = {
-        device_id: form.elements.device_id.value,
-        limit: form.elements.limit.value,
-      };
-    });
-  }
 }
 
 function renderSettings() {

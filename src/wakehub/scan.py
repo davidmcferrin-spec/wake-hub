@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import ipaddress
 import json
 import select
@@ -127,34 +128,45 @@ def start_scan(hub: Hub, cidr: str | None = None, discover: Discover | None = No
     return get_scan(hub, scan_id)
 
 
+def _save_found_host(hub: Hub, scan_id: int, host: dict[str, Any]) -> None:
+    hub.write(
+        """
+        INSERT INTO scan_hosts (scan_id, ip, mac, hostname, vendor, kinds, detail)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            scan_id,
+            host.get("ip"),
+            host.get("mac"),
+            host.get("hostname") or "",
+            host.get("vendor") or vendor(host.get("mac")),
+            json.dumps(host.get("kinds") or []),
+            json.dumps(host.get("detail") or {}),
+        ),
+    )
+
+
 def _run(hub: Hub, scan_id: int, cidr: str, discover: Discover) -> None:
     def progress(done: int, total: int) -> None:
         if hub.stopping():
             return
         hub.write("UPDATE scans SET progress = ?, total = ? WHERE id = ?", (done, total, scan_id))
 
-    try:
-        hosts = discover(cidr, progress)
+    def on_found(host: dict[str, Any]) -> None:
         if hub.stopping():
             return
-        for host in hosts:
-            if hub.stopping():
-                return
-            hub.write(
-                """
-                INSERT INTO scan_hosts (scan_id, ip, mac, hostname, vendor, kinds, detail)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    scan_id,
-                    host.get("ip"),
-                    host.get("mac"),
-                    host.get("hostname") or "",
-                    host.get("vendor") or vendor(host.get("mac")),
-                    json.dumps(host.get("kinds") or []),
-                    json.dumps(host.get("detail") or {}),
-                ),
-            )
+        _save_found_host(hub, scan_id, host)
+
+    live = "on_found" in inspect.signature(discover).parameters
+    try:
+        hosts = discover(cidr, progress, on_found=on_found) if live else discover(cidr, progress)
+        if hub.stopping():
+            return
+        if not live:
+            for host in hosts:
+                if hub.stopping():
+                    return
+                _save_found_host(hub, scan_id, host)
         if hub.stopping():
             return
         hub.write(
@@ -381,7 +393,12 @@ def add_from_scan(hub: Hub, scan_id: int, host_id: int, kind: str, payload: dict
     raise WakeHubError("kind must be device, pdu, amt, jetkvm, plug, ups, or roku")
 
 
-def discover_subnet(cidr: str, progress: Callable[[int, int], None]) -> list[dict[str, Any]]:
+def discover_subnet(
+    cidr: str,
+    progress: Callable[[int, int], None],
+    *,
+    on_found: Callable[[dict[str, Any]], None] | None = None,
+) -> list[dict[str, Any]]:
     network = _network(cidr)
     hosts = [str(ip) for ip in network.hosts()] or [str(network.network_address)]
     total = len(hosts)
@@ -424,6 +441,8 @@ def discover_subnet(cidr: str, progress: Callable[[int, int], None]) -> list[dic
             described = inspect(ip, arp, names_by_ip.get(ip, []), answered or ip in arp)
             if described:
                 found[ip] = described
+                if on_found:
+                    on_found(described)
             if done % 16 == 0 or done == total:
                 progress(done, total)
         for ip, mac in arp.items():
@@ -437,6 +456,8 @@ def discover_subnet(cidr: str, progress: Callable[[int, int], None]) -> list[dic
             described = inspect(ip, arp, names_by_ip.get(ip, []), False)
             if described:
                 found[ip] = described
+                if on_found:
+                    on_found(described)
         for ip in roku_ips:
             own_names = names_by_ip.get(ip, [])
             if ip in found:
@@ -471,6 +492,8 @@ def discover_subnet(cidr: str, progress: Callable[[int, int], None]) -> list[dic
                     ssdp=True,
                 )
                 found[ip] = described
+                if on_found:
+                    on_found(described)
     return list(found.values())
 
 

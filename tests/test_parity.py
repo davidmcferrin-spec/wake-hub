@@ -109,6 +109,36 @@ def test_every_ui_button_is_a_capability(client):
     assert extra == [], extra
 
 
+def test_poll_dispatch_reaches_scan_and_history():
+    source = (STATIC / "app.js").read_text()
+    body = source.split("async function pollStatus", 1)[1].split("window.pollStatus = pollStatus", 1)[0]
+    for name in ("pollScan", "pollHistory"):
+        assert name in body, name
+        head = body.split(name, 1)[0]
+        for match in re.finditer(r"if\s*\((.*?)\)\s*return\s*;", head, re.S):
+            condition = match.group(1)
+            if "state.page" not in condition and "page" not in condition:
+                continue
+            assert '"scan"' in condition and '"history"' in condition, condition
+
+
+def test_direct_api_clicks_declare_a_capability():
+    pieces = []
+    for path in sorted(STATIC.iterdir()):
+        if path.suffix == ".js":
+            pieces.append(path.read_text())
+    text = "\n".join(pieces)
+    missing = []
+    for match in re.finditer(r'classList\.contains\("([^"]+)"\)([\s\S]{0,600})', text):
+        name, tail = match.group(1), match.group(2)
+        if "api(" not in tail and "/api/v1" not in tail:
+            continue
+        buttons = re.findall(rf"<button\b[^>]*\b{re.escape(name)}\b[^>]*>", text)
+        if not buttons or any("data-cap=" not in tag for tag in buttons):
+            missing.append(name)
+    assert missing == [], missing
+
+
 def test_every_api_operation_is_a_capability(client):
     schema = client.get("/openapi.json").json()
     covered = {(cap.method.lower(), cap.path) for cap in CAPABILITIES}

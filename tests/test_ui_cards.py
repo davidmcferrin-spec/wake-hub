@@ -20,7 +20,7 @@ def test_device_cards_keep_their_content_inside(live_server, hub):
     )
     pdu = httpx.post(f"{live_server}/api/v1/pdus", headers=headers, json={"name": "NP-1601DU", "host": "192.168.0.8"}).json()
     for number, name in enumerate(
-        ("Attic POE", "HDMI Streaming", "Home PC", "Internet Fiber Jack", "Network Gear", "Work HP", "Work Peplink"),
+        ("Lamp", "Printer", "Media", "Server", "Switch", "Laptop", "Camera"),
         start=1,
     ):
         hub.write(
