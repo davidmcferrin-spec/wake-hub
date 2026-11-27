@@ -459,11 +459,28 @@ window.hardwareControls = function (kind, item, full) {
 
 const AMT_POLL_MS = 30000;
 
+const LIVE_POLL_MS = 8000;
+
 function paintLive(node, label) {
   const tone = label === "On" || label === "Ready" || label === "Online" ? "pill up" : label === "Off" ? "pill down" : label === "Standby" ? "pill off" : "pill bad";
   if (node.textContent === label && node.className === tone) return;
   node.textContent = label;
   node.className = tone;
+}
+
+function freshResult(node, intervalMs) {
+  return node.dataset.amtFresh === "1" && Date.now() - Number(node.dataset.freshAt || 0) < intervalMs;
+}
+
+function paintFailure(node, intervalMs) {
+  if (freshResult(node, intervalMs)) return;
+  paintLive(node, "Unreachable");
+}
+
+function markFresh(node) {
+  if (!node) return;
+  node.dataset.amtFresh = "1";
+  node.dataset.freshAt = String(Date.now());
 }
 
 window.loadOperateStatus = async function () {
@@ -481,8 +498,9 @@ window.loadOperateStatus = async function () {
         label = mode === "PowerOn" ? "On" : mode === "DisplayOff" || mode === "Ready" ? "Standby" : mode === "Suspend" || mode === "Headless" ? "Off" : "Unreachable";
       } else if (kind === "plug") label = data.on ? "On" : "Off";
       paintLive(node, label);
+      delete node.dataset.amtFresh;
     } catch (_error) {
-      if (node.textContent === "Checking") paintLive(node, "Unreachable");
+      paintFailure(node, LIVE_POLL_MS);
     }
   }));
 };
@@ -502,9 +520,9 @@ window.pollAmt = function () {
       const name = data.power_name || "";
       const label = name === "on" ? "On" : name === "off" ? "Off" : name || "Ready";
       paintLive(node, label);
+      delete node.dataset.amtFresh;
     } catch (_error) {
-      if (node.dataset.amtFresh === "1" || node.textContent !== "Checking") return;
-      paintLive(node, "Unreachable");
+      paintFailure(node, AMT_POLL_MS);
     }
   })).finally(() => { state.amtPollInFlight = false; });
 };
@@ -917,7 +935,7 @@ window.handlePowerCap = async function handlePowerCap(button) {
         const text = `${data.name || "AMT"} is ${data.power_name || "unknown"}`;
         if (slot) {
           slot.textContent = text;
-          slot.dataset.amtFresh = "1";
+          markFresh(slot);
           slot.dataset.amtPolled = String(Date.now());
         }
         applyAmtAvailable(id, data.available || []);
@@ -953,6 +971,11 @@ window.handlePowerCap = async function handlePowerCap(button) {
       await api("POST", `/api/v1/jetkvm/${id}/power`, { action, confirm: destructive, extension: button.dataset.extension || "auto" });
     } else if (cap === "plug_status") {
       const data = await api("GET", `/api/v1/plugs/${id}/status`);
+      const pill = document.querySelector(`[data-live-status="plug-${id}"]`);
+      if (pill) {
+        paintLive(pill, data.on ? "On" : "Off");
+        markFresh(pill);
+      }
       showBanner(data.on ? "Plug on" : "Plug off");
     } else if (cap === "plug_power") {
       const action = button.dataset.action;
@@ -963,7 +986,14 @@ window.handlePowerCap = async function handlePowerCap(button) {
       showBanner(`${data.output_status}, load ${data.load_pct ?? "?"}%`);
     } else if (cap === "roku_status") {
       const data = await api("GET", `/api/v1/rokus/${id}/status`);
-      showBanner(`${data.name || "Roku"} ${data.model || ""} is ${data.power_mode || "unknown"}`.trim());
+      const mode = data.power_mode || "";
+      const label = mode === "PowerOn" ? "On" : mode === "DisplayOff" || mode === "Ready" ? "Standby" : mode === "Suspend" || mode === "Headless" ? "Off" : "Unreachable";
+      const pill = document.querySelector(`[data-live-status="roku-${id}"]`);
+      if (pill) {
+        paintLive(pill, label);
+        markFresh(pill);
+      }
+      showBanner(`${data.name || "Roku"} ${data.model || ""} is ${mode || "unknown"}`.trim());
     } else if (cap === "roku_power") {
       const action = button.dataset.action;
       const destructive = action === "off" || action === "toggle";

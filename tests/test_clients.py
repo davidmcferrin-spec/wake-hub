@@ -131,6 +131,67 @@ def test_outlet_name_fixtures_match_their_format(monkeypatch):
     client.close()
 
 
+def _np05b_status_page() -> str:
+    # Outlet 2 has no opening <tr>. Outlet 3's name is empty. A later table has an Outlet List column.
+    return """
+    <html><body>
+    <table border="1">
+    <tr><td>Outlet</td><td>Name</td><td>Status</td></tr>
+    <tr><td>1</td><td>Attic POE</td><td>ON</td></tr>
+    <td>2</td><td>HDMI Streaming</td><td>ON</td></tr>
+    <tr><td>3</td><td></td><td>OFF</td></tr>
+    </table>
+    <table>
+    <tr><td>Group</td><td>Outlet List</td></tr>
+    <tr><td>Studio</td><td>3</td></tr>
+    </table>
+    </body></html>
+    """
+
+
+def test_status_table_ignores_a_missing_tr_and_the_next_table():
+    names = parse_outlet_names(_np05b_status_page())
+    assert names[1] == "Attic POE"
+    assert names[2] == "HDMI Streaming"
+    assert 3 not in names
+    assert "3" not in names.values()
+    assert "Outlet List" not in names.values()
+
+
+def test_diagnostics_redact_every_form_of_the_password():
+    import base64
+    import html
+    from urllib.parse import quote
+
+    from wakehub.clients.synaccess import redact_diagnostics
+
+    secret = "S3cr&t<pw>!"
+    username = "admin"
+    escaped = html.escape(secret, quote=True)
+    encoded = quote(secret, safe="")
+    token = base64.b64encode(f"{username}:{secret}".encode()).decode()
+    page = "\n".join(
+        (
+            f'<input type="password" name="pw" value="{escaped}">',
+            '<input name="again" type="password" value="other-secret">',
+            f'<a href="/go?password={encoded}">open</a>',
+            "Cookie: sid=1; session=abc",
+            "Set-Cookie: theme=dark; sid=2",
+            token,
+        )
+    )
+    cleaned = redact_diagnostics(page, secret, username)
+    assert secret not in cleaned
+    assert escaped not in cleaned
+    assert encoded not in cleaned
+    assert "other-secret" not in cleaned
+    assert "sid=1" not in cleaned
+    assert "session=abc" not in cleaned
+    assert "theme=dark" not in cleaned
+    assert token not in cleaned
+    assert "[redacted]" in cleaned
+
+
 def test_name_read_reports_the_first_non_404_and_a_login_page(monkeypatch, caplog):
     import logging
 
@@ -176,6 +237,23 @@ def test_name_read_reports_the_first_non_404_and_a_login_page(monkeypatch, caplo
     assert "/outlets.htm" in message
     assert "TOKEN" in message
     assert "later-login" not in message
+
+    def rejected(request):
+        if request.url.path == "/outletsetup.htm":
+            return httpx.Response(401, text="denied")
+        return httpx.Response(404, text="later")
+
+    from wakehub.clients.synaccess import AUTH_MESSAGE
+
+    client = SynaccessClient("192.168.0.10", "admin", "secret-pass", http=httpx.Client(transport=httpx.MockTransport(rejected)))
+    try:
+        client.read_outlet_names()
+    except Exception as exc:
+        message = str(exc)
+    else:
+        message = ""
+    client.close()
+    assert message == AUTH_MESSAGE
 
 
 def test_amt_wsman_round_trip():

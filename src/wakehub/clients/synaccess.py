@@ -6,12 +6,13 @@ The status string's right-most bit is outlet 1.
 
 from __future__ import annotations
 
+import base64
 import html
 import json
 import logging
 import re
 from dataclasses import dataclass
-from urllib.parse import quote
+from urllib.parse import quote, quote_plus
 
 import httpx
 
@@ -135,6 +136,7 @@ _NAME_ASSIGN = re.compile(
 _PASSWORD_INPUT = re.compile(r"<input\b[^>]*type\s*=\s*[\"']?password", re.IGNORECASE)
 _LOGIN_WORD = re.compile(r"\blogin\b|\bsign in\b", re.IGNORECASE)
 LOGIN_MESSAGE = "The PDU web UI requires a session login; outlet names could not be read"
+AUTH_MESSAGE = "The PDU rejected the username or password"
 _LOGGED_NAME_READS: dict[str, str] = {}
 
 
@@ -170,9 +172,7 @@ def _names_from_json(data: object) -> dict[int, str]:
     return {key: value for key, value in names.items() if key >= 1}
 
 
-def looks_like_login(status_code: int, body: str) -> bool:
-    if status_code == 401:
-        return True
+def looks_like_login(body: str) -> bool:
     text = body or ""
     if _PASSWORD_INPUT.search(text):
         return True
@@ -180,13 +180,35 @@ def looks_like_login(status_code: int, body: str) -> bool:
     return bool(_LOGIN_WORD.search(sample))
 
 
-def redact_diagnostics(text: str, secret: str = "") -> str:
-    cleaned = text or ""
-    if secret:
-        cleaned = cleaned.replace(secret, "[redacted]")
+def _blank_password_values(text: str) -> str:
+    def repl(match: re.Match[str]) -> str:
+        tag = match.group(0)
+        if not re.search(r"type\s*=\s*[\"']?password", tag, re.IGNORECASE):
+            return tag
+        return re.sub(
+            r"""(value\s*=\s*)(?:"[^"]*"|'[^']*'|[^\s>]+)""",
+            r'\1"[redacted]"',
+            tag,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+
+    return re.sub(r"<input\b[^>]*>", repl, text, flags=re.IGNORECASE)
+
+
+def redact_diagnostics(text: str, secret: str = "", username: str = "") -> str:
+    cleaned = _blank_password_values(text or "")
+    cleaned = re.sub(r"(?i)(cookie:[^\r\n]*)", "Cookie: [redacted]", cleaned)
+    cleaned = re.sub(r"(?i)(set-cookie:[^\r\n]*)", "Set-Cookie: [redacted]", cleaned)
     cleaned = re.sub(r"(?i)(authorization:\s*basic\s+)\S+", r"\1[redacted]", cleaned)
-    cleaned = re.sub(r"(?i)(cookie:\s*)\S+", r"\1[redacted]", cleaned)
-    cleaned = re.sub(r"(?i)(set-cookie:\s*)[^\r\n]+", r"\1[redacted]", cleaned)
+    if secret:
+        forms = [html.escape(secret, quote=True), quote(secret, safe=""), quote_plus(secret), secret]
+        if username:
+            token = base64.b64encode(f"{username}:{secret}".encode()).decode()
+            forms.insert(0, token)
+        for form in forms:
+            if form:
+                cleaned = cleaned.replace(form, "[redacted]")
     return cleaned[:8192]
 
 
@@ -224,11 +246,22 @@ def _cell_text(cell: str) -> str:
     return html.unescape(re.sub(r"\s+", " ", plain)).strip()
 
 
+def _table_with_name(text: str) -> str:
+    for table in re.findall(r"<table\b[^>]*>(.*?)</table>", text, re.IGNORECASE | re.DOTALL):
+        if re.search(r">\s*Name\s*<", table, re.IGNORECASE):
+            return table
+    return ""
+
+
 def _names_from_table(text: str) -> dict[int, str]:
-    # Some firmware puts the outlet name in a Name column of the status table.
+    # Stay inside the table that has the Name header. A following table is a different list.
+    table = _table_with_name(text)
+    if not table:
+        return {}
     rows = []
-    for row in re.findall(r"<tr\b[^>]*>(.*?)</tr>", text, re.IGNORECASE | re.DOTALL):
-        cells = re.findall(r"<t[dh]\b[^>]*>(.*?)</t[dh]>", row, re.IGNORECASE | re.DOTALL)
+    for chunk in re.split(r"</tr\s*>", table, flags=re.IGNORECASE):
+        # Some firmware omits the opening <tr> on later rows.
+        cells = re.findall(r"<t[dh]\b[^>]*>(.*?)</t[dh]>", chunk, re.IGNORECASE | re.DOTALL)
         if cells:
             rows.append([_cell_text(cell) for cell in cells])
     header = None
@@ -253,6 +286,7 @@ def _names_from_table(text: str) -> dict[int, str]:
             continue
         label = cells[name_col]
         if not label or label.lower() in _JUNK_NAME:
+            # An empty Name cell stays empty. Do not borrow a cell from another column.
             continue
         number = None
         if outlet_col is not None and outlet_col < len(cells) and cells[outlet_col].isdigit():
@@ -365,6 +399,7 @@ class SynaccessClient:
         scheme = "https" if use_tls else "http"
         self._base = f"{scheme}://{host_for_url(host)}:{port}/cmd.cgi?"
         self._owns = http is None
+        self._username = username or ""
         self._secret = password or ""
         self._timeout = timeout
         self.name_pages: list[dict[str, object]] = []
@@ -405,7 +440,7 @@ class SynaccessClient:
                     "path": path,
                     "status": 0,
                     "content_type": "",
-                    "body": redact_diagnostics(str(exc), self._secret),
+                    "body": redact_diagnostics(str(exc), self._secret, self._username),
                 }
                 self.name_pages.append(page)
                 if first_page is None:
@@ -417,7 +452,7 @@ class SynaccessClient:
                 "path": path,
                 "status": response.status_code,
                 "content_type": content_type,
-                "body": redact_diagnostics(body, self._secret),
+                "body": redact_diagnostics(body, self._secret, self._username),
             }
             self.name_pages.append(page)
             if first_page is None:
@@ -429,7 +464,9 @@ class SynaccessClient:
                 return names
         chosen = first_useful or first_page
         self._log_name_miss(origin, chosen)
-        if chosen and looks_like_login(int(chosen["status"]), str(chosen["body"])):
+        if chosen and int(chosen["status"]) == 401:
+            raise UpstreamError(AUTH_MESSAGE)
+        if chosen and looks_like_login(str(chosen["body"])):
             raise UpstreamError(LOGIN_MESSAGE)
         if chosen is None:
             raise UpstreamError("Couldn't read outlet names from the PDU (no page answered)")

@@ -346,11 +346,11 @@ def pdu_name_diagnostics(hub: Hub, pdu_id: int) -> dict[str, Any]:
     from wakehub.clients.synaccess import redact_diagnostics
 
     row = _row(hub, "pdu", pdu_id)
-    _username, secret = _resolved_login(hub, row)
+    username, secret = _resolved_login(hub, row)
     pages = []
     for page in _NAME_PAGES.get(pdu_id, []):
         cleaned = dict(page)
-        cleaned["body"] = redact_diagnostics(str(page.get("body") or ""), secret)
+        cleaned["body"] = redact_diagnostics(str(page.get("body") or ""), secret, username)
         pages.append(cleaned)
     return {"pdu_id": pdu_id, "pages": pages}
 
@@ -398,10 +398,10 @@ def refresh_pdu_outlet_names(hub: Hub, pdu_id: int, *, timeout: float | None = N
 
 
 def _names_failure(detail: str) -> str:
-    from wakehub.clients.synaccess import LOGIN_MESSAGE
+    from wakehub.clients.synaccess import AUTH_MESSAGE, LOGIN_MESSAGE
 
     text = (detail or "the PDU did not return outlet names").strip()
-    if text == LOGIN_MESSAGE or text.startswith("Couldn't read outlet names from the PDU"):
+    if text in {LOGIN_MESSAGE, AUTH_MESSAGE} or text.startswith("Couldn't read outlet names from the PDU"):
         return text
     return f"Couldn't read outlet names from the PDU ({text})"
 

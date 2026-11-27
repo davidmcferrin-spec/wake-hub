@@ -84,4 +84,14 @@ def test_poll_skips_when_busy_and_buttons_do_not_wait_for_it(live_server, hub):
                 }"""
             )
         assert "is on" in page.locator("[data-live-status^='amt-']").inner_text()
+        with page.expect_response("**/api/v1/amt/**/power"):
+            page.evaluate(
+                """() => {
+                  const node = document.querySelector("[data-live-status^='amt-']");
+                  node.dataset.freshAt = "0";
+                  node.dataset.amtPolled = "0";
+                  window.pollAmt();
+                }"""
+            )
+        assert page.locator("[data-live-status^='amt-']").inner_text() == "Unreachable"
         browser.close()
