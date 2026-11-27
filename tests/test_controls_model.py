@@ -382,6 +382,22 @@ def test_after_commit_stays_with_the_request_that_registered_it(hub):
     assert finished.count("b") == 1
 
 
+def test_an_interrupted_transaction_does_not_leak_into_the_next_commit(hub):
+    class Stop(BaseException):
+        pass
+
+    before = hub.setting("cors_origins")
+    try:
+        with hub.transaction():
+            hub.write("UPDATE settings SET value = ? WHERE key = ?", ("https://example.test", "cors_origins"))
+            raise Stop()
+    except Stop:
+        pass
+    assert hub.setting("cors_origins") == before
+    hub.write("UPDATE settings SET value = value WHERE key = ?", ("cors_origins",))
+    assert hub.setting("cors_origins") == before
+
+
 def test_scan_offers_add_amt_to_the_matching_device(hub):
     hub.write(
         "INSERT INTO devices (name, mac, host, broadcast, wol_port, notes, tags, enabled, reach_mode, reach_timeout, reach_timeout_set, wake_strategy, power_method, methods, created_at, updated_at) VALUES ('UNRAID', '02:00:00:00:00:97', '192.168.0.97', '255.255.255.255', 9, '', '[]', 1, 'icmp', 30, 0, 'wol_only', 'auto', ?, 't', 't')",

@@ -219,7 +219,12 @@ def _execute(hub: Hub, salvo_name: str, action: str, target: dict[str, Any], sou
 
 
 def _step_view(step: dict[str, Any]) -> dict[str, Any]:
-    return {"step": step["step"], "action": step["action"], "delay_seconds": step["delay_seconds"]}
+    return {
+        "step": step["step"],
+        "action": step["action"],
+        "delay_seconds": step["delay_seconds"],
+        "method": step.get("method") or "auto",
+    }
 
 
 def _targets_view(step: dict[str, Any]) -> list[dict[str, Any]]:

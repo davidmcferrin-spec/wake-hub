@@ -66,6 +66,8 @@ h1 {
 
 .lede { color: var(--muted); line-height: 1.45; }
 
+.salvo-layout { padding: var(--s4); }
+
 .gate {
   min-height: 100vh;
   display: grid;

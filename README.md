@@ -25,7 +25,7 @@ On a machine that is not Unraid, create those directories or change the bind mou
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `PORT` | `8765` | Web UI, REST and MCP |
+| `PORT` | `8765` | Web UI, REST and MCP. Life-Dashboard's MCP also uses 8765; when both run on one host, set `PORT=8766` and map that port |
 | `PUID` / `PGID` | `99` / `100` | Volume owner |
 | `WAKEHUB_SECRET_KEY` | generated file | Encrypts the API token and device passwords |
 | `WAKEHUB_CORS` | empty | Browser origins allowed to call the API. Empty blocks cross-origin calls |
@@ -38,6 +38,8 @@ Config lives in `/config`. SQLite lives in `/data`.
 
 **Community Applications.** The template is `unraid/wake-hub.xml`. Use the same appdata paths, host networking, and `NET_RAW`. The port variable is `8765`.
 
+**Port clash.** `8765` is also the Life-Dashboard MCP port. When both run on one Unraid host, set `PORT=8766` and map that port instead of 8765.
+
 **Update.** Pull `ghcr.io/davidmcferrin-spec/wake-hub:latest` and recreate the container. The database and key stay on the appdata share. Images are built for `linux/amd64` and `linux/arm64` by `.github/workflows/image.yml`. GitHub Container Registry packages are private by default. Either make the package public or run `docker login ghcr.io` on the Unraid host before the pull.
 
 ## What you can control
@@ -45,7 +47,7 @@ Config lives in `/config`. SQLite lives in `/data`.
 - **Inventory.** Name, MAC, host, broadcast, WOL port, optional SecureOn password, notes, tags, enabled flag, and one or more power methods. Disabled devices are listed but cannot be acted on. A MAC or host can belong to only one device, and a host can belong to only one PDU, AMT endpoint, JetKVM, plug, or UPS. A repeat is a conflict that names the existing record. Hosts and MACs are compared after normalizing case, whitespace, and IPv6 spelling. Rows that were already duplicated are left in place and listed in settings.
 - **Wake-on-LAN.** Magic packet to a directed broadcast on port 9 or 7, then ICMP or a TCP port until the host answers or the timeout ends. `wake_strategy=power_then_wol` turns a linked plug or PDU outlet on before the packet.
 - **Synaccess netBooter.** Add by IP and credentials. List outlets, switch one on, off or reboot. Outlet names are read from the PDU when it is added, when outlets are refreshed, and from Re-read from device. A local name overrides the one on the device. The NP-1601DU reports inlet bank current, not per-outlet current, and older firmware has no name command; names then come from the outlet setup page when that page includes them.
-- **Intel AMT / vPro.** Digest auth on port 16992 or 16993. TLS can allow that device's self-signed certificate. Read power state and request on, graceful off, hard off, power cycle, reset, or graceful shutdown through WS-Management. Those buttons are on the AMT record itself, on the Hardware page and in the Devices list, whether or not it is linked to a computer. If the status read fails, the buttons stay and the error is shown.
+- **Intel AMT / vPro.** Digest auth on port 16992 or 16993. TLS can allow that device's self-signed certificate. Read power state and request on, graceful off, hard off, power cycle, reset, or graceful shutdown through WS-Management. Those buttons are on the AMT card in the Devices list, whether or not it is linked to a computer. Hardware is only where you set the address and login. If the status read fails, the buttons stay and the error is shown.
 - **JetKVM.** Local password or no password. Reachability, ATX short press, long press, reset, DC on/off when that extension is present, and a console URL that opens in a new tab.
 - **Shelly Plug US Gen4.** Gen2 RPC (`Switch.GetStatus`, `Switch.Set`, `Switch.Toggle`) with optional digest auth, plus power, voltage and energy when the plug reports them.
 - **Kasa (EP10, EP25, KP125M and the same family).** Legacy XOR on port 9999, and KLAP on current firmware using the TP-Link account email and password. Energy is read on models that report it.

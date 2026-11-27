@@ -95,11 +95,12 @@ function deviceLinks(device) {
     const item = (hardware.pdus || []).find((row) => row.id === method.pdu_id);
     const outlet = (item && item.outlets || []).find((row) => row.number === method.outlet);
     const label = outlet ? outlet.name : `Outlet ${method.outlet}`;
+    const pduName = item ? item.name : "PDU";
     lines.push(`<div class="row-actions">
-      <span class="meta">${escapeHtml(item ? item.name : "PDU")} ${escapeHtml(label)}</span>
-      <button type="button" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${method.pdu_id}" data-outlet="${method.outlet}" data-action="on">On</button>
-      <button type="button" class="danger" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${method.pdu_id}" data-outlet="${method.outlet}" data-action="off">Off</button>
-      <button type="button" class="danger" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${method.pdu_id}" data-outlet="${method.outlet}" data-action="cycle">Cycle</button>
+      <span class="meta">${escapeHtml(pduName)} ${escapeHtml(label)}</span>
+      <button type="button" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${method.pdu_id}" data-pdu-name="${escapeHtml(pduName)}" data-outlet="${method.outlet}" data-outlet-name="${escapeHtml(label)}" data-action="on">On</button>
+      <button type="button" class="danger" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${method.pdu_id}" data-pdu-name="${escapeHtml(pduName)}" data-outlet="${method.outlet}" data-outlet-name="${escapeHtml(label)}" data-action="off">Off</button>
+      <button type="button" class="danger" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${method.pdu_id}" data-pdu-name="${escapeHtml(pduName)}" data-outlet="${method.outlet}" data-outlet-name="${escapeHtml(label)}" data-action="cycle">Cycle</button>
     </div>`);
   }
   return lines.join("");
@@ -155,6 +156,23 @@ function methodForAction(device, action) {
   return capable[0] || null;
 }
 
+function useMenuMethods(device) {
+  const capable = {
+    off: ["plug", "pdu", "amt", "ups", "jetkvm", "roku"],
+    reboot: ["amt", "plug", "pdu", "ups", "jetkvm"],
+    cycle: ["plug", "pdu", "amt", "ups", "jetkvm"],
+    shutdown: ["amt", "ups", "jetkvm"],
+  };
+  const seen = [];
+  ((device && device.methods) || []).forEach((item) => {
+    const kind = item.kind;
+    if (!kind || kind === "wol" || seen.includes(kind)) return;
+    const fits = Object.values(capable).some((kinds) => kinds.includes(kind));
+    if (fits) seen.push(kind);
+  });
+  return seen;
+}
+
 function actionButton(device, action, verb, tone) {
   if (!methodForAction(device, action)) return "";
   return `<button type="button" class="${tone}" data-cap="power_action" data-fields="action,confirm,method" data-action="${action}" data-id="${device.id}">${escapeHtml(via(device, action, verb))}</button>`;
@@ -197,7 +215,7 @@ function recordCard(spec) {
 window.recordCard = recordCard;
 
 function deviceCard(device) {
-  const choices = ((device.methods || [{ kind: "wol" }])).map((item) => `<option value="${escapeHtml(item.kind)}">${escapeHtml(methodName(item.kind))}</option>`).join("");
+  const choices = useMenuMethods(device).map((kind) => `<option value="${escapeHtml(kind)}">${escapeHtml(methodName(kind))}</option>`).join("");
   return recordCard({
     kind: "device",
     id: device.id,
@@ -635,7 +653,8 @@ window.runSalvo = async function (el) {
   const lines = [];
   (preview.steps || []).forEach((step) => {
     const wait = step.delay_seconds ? ` after ${step.delay_seconds}s` : "";
-    (step.targets || []).forEach((target) => lines.push(`${step.action} ${target.name}${wait}`));
+    const via = step.method && step.method !== "auto" ? ` via ${methodName(step.method)}` : "";
+    (step.targets || []).forEach((target) => lines.push(`${step.action} ${target.name}${via}${wait}`));
   });
   if (!lines.length) {
     showBanner(`${preview.name} does not match any devices.`, true);
