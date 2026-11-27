@@ -8,14 +8,14 @@ license = "MIT"
 dependencies = [
   "fastapi>=0.115",
   "uvicorn[standard]>=0.32",
-  "mcp>=1.9",
+  "mcp>=2.0,<3",
   "httpx>=0.27",
   "cryptography>=43",
   "pydantic>=2.9",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "httpx2>=2"]
 
 [project.scripts]
 wake-hub = "wakehub.main:main"

@@ -6,6 +6,7 @@ import hashlib
 import ipaddress
 import json
 import logging
+import re
 import secrets
 import sqlite3
 from datetime import datetime, timezone
@@ -66,15 +67,33 @@ def _ipv4(value: str, label: str) -> str:
         raise WakeHubError(f"{label} must be an IPv4 address") from exc
 
 
+_HOST_LABEL = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
+
+
+def validate_host(value: str) -> str:
+    """An IPv4/IPv6 address or a hostname whose labels do not start or end with '-'."""
+    text = value.strip().rstrip(".")
+    if not text or text.startswith("-") or ".." in text or any(ch.isspace() for ch in text):
+        raise WakeHubError("host must be an IP address or a hostname")
+    try:
+        return str(ipaddress.ip_address(text))
+    except ValueError:
+        pass
+    if len(text) > 253:
+        raise WakeHubError("host must be an IP address or a hostname")
+    labels = text.split(".")
+    if not labels or any(_HOST_LABEL.fullmatch(label) is None for label in labels):
+        raise WakeHubError("host must be an IP address or a hostname")
+    return text
+
+
 def _host(value: str | None) -> str | None:
     if value is None:
         return None
     text = value.strip()
     if not text:
         return None
-    if any(ch.isspace() for ch in text):
-        raise WakeHubError("host must not contain spaces")
-    return text
+    return validate_host(text)
 
 
 def public_device(row: Any) -> dict[str, Any]:
@@ -550,8 +569,8 @@ def update_settings(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
         hub.write("DELETE FROM settings WHERE key = 'ui_password'")
     elif payload.get("ui_password"):
         password = str(payload["ui_password"])
-        if len(password) < 4:
-            raise WakeHubError("UI password must be at least 4 characters")
+        if len(password) < 8:
+            raise WakeHubError("UI password must be at least 8 characters")
         hub._write_setting("ui_password", hash_password(password))
     if payload.get("cors_origins") is not None:
         origins = payload["cors_origins"]
@@ -563,13 +582,33 @@ def update_settings(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
     return public_settings(hub)
 
 
-def ui_login(hub: Hub, password: str) -> dict[str, Any]:
+def ui_login(hub: Hub, password: str, *, client: str) -> dict[str, Any]:
+    if hub.attempts_blocked(f"ui:{client}"):
+        raise Unauthorized("too many attempts; try again later")
     stored = hub.setting("ui_password")
     if not stored:
+        hub.note_attempt(f"ui:{client}", ok=False)
         raise WakeHubError("UI password is not set")
     if not verify_password(password, stored):
+        hub.note_attempt(f"ui:{client}", ok=False)
         raise Unauthorized("UI password is wrong")
-    return {"ok": True, "token": hub.token}
+    hub.note_attempt(f"ui:{client}", ok=True)
+    return {"ok": True}
+
+
+def ui_setup(hub: Hub, api_token: str, password: str, *, client: str) -> dict[str, Any]:
+    if hub.setting("ui_password"):
+        raise Conflict("UI password is already set")
+    if hub.attempts_blocked(f"setup:{client}"):
+        raise Unauthorized("too many attempts; try again later")
+    if not token_matches(api_token, hub.token):
+        hub.note_attempt(f"setup:{client}", ok=False)
+        raise Unauthorized("API token is wrong")
+    if len(password) < 8:
+        raise WakeHubError("UI password must be at least 8 characters")
+    hub._write_setting("ui_password", hash_password(password))
+    hub.note_attempt(f"setup:{client}", ok=True)
+    return {"ok": True}
 
 
 def token_matches(presented: str, expected: str) -> bool:

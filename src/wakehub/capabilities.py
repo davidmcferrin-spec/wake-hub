@@ -40,6 +40,8 @@ CAPABILITIES: tuple[Capability, ...] = (
     Capability("get_access_token", "Show the API token", "GET", "/api/v1/access-token", "get_access_token"),
     Capability("rotate_token", "Rotate the API token", "POST", "/api/v1/access-token/rotate", "rotate_token"),
     Capability("ui_login", "Sign in to the web UI when a password is set", "POST", "/api/v1/ui/login", "ui_login"),
+    Capability("ui_setup", "Set the UI password using the API token", "POST", "/api/v1/ui/setup", "ui_setup"),
+    Capability("get_ui_session", "Read the UI session", "GET", "/api/v1/ui/session", "get_ui_session"),
 )
 
 

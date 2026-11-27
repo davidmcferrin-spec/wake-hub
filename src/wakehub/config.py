@@ -26,8 +26,8 @@ class Settings:
         in_docker = Path("/config").is_dir() and os.environ.get("WAKEHUB_CONFIG_DIR") is None and Path("/.dockerenv").exists()
         config_default = "/config" if in_docker else "config"
         data_default = "/data" if in_docker else "data"
-        raw_cors = os.environ.get("WAKEHUB_CORS", "*")
-        origins = tuple(part.strip() for part in raw_cors.split(",") if part.strip()) or ("*",)
+        raw_cors = os.environ.get("WAKEHUB_CORS", "")
+        origins = tuple(part.strip() for part in raw_cors.split(",") if part.strip())
         secret = os.environ.get("WAKEHUB_SECRET_KEY") or None
         return cls(
             config_dir=_path("WAKEHUB_CONFIG_DIR", config_default),

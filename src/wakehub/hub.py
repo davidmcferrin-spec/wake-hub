@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+import os
 import secrets
 import threading
+import time
 from typing import Any
 
 from wakehub.config import Settings
@@ -27,6 +29,8 @@ class Hub:
         self.cipher = load_cipher(settings.config_dir, settings.secret_key)
         self.token = self._load_or_create_token()
         self._ensure_cors_default()
+        self._attempts: dict[str, list[float]] = {}
+        self._attempt_lock = threading.Lock()
 
     @classmethod
     def open(cls, settings: Settings) -> Hub:
@@ -39,12 +43,15 @@ class Hub:
         row = self.db.execute("SELECT value FROM settings WHERE key = 'api_token'").fetchone()
         if row is not None:
             try:
-                return decrypt(self.cipher, row["value"])
+                token = decrypt(self.cipher, row["value"])
+                self._publish_token(token)
+                return token
             except WakeHubError:
                 # The key file was replaced. A token we cannot read is useless, so mint a new one.
                 log.warning("stored API token could not be decrypted; generating a new token")
         token = secrets.token_urlsafe(32)
         self._write_setting("api_token", encrypt(self.cipher, token))
+        self._publish_token(token)
         return token
 
     def _ensure_cors_default(self) -> None:
@@ -69,14 +76,40 @@ class Hub:
         return row["value"]
 
     def cors_origins(self) -> list[str]:
-        raw = self.setting("cors_origins", "*") or "*"
+        raw = self.setting("cors_origins")
+        if raw is None:
+            raw = ",".join(self.settings.cors_origins)
         return [part.strip() for part in raw.split(",") if part.strip()]
+
+    def _publish_token(self, token: str) -> None:
+        # The file is how an operator completes first-run setup. The log line is the same secret.
+        path = self.settings.config_dir / "token"
+        path.write_text(token + "\n", encoding="utf-8")
+        os.chmod(path, 0o600)
+        log.info("API token written to %s", path)
+        log.info("Wake Hub API token: %s", token)
 
     def rotate_token(self) -> str:
         token = secrets.token_urlsafe(32)
         self._write_setting("api_token", encrypt(self.cipher, token))
         self.token = token
+        self._publish_token(token)
         return token
+
+    def note_attempt(self, key: str, *, ok: bool) -> None:
+        now = time.monotonic()
+        with self._attempt_lock:
+            recent = [stamp for stamp in self._attempts.get(key, []) if now - stamp < 900]
+            if not ok:
+                recent.append(now)
+            self._attempts[key] = [] if ok else recent
+
+    def attempts_blocked(self, key: str) -> bool:
+        now = time.monotonic()
+        with self._attempt_lock:
+            recent = [stamp for stamp in self._attempts.get(key, []) if now - stamp < 900]
+            self._attempts[key] = recent
+            return len(recent) >= 5
 
     def query(self, sql: str, params: tuple[Any, ...] = ()) -> list[Any]:
         with self.lock:

@@ -181,7 +181,7 @@ function renderHistory() {
 }
 
 function renderSettings() {
-  const settings = state.settings || { ui_password_set: false, cors_origins: ["*"] };
+  const settings = state.settings || { ui_password_set: false, cors_origins: [] };
   $("view").innerHTML = `
     <section class="panel" style="padding:1rem" data-cap="get_access_token">
       <h2>API token</h2>
@@ -196,7 +196,7 @@ function renderSettings() {
       <h2>Browser access</h2>
       <label for="cors">CORS origins</label>
       <input id="cors" name="cors" value="${escapeHtml(settings.cors_origins.join(", "))}">
-      <label for="new-password">UI password ${settings.ui_password_set ? "(one is set)" : "(optional)"}</label>
+      <label for="new-password">UI password ${settings.ui_password_set ? "(one is set)" : "(required, at least 8 characters)"}</label>
       <input id="new-password" name="ui_password" type="password" autocomplete="new-password" placeholder="leave blank to keep">
       <label class="check"><input type="checkbox" name="clear_ui_password"> Remove the UI password</label>
       <div class="row-actions" style="margin-top:0.8rem">
@@ -342,6 +342,22 @@ function reachText(result) {
 
 async function onSubmit(event) {
   const form = event.target;
+  if (form.id === "setup-form") {
+    event.preventDefault();
+    const response = await fetch("/api/v1/ui/setup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ api_token: $("setup-token").value, password: $("setup-password").value }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      $("setup-error").textContent = data.error ? data.error.message : "Setup failed";
+      return;
+    }
+    $("setup").classList.add("hidden");
+    await boot();
+    return;
+  }
   if (form.id === "login-form") {
     event.preventDefault();
     const password = $("ui-password").value;
@@ -355,10 +371,8 @@ async function onSubmit(event) {
       $("login-error").textContent = data.error ? data.error.message : "Login failed";
       return;
     }
-    state.token = data.token;
     $("login").classList.add("hidden");
-    $("app").classList.remove("hidden");
-    await show("devices");
+    await boot();
     return;
   }
   if (form.id === "device-form") {
@@ -408,7 +422,15 @@ function escapeHtml(value) {
 async function boot() {
   const response = await fetch("/api/v1/ui/session");
   if (response.status === 401) {
-    $("login").classList.remove("hidden");
+    const data = await response.json();
+    $("app").classList.add("hidden");
+    if (data.setup_required) {
+      $("login").classList.add("hidden");
+      $("setup").classList.remove("hidden");
+    } else {
+      $("setup").classList.add("hidden");
+      $("login").classList.remove("hidden");
+    }
     return;
   }
   const data = await response.json();

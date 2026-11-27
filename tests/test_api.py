@@ -102,7 +102,16 @@ def test_rotate_token_and_ui_password(client, hub):
     assert client.get("/api/v1/ui/session").status_code == 401
     logged_in = client.post("/api/v1/ui/login", json={"password": "correct horse"})
     assert logged_in.status_code == 200
-    assert logged_in.json()["token"] == new
+    assert "token" not in logged_in.json()
     session = client.get("/api/v1/ui/session")
     assert session.status_code == 200
     assert session.json()["token"] == new
+
+
+def test_session_does_not_leak_the_token(client, hub):
+    response = client.get("/api/v1/ui/session", headers={"Origin": "http://evil.example"})
+    assert response.status_code == 401
+    body = response.json()
+    assert "token" not in body
+    assert hub.token not in response.text
+    assert response.headers.get("access-control-allow-origin") is None

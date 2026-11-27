@@ -1,5 +1,5 @@
 # Host networking is required so Wake-on-LAN broadcasts leave the container
-# and, later, so ARP discovery can see the LAN.
+# and ARP discovery can see the LAN.
 services:
   wake-hub:
     build: .
@@ -12,7 +12,7 @@ services:
       PUID: "99"
       PGID: "100"
       PORT: "8765"
-      WAKEHUB_CORS: "*"
+      WAKEHUB_CORS: ""
     volumes:
       - /mnt/user/appdata/wake-hub/config:/config
       - /mnt/user/appdata/wake-hub/data:/data

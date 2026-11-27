@@ -30,6 +30,7 @@ from wakehub.inventory import (
     set_enabled,
     token_matches,
     ui_login,
+    ui_setup,
     update_device,
     update_settings,
     wake_device,
@@ -46,6 +47,7 @@ PUBLIC = {
     ("GET", "/redoc"),
     ("GET", "/favicon.ico"),
     ("POST", "/api/v1/ui/login"),
+    ("POST", "/api/v1/ui/setup"),
     ("GET", "/api/v1/ui/session"),
 }
 
@@ -121,6 +123,11 @@ class SettingsIn(BaseModel):
 
 
 class LoginIn(BaseModel):
+    password: str
+
+
+class SetupIn(BaseModel):
+    api_token: str
     password: str
 
 
@@ -239,10 +246,11 @@ def create_app(hub: Hub) -> FastAPI:
         title="Wake Hub",
         version=__version__,
         lifespan=lifespan,
-        summary="LAN power control for Wake-on-LAN and, in later revisions, PDU, AMT, JetKVM, plugs and UPS.",
+        summary="LAN power control for Wake-on-LAN. PDU, AMT, JetKVM, plugs and UPS land in the next change.",
         description=(
             "Versioned REST API at /api/v1. Send Authorization: Bearer <token>. "
-            "The token is generated on first start and shown in the web UI. "
+            "The token is written to /config/token and the container log. "
+            "The web UI requires a password. A signed-in browser can read the token from the session. "
             "The same token authenticates the MCP endpoint at /mcp."
         ),
     )
@@ -269,6 +277,18 @@ def create_app(hub: Hub) -> FastAPI:
     return app
 
 
+def _client_key(request: Request) -> str:
+    if request.client is None:
+        return "unknown"
+    return request.client.host or "unknown"
+
+
+def _start_ui_session(hub: Hub, response: Response) -> None:
+    session = secrets.token_urlsafe(24)
+    hub._write_setting("ui_session", session)
+    response.set_cookie("wakehub_ui", session, httponly=True, samesite="lax", max_age=14 * 24 * 3600, path="/")
+
+
 def _error_response(_request: Request, exc: WakeHubError) -> JSONResponse:
     return JSONResponse(status_code=exc.status, content={"error": {"code": exc.code, "message": exc.message}})
 
@@ -276,25 +296,37 @@ def _error_response(_request: Request, exc: WakeHubError) -> JSONResponse:
 def _public_router() -> APIRouter:
     router = APIRouter(prefix="/api/v1")
 
-    @router.post("/ui/login", tags=["settings"])
-    def login(body: LoginIn, response: Response) -> dict[str, Any]:
+    @router.post("/ui/setup", tags=["settings"])
+    def setup(body: SetupIn, request: Request, response: Response) -> dict[str, Any]:
         hub = get_hub()
-        result = ui_login(hub, body.password)
-        session = secrets.token_urlsafe(24)
-        hub._write_setting("ui_session", session)
-        response.set_cookie("wakehub_ui", session, httponly=True, samesite="lax", max_age=14 * 24 * 3600, path="/")
+        result = ui_setup(hub, body.api_token, body.password, client=_client_key(request))
+        _start_ui_session(hub, response)
+        return result
+
+    @router.post("/ui/login", tags=["settings"])
+    def login(body: LoginIn, request: Request, response: Response) -> dict[str, Any]:
+        hub = get_hub()
+        result = ui_login(hub, body.password, client=_client_key(request))
+        _start_ui_session(hub, response)
         return result
 
     @router.get("/ui/session", tags=["settings"])
     def session(request: Request) -> dict[str, Any]:
         hub = get_hub()
         password_set = bool(hub.setting("ui_password"))
-        if password_set:
-            cookie = request.cookies.get("wakehub_ui", "")
-            expected = hub.setting("ui_session") or ""
-            if not cookie or not token_matches(cookie, expected):
-                raise Unauthorized("UI login required")
-        return {"token": hub.token, "password_required": password_set}
+        cookie = request.cookies.get("wakehub_ui", "")
+        expected = hub.setting("ui_session") or ""
+        if not password_set or not cookie or not token_matches(cookie, expected):
+            # No token in this body. Setup is gated by the API token from the log or /config/token.
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "error": {"code": "unauthorized", "message": "UI login required"},
+                    "setup_required": not password_set,
+                    "password_required": True,
+                },
+            )
+        return {"token": hub.token, "password_required": True, "setup_required": False}
 
     return router
 

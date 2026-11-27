@@ -19,7 +19,7 @@ def hub(tmp_path):
         host="127.0.0.1",
         port=0,
         secret_key="test-secret",
-        cors_origins=("*",),
+        cors_origins=(),
     )
     opened = Hub.open(settings)
     yield opened

@@ -194,7 +194,7 @@ def build_server() -> MCPServer:
         clear_ui_password: bool = False,
         cors_origins: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Change settings. Set ui_password to require a password in the browser. clear_ui_password removes it. cors_origins is the list of allowed browser origins, or ['*']."""
+        """Change settings. Set ui_password to require a password in the browser. clear_ui_password removes it. cors_origins is the list of allowed browser origins. An empty list blocks cross-origin calls."""
         payload: dict[str, Any] = {"clear_ui_password": clear_ui_password}
         if ui_password is not None:
             payload["ui_password"] = ui_password
@@ -217,7 +217,21 @@ def build_server() -> MCPServer:
     @server.tool()
     @expose
     def ui_login(password: str) -> dict[str, Any]:
-        """Check the web UI password. Fails when no UI password is set or the password is wrong. On success, returns the API token, the same way the browser login does."""
-        return records.ui_login(get_hub(), password)
+        """Check the web UI password. Fails when no UI password is set or the password is wrong. Does not return the bearer token."""
+        return records.ui_login(get_hub(), password, client="mcp")
+
+    @server.tool()
+    @expose
+    def ui_setup(api_token: str, password: str) -> dict[str, Any]:
+        """Set the web UI password on first run. api_token is the bearer token from /config/token or the container log. The password must be at least 8 characters."""
+        return records.ui_setup(get_hub(), api_token, password, client="mcp")
+
+    @server.tool()
+    @expose
+    def get_ui_session() -> dict[str, Any]:
+        """Report whether the web UI still needs first-run setup. Does not return the bearer token."""
+        hub = get_hub()
+        password_set = bool(hub.setting("ui_password"))
+        return {"password_required": True, "setup_required": not password_set}
 
     return server
