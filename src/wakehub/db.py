@@ -189,6 +189,7 @@ CREATE TABLE IF NOT EXISTS rokus (
 CREATE TABLE IF NOT EXISTS salvos (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
+    slug TEXT NOT NULL UNIQUE,
     steps TEXT NOT NULL DEFAULT '[]',
     on_error TEXT NOT NULL DEFAULT 'stop',
     schedule TEXT,
@@ -202,6 +203,28 @@ def _ensure_column(conn: sqlite3.Connection, table: str, name: str, declaration:
     have = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
     if name not in have:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
+
+
+def _backfill_salvo_slugs(conn: sqlite3.Connection) -> None:
+    # A database created before slugs existed still needs a stable path key.
+    from wakehub.salvos import slugify
+
+    have = {row[1] for row in conn.execute("PRAGMA table_info(salvos)")}
+    if "slug" not in have:
+        return
+    used = {row["slug"] for row in conn.execute("SELECT slug FROM salvos") if row["slug"]}
+    for row in conn.execute("SELECT id, name, slug FROM salvos ORDER BY id"):
+        if row["slug"]:
+            continue
+        base = slugify(row["name"])
+        slug = base
+        number = 2
+        while slug in used:
+            slug = f"{base}-{number}"
+            number += 1
+        used.add(slug)
+        conn.execute("UPDATE salvos SET slug = ? WHERE id = ?", (slug, row["id"]))
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS salvos_slug ON salvos (slug)")
 
 
 def connect(path: Path) -> sqlite3.Connection:
@@ -226,5 +249,7 @@ def connect(path: Path) -> sqlite3.Connection:
     from wakehub.identity import migrate_identity
 
     migrate_identity(conn)
+    _ensure_column(conn, "salvos", "slug", "TEXT")
+    _backfill_salvo_slugs(conn)
     conn.commit()
     return conn

@@ -25,8 +25,13 @@ def test_salvo_preview_lists_tag_matches_and_run_needs_one_confirm(client, monke
     assert created.status_code == 201, created.text
     body = created.json()
     assert body["schedule"] is None
+    assert body["slug"] == "all-lights-off"
+    renamed = client.patch(f"/api/v1/salvos/{body['slug']}", json={"name": "Lights out"})
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["slug"] == "all-lights-off"
+    assert renamed.json()["name"] == "Lights out"
     assert body["steps"][0]["tags"] == ["Lights", "Office"]
-    preview = client.post(f"/api/v1/salvos/{body['id']}/run", json={"dry_run": True, "confirm": False})
+    preview = client.post(f"/api/v1/salvos/{body['slug']}/run", json={"dry_run": True, "confirm": False})
     assert preview.status_code == 200, preview.text
     first = preview.json()["steps"][0]["targets"]
     assert [item["name"] for item in first] == ["Desk"]
@@ -45,7 +50,8 @@ def test_salvo_preview_lists_tag_matches_and_run_needs_one_confirm(client, monke
     assert slept == [2]
     assert ran.json()["stopped"] is False
     history = client.get("/api/v1/actions").json()
-    assert any(item["target_name"] == "Desk" and "salvo All Lights Off" in item["detail"] for item in history)
+    assert any(item["target_name"] == "Desk" and "salvo Lights out" in item["detail"] for item in history)
+    assert [item["name"] for item in ran.json()["results"]] == ["Desk", "Lamp"]
     assert spare["id"] not in {item["target_id"] for item in history if item["target_name"] == "Spare"}
 
     failing = client.post(
@@ -71,5 +77,6 @@ def test_salvo_preview_lists_tag_matches_and_run_needs_one_confirm(client, monke
     assert calls == []
     copied = client.post(f"/api/v1/salvos/{body['id']}/duplicate")
     assert copied.status_code == 201
-    assert copied.json()["name"] == "All Lights Off copy"
+    assert copied.json()["name"] == "Lights out copy"
+    assert copied.json()["slug"] == "lights-out-copy"
     assert copied.json()["steps"] == body["steps"]

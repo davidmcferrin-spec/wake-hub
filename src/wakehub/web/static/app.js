@@ -331,13 +331,14 @@ function captureSalvoDraft() {
   state.salvoDraft = {
     id: previous && previous.id,
     name: form.elements.name.value,
+    slug: form.elements.slug ? form.elements.slug.value : "",
     on_error: form.elements.on_error.value,
     steps: steps.length ? steps : [blankSalvoStep()],
   };
 }
 
 function salvoPayload(draft) {
-  return {
+  const payload = {
     name: draft.name,
     on_error: draft.on_error,
     steps: draft.steps.map((step) => ({
@@ -348,6 +349,8 @@ function salvoPayload(draft) {
       delay_seconds: Number(step.delay_seconds || 0),
     })),
   };
+  if (String(draft.slug || "").trim()) payload.slug = String(draft.slug).trim();
+  return payload;
 }
 
 function salvoRecordOptions(kind, selected) {
@@ -377,12 +380,13 @@ function salvoPanel() {
   const cards = (state.salvos || []).map((salvo) => `
     <article class="card">
       <h2>${escapeHtml(salvo.name)}</h2>
+      <p class="meta">${escapeHtml(salvo.slug || "")}</p>
       <p class="sub">${salvo.steps.length} step${salvo.steps.length === 1 ? "" : "s"} · ${salvo.on_error === "continue" ? "continue on error" : "stop on error"}</p>
       <div class="row-actions">
-        <button type="button" class="primary" data-cap="run_salvo" data-fields="confirm,dry_run" data-id="${salvo.id}">Run</button>
-        <button type="button" class="ghost" data-cap="get_salvo" data-fields="" data-id="${salvo.id}">Edit</button>
-        <button type="button" class="ghost" data-cap="duplicate_salvo" data-fields="" data-id="${salvo.id}">Duplicate</button>
-        <button type="button" class="danger" data-cap="remove_salvo" data-fields="" data-id="${salvo.id}">Delete</button>
+        <button type="button" class="primary" data-cap="run_salvo" data-fields="confirm,dry_run" data-id="${escapeHtml(salvo.slug || salvo.id)}">Run</button>
+        <button type="button" class="ghost" data-cap="get_salvo" data-fields="" data-id="${escapeHtml(salvo.slug || salvo.id)}">Edit</button>
+        <button type="button" class="ghost" data-cap="duplicate_salvo" data-fields="" data-id="${escapeHtml(salvo.slug || salvo.id)}">Duplicate</button>
+        <button type="button" class="danger" data-cap="remove_salvo" data-fields="" data-id="${escapeHtml(salvo.slug || salvo.id)}">Delete</button>
       </div>
     </article>`).join("");
   return `<section class="panel" style="padding:1rem;margin-bottom:1rem">
@@ -390,6 +394,8 @@ function salvoPanel() {
     <p class="lede">A salvo is a named sequence, such as Home Away or All Lights Off. One confirmation covers the whole run, after a preview of every device it will hit.</p>
     <form id="salvo-form" class="hardware-form">
       <label>Name<input name="name" value="${escapeHtml(draft.name || "")}" required></label>
+      <label>Slug<input name="slug" value="${escapeHtml(draft.slug || "")}" placeholder="home-away"></label>
+      <p class="sub">The slug is the stable path, for example /api/v1/salvos/home-away/run. Leave it blank to build one from the name. Renaming the salvo does not change it.</p>
       <label>If a step fails
         <select name="on_error">
           <option value="stop" ${draft.on_error !== "continue" ? "selected" : ""}>Stop</option>
@@ -402,8 +408,8 @@ function salvoPanel() {
         <button type="button" class="ghost" id="add-salvo-step">Add step</button>
         <button type="button" class="ghost" data-cap="list_salvos" data-fields="">Refresh salvos</button>
         ${draft.id
-          ? `<button type="button" data-cap="update_salvo" data-fields="name,on_error,steps" data-id="${draft.id}">Update salvo</button>`
-          : `<button type="submit" data-cap="add_salvo" data-fields="name,on_error,steps">Save salvo</button>`}
+          ? `<button type="button" data-cap="update_salvo" data-fields="name,on_error,slug,steps" data-id="${escapeHtml(draft.id)}">Update salvo</button>`
+          : `<button type="submit" data-cap="add_salvo" data-fields="name,on_error,slug,steps">Save salvo</button>`}
       </div>
     </form>
     <div class="grid">${cards || `<div class="empty">No salvos yet.</div>`}</div>
@@ -440,8 +446,9 @@ window.saveSalvo = async function (id) {
 window.editSalvo = async function (el) {
   const salvo = await api("GET", `/api/v1/salvos/${el.dataset.id}`);
   state.salvoDraft = {
-    id: salvo.id,
+    id: salvo.slug || salvo.id,
     name: salvo.name,
+    slug: salvo.slug || "",
     on_error: salvo.on_error,
     steps: (salvo.steps.length ? salvo.steps : [blankSalvoStep()]).map((step) => ({
       target_kind: step.target_kind,
@@ -465,7 +472,7 @@ window.duplicateSalvo = async function (el) {
 window.deleteSalvo = async function (el) {
   if (!window.confirm("Delete this salvo?")) return;
   await api("DELETE", `/api/v1/salvos/${el.dataset.id}`);
-  if (state.salvoDraft && state.salvoDraft.id === Number(el.dataset.id)) state.salvoDraft = null;
+  if (state.salvoDraft && String(state.salvoDraft.id) === String(el.dataset.id)) state.salvoDraft = null;
   showBanner("Salvo deleted");
   await refreshDevices();
   render();

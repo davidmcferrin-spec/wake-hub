@@ -96,11 +96,11 @@ CAPABILITIES: tuple[Capability, ...] = (
     Capability("tag_action", "Wake or power records that share tags", "POST", "/api/v1/tags/action", "tag_action"),
     Capability("list_salvos", "List saved salvos", "GET", "/api/v1/salvos", "list_salvos"),
     Capability("add_salvo", "Save a salvo", "POST", "/api/v1/salvos", "add_salvo"),
-    Capability("get_salvo", "Read one salvo", "GET", "/api/v1/salvos/{salvo_id}", "get_salvo"),
-    Capability("update_salvo", "Edit a salvo", "PATCH", "/api/v1/salvos/{salvo_id}", "update_salvo"),
-    Capability("remove_salvo", "Remove a salvo", "DELETE", "/api/v1/salvos/{salvo_id}", "remove_salvo"),
-    Capability("duplicate_salvo", "Copy a salvo", "POST", "/api/v1/salvos/{salvo_id}/duplicate", "duplicate_salvo"),
-    Capability("run_salvo", "Preview or run a salvo", "POST", "/api/v1/salvos/{salvo_id}/run", "run_salvo"),
+    Capability("get_salvo", "Read one salvo", "GET", "/api/v1/salvos/{salvo}", "get_salvo"),
+    Capability("update_salvo", "Edit a salvo", "PATCH", "/api/v1/salvos/{salvo}", "update_salvo"),
+    Capability("remove_salvo", "Remove a salvo", "DELETE", "/api/v1/salvos/{salvo}", "remove_salvo"),
+    Capability("duplicate_salvo", "Copy a salvo", "POST", "/api/v1/salvos/{salvo}/duplicate", "duplicate_salvo"),
+    Capability("run_salvo", "Preview or run a salvo", "POST", "/api/v1/salvos/{salvo}/run", "run_salvo"),
 )
 
 

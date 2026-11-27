@@ -22,66 +22,85 @@ _SUPPORTS = {
 }
 
 
+def slugify(value: str) -> str:
+    chars: list[str] = []
+    previous_dash = False
+    for char in str(value or "").strip().lower():
+        if char.isalnum():
+            chars.append(char)
+            previous_dash = False
+        elif not previous_dash:
+            chars.append("-")
+            previous_dash = True
+    text = "".join(chars).strip("-")[:60]
+    return text or "salvo"
+
+
 def list_salvos(hub: Hub) -> list[dict[str, Any]]:
     return [_public(row) for row in hub.query("SELECT * FROM salvos ORDER BY name COLLATE NOCASE")]
 
 
-def get_salvo(hub: Hub, salvo_id: int) -> dict[str, Any]:
-    return _public(_row(hub, salvo_id))
+def get_salvo(hub: Hub, salvo: str) -> dict[str, Any]:
+    return _public(_resolve(hub, salvo))
 
 
 def add_salvo(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
     name = _name(payload.get("name"))
     steps = _steps(payload.get("steps"))
     on_error = _on_error(payload.get("on_error") or "stop")
+    slug = _unique_slug(hub, payload.get("slug") or name, explicit=bool(str(payload.get("slug") or "").strip()))
     now = utcnow()
     try:
         salvo_id = hub.write(
             """
-            INSERT INTO salvos (name, steps, on_error, schedule, created_at, updated_at)
-            VALUES (?, ?, ?, NULL, ?, ?)
+            INSERT INTO salvos (name, slug, steps, on_error, schedule, created_at, updated_at)
+            VALUES (?, ?, ?, ?, NULL, ?, ?)
             """,
-            (name, json.dumps(steps), on_error, now, now),
+            (name, slug, json.dumps(steps), on_error, now, now),
         )
     except sqlite3.IntegrityError as exc:
         raise Conflict(f"a salvo named {name} already exists") from exc
     return get_salvo(hub, salvo_id)
 
 
-def update_salvo(hub: Hub, salvo_id: int, payload: dict[str, Any]) -> dict[str, Any]:
-    current = _row(hub, salvo_id)
+def update_salvo(hub: Hub, salvo: str, payload: dict[str, Any]) -> dict[str, Any]:
+    current = _resolve(hub, salvo)
     name = _name(payload["name"]) if payload.get("name") else current["name"]
     steps = _steps(payload["steps"]) if "steps" in payload and payload["steps"] is not None else json.loads(current["steps"])
     on_error = _on_error(payload["on_error"]) if payload.get("on_error") else current["on_error"]
+    # The slug is the stable path. Renaming the salvo does not change it unless a new slug is sent.
+    slug = current["slug"]
+    if payload.get("slug"):
+        slug = _unique_slug(hub, payload["slug"], exclude_id=current["id"], explicit=True)
     try:
         hub.write(
-            "UPDATE salvos SET name=?, steps=?, on_error=?, updated_at=? WHERE id=?",
-            (name, json.dumps(steps), on_error, utcnow(), salvo_id),
+            "UPDATE salvos SET name=?, slug=?, steps=?, on_error=?, updated_at=? WHERE id=?",
+            (name, slug, json.dumps(steps), on_error, utcnow(), current["id"]),
         )
     except sqlite3.IntegrityError as exc:
         raise Conflict(f"a salvo named {name} already exists") from exc
-    return get_salvo(hub, salvo_id)
+    return get_salvo(hub, current["id"])
 
 
-def remove_salvo(hub: Hub, salvo_id: int) -> None:
-    _row(hub, salvo_id)
-    hub.write("DELETE FROM salvos WHERE id = ?", (salvo_id,))
+def remove_salvo(hub: Hub, salvo: str) -> None:
+    current = _resolve(hub, salvo)
+    hub.write("DELETE FROM salvos WHERE id = ?", (current["id"],))
 
 
-def duplicate_salvo(hub: Hub, salvo_id: int) -> dict[str, Any]:
-    current = get_salvo(hub, salvo_id)
+def duplicate_salvo(hub: Hub, salvo: str) -> dict[str, Any]:
+    current = get_salvo(hub, salvo)
     name = _copy_name(hub, current["name"])
     return add_salvo(hub, {"name": name, "steps": current["steps"], "on_error": current["on_error"]})
 
 
-def run_salvo(hub: Hub, salvo_id: int, *, confirm: bool, dry_run: bool, source: str) -> dict[str, Any]:
-    salvo = get_salvo(hub, salvo_id)
-    plan = [_plan_step(hub, index, step) for index, step in enumerate(salvo["steps"])]
+def run_salvo(hub: Hub, salvo: str, *, confirm: bool, dry_run: bool, source: str) -> dict[str, Any]:
+    current = get_salvo(hub, salvo)
+    plan = [_plan_step(hub, index, step) for index, step in enumerate(current["steps"])]
     if dry_run:
         steps = []
         for step in plan:
             steps.append({**_step_view(step), "targets": [{**item, "ok": None, "detail": "preview"} for item in _targets_view(step)]})
-        return _envelope(salvo, dry_run=True, stopped=False, steps=steps)
+        return _envelope(current, dry_run=True, stopped=False, steps=steps)
     if confirm is not True:
         raise ConfirmationRequired("running a salvo needs confirm set to true")
     steps: list[dict[str, Any]] = []
@@ -91,15 +110,15 @@ def run_salvo(hub: Hub, salvo_id: int, *, confirm: bool, dry_run: bool, source: 
             time.sleep(step["delay_seconds"])
         rows: list[dict[str, Any]] = []
         for target in step["targets"]:
-            outcome = _execute(hub, salvo["name"], step["action"], target, source)
+            outcome = _execute(hub, current["name"], step["action"], target, source)
             rows.append(outcome)
-            if not outcome["ok"] and salvo["on_error"] == "stop":
+            if not outcome["ok"] and current["on_error"] == "stop":
                 stopped = True
                 break
         steps.append({**_step_view(step), "targets": rows})
         if stopped:
             break
-    return _envelope(salvo, dry_run=False, stopped=stopped, steps=steps)
+    return _envelope(current, dry_run=False, stopped=stopped, steps=steps)
 
 
 def _plan_step(hub: Hub, index: int, step: dict[str, Any]) -> dict[str, Any]:
@@ -184,21 +203,40 @@ def _targets_view(step: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _envelope(salvo: dict[str, Any], *, dry_run: bool, stopped: bool, steps: list[dict[str, Any]]) -> dict[str, Any]:
+    results = []
+    for step in steps:
+        for target in step["targets"]:
+            results.append(
+                {
+                    "action": step["action"],
+                    "kind": target["kind"],
+                    "id": target["id"],
+                    "name": target["name"],
+                    "ok": target.get("ok"),
+                    "detail": target.get("detail"),
+                }
+            )
     return {
         "salvo_id": salvo["id"],
         "name": salvo["name"],
+        "slug": salvo["slug"],
         "dry_run": dry_run,
         "on_error": salvo["on_error"],
         "schedule": salvo["schedule"],
         "stopped": stopped,
+        "results": results,
         "steps": steps,
     }
 
 
-def _row(hub: Hub, salvo_id: int):
-    row = hub.query_one("SELECT * FROM salvos WHERE id = ?", (salvo_id,))
+def _resolve(hub: Hub, salvo: str | int):
+    text = str(salvo).strip()
+    # The slug is the stable key. A numeric string still finds the row id when no slug matches.
+    row = hub.query_one("SELECT * FROM salvos WHERE slug = ?", (text,))
+    if row is None and text.isdigit():
+        row = hub.query_one("SELECT * FROM salvos WHERE id = ?", (int(text),))
     if row is None:
-        raise NotFound(f"salvo {salvo_id} was not found")
+        raise NotFound(f"salvo {text} was not found")
     return row
 
 
@@ -206,6 +244,7 @@ def _public(row) -> dict[str, Any]:
     return {
         "id": row["id"],
         "name": row["name"],
+        "slug": row["slug"],
         "steps": json.loads(row["steps"] or "[]"),
         "on_error": row["on_error"],
         # Nothing schedules a salvo yet. The column is here so a timer can be added without a new table.
@@ -274,6 +313,23 @@ def _step(item: object, index: int) -> dict[str, Any]:
         "action": action,
         "delay_seconds": delay,
     }
+
+
+def _unique_slug(hub: Hub, value: object, *, exclude_id: int | None = None, explicit: bool = False) -> str:
+    base = slugify(str(value or ""))
+    taken = {
+        row["slug"]
+        for row in hub.query("SELECT id, slug FROM salvos")
+        if row["slug"] and row["id"] != exclude_id
+    }
+    if base not in taken:
+        return base
+    if explicit:
+        raise Conflict(f"a salvo slug {base} already exists")
+    number = 2
+    while f"{base}-{number}" in taken:
+        number += 1
+    return f"{base}-{number}"
 
 
 def _copy_name(hub: Hub, name: str) -> str:

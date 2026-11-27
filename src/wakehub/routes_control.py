@@ -264,12 +264,14 @@ class SalvoIn(BaseModel):
     name: str
     steps: list[SalvoStepIn] = []
     on_error: str = "stop"
+    slug: str | None = None
 
 
 class SalvoPatch(BaseModel):
     name: str | None = None
     steps: list[SalvoStepIn] | None = None
     on_error: str | None = None
+    slug: str | None = None
 
 
 class SalvoRunIn(BaseModel):
@@ -529,28 +531,28 @@ def control_router() -> APIRouter:
     def create_salvo(body: SalvoIn) -> dict[str, Any]:
         return add_salvo(get_hub(), body.model_dump())
 
-    @router.get("/salvos/{salvo_id}", tags=["salvos"])
-    def one_salvo(salvo_id: int) -> dict[str, Any]:
-        return get_salvo(get_hub(), salvo_id)
+    @router.get("/salvos/{salvo}", tags=["salvos"])
+    def one_salvo(salvo: str) -> dict[str, Any]:
+        return get_salvo(get_hub(), salvo)
 
-    @router.patch("/salvos/{salvo_id}", tags=["salvos"])
-    def patch_salvo(salvo_id: int, body: SalvoPatch) -> dict[str, Any]:
-        return update_salvo(get_hub(), salvo_id, body.model_dump(exclude_unset=True))
+    @router.patch("/salvos/{salvo}", tags=["salvos"])
+    def patch_salvo(salvo: str, body: SalvoPatch) -> dict[str, Any]:
+        return update_salvo(get_hub(), salvo, body.model_dump(exclude_unset=True))
 
-    @router.delete("/salvos/{salvo_id}", tags=["salvos"], status_code=204)
-    def delete_salvo(salvo_id: int):
-        remove_salvo(get_hub(), salvo_id)
+    @router.delete("/salvos/{salvo}", tags=["salvos"], status_code=204)
+    def delete_salvo(salvo: str):
+        remove_salvo(get_hub(), salvo)
         from fastapi import Response
 
         return Response(status_code=204)
 
-    @router.post("/salvos/{salvo_id}/duplicate", tags=["salvos"], status_code=201)
-    def copy_salvo(salvo_id: int) -> dict[str, Any]:
-        return duplicate_salvo(get_hub(), salvo_id)
+    @router.post("/salvos/{salvo}/duplicate", tags=["salvos"], status_code=201)
+    def copy_salvo(salvo: str) -> dict[str, Any]:
+        return duplicate_salvo(get_hub(), salvo)
 
-    @router.post("/salvos/{salvo_id}/run", tags=["salvos"])
-    def run_one_salvo(salvo_id: int, body: SalvoRunIn, request: Request) -> dict[str, Any]:
-        return run_salvo(get_hub(), salvo_id, confirm=body.confirm, dry_run=body.dry_run, source=request_source(request))
+    @router.post("/salvos/{salvo}/run", tags=["salvos"])
+    def run_one_salvo(salvo: str, body: SalvoRunIn, request: Request) -> dict[str, Any]:
+        return run_salvo(get_hub(), salvo, confirm=body.confirm, dry_run=body.dry_run, source=request_source(request))
 
     @router.get("/interfaces", tags=["scan"])
     def interfaces() -> list[dict[str, Any]]:

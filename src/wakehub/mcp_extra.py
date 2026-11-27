@@ -256,60 +256,60 @@ def register(server) -> None:
     @server.tool()
     @expose
     def list_salvos() -> list[dict[str, Any]]:
-        """List saved salvos. A salvo is an ordered list of power steps. schedule is unused."""
+        """List saved salvos, the named scenes such as Home Away or All Lights Off. Call this before run_salvo and use the slug it returns. This does not change power. schedule is unused."""
         from wakehub.salvos import list_salvos as collect
 
         return collect(get_hub())
 
     @server.tool()
     @expose
-    def get_salvo(salvo_id: int) -> dict[str, Any]:
-        """Read one salvo, including its steps."""
+    def get_salvo(salvo: str) -> dict[str, Any]:
+        """Read one salvo by slug or numeric id, including its ordered steps. Does not change power."""
         from wakehub.salvos import get_salvo as read
 
-        return read(get_hub(), salvo_id)
+        return read(get_hub(), salvo)
 
     @server.tool()
     @expose
-    def add_salvo(name: str, steps: list[dict] | None = None, on_error: str = "stop") -> dict[str, Any]:
-        """Save a salvo. Each step targets one device, plug, or Roku, or a tag list that must all match. action is wake, on, off, cycle, or shutdown. delay_seconds waits before that step. on_error is stop or continue."""
+    def add_salvo(name: str, steps: list[dict] | None = None, on_error: str = "stop", slug: str | None = None) -> dict[str, Any]:
+        """Save a salvo. Each step targets one device, plug, or Roku, or a tag list that must all match. action is wake, on, off, cycle, or shutdown. delay_seconds waits before that step. on_error is stop or continue. slug is the stable path; leave it empty to build one from the name."""
         from wakehub.salvos import add_salvo as create
 
-        return create(get_hub(), {"name": name, "steps": steps or [], "on_error": on_error})
+        return create(get_hub(), {"name": name, "steps": steps or [], "on_error": on_error, "slug": slug})
 
     @server.tool()
     @expose
-    def update_salvo(salvo_id: int, name: str | None = None, steps: list[dict] | None = None, on_error: str | None = None) -> dict[str, Any]:
-        """Edit a salvo. Omit a field to leave it unchanged."""
+    def update_salvo(salvo: str, name: str | None = None, steps: list[dict] | None = None, on_error: str | None = None, slug: str | None = None) -> dict[str, Any]:
+        """Edit a salvo by slug or numeric id. Omit a field to leave it unchanged. Renaming does not change the slug unless slug is sent."""
         from wakehub.salvos import update_salvo as edit
 
-        payload = {key: value for key, value in {"name": name, "steps": steps, "on_error": on_error}.items() if value is not None}
-        return edit(get_hub(), salvo_id, payload)
+        payload = {key: value for key, value in {"name": name, "steps": steps, "on_error": on_error, "slug": slug}.items() if value is not None}
+        return edit(get_hub(), salvo, payload)
 
     @server.tool()
     @expose
-    def remove_salvo(salvo_id: int) -> dict[str, Any]:
-        """Remove a salvo. This does not change power state."""
+    def remove_salvo(salvo: str) -> dict[str, Any]:
+        """Remove a salvo by slug or numeric id. This does not change power state."""
         from wakehub.salvos import remove_salvo as delete
 
-        delete(get_hub(), salvo_id)
-        return {"removed": salvo_id}
+        delete(get_hub(), salvo)
+        return {"removed": salvo}
 
     @server.tool()
     @expose
-    def duplicate_salvo(salvo_id: int) -> dict[str, Any]:
-        """Copy a salvo to a new name. The copy is not scheduled."""
+    def duplicate_salvo(salvo: str) -> dict[str, Any]:
+        """Copy a salvo to a new name and a new slug. The copy is not scheduled and does not run."""
         from wakehub.salvos import duplicate_salvo as copy
 
-        return copy(get_hub(), salvo_id)
+        return copy(get_hub(), salvo)
 
     @server.tool()
     @expose
-    def run_salvo(salvo_id: int, confirm: bool = False, dry_run: bool = False) -> dict[str, Any]:
-        """Preview or run a salvo. dry_run lists the devices that would be hit and changes nothing. A real run needs confirm=true and logs each device to history."""
+    def run_salvo(salvo: str, confirm: bool = False, dry_run: bool = False) -> dict[str, Any]:
+        """Run one saved salvo by its slug, or by numeric id. Use this when the user asks to run a scene, a salvo, or a named sequence such as Home Away or All Lights Off. Do not wake or power devices one by one when a salvo already covers the request. dry_run=true lists each device that would be hit and changes nothing. A real run requires confirm=true. The results list is one entry per device, with action, kind, id, name, ok, and detail, and each device is also written to history."""
         from wakehub.salvos import run_salvo as execute
 
-        return execute(get_hub(), salvo_id, confirm=confirm, dry_run=dry_run, source="mcp")
+        return execute(get_hub(), salvo, confirm=confirm, dry_run=dry_run, source="mcp")
 
     @server.tool()
     @expose

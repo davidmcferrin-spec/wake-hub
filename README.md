@@ -43,7 +43,7 @@ Config lives in `/config`. SQLite lives in `/data`.
 - **JetKVM.** Local password or no password. Reachability, ATX short press, long press, reset, DC on/off when that extension is present, and a console URL that opens in a new tab.
 - **Shelly Plug US Gen4.** Gen2 RPC (`Switch.GetStatus`, `Switch.Set`, `Switch.Toggle`) with optional digest auth, plus power, voltage and energy when the plug reports them.
 - **Kasa (EP10, EP25, KP125M and the same family).** Legacy XOR on port 9999, and KLAP on current firmware using the TP-Link account email and password. Energy is read on models that report it.
-- **Salvos.** A named sequence such as Home Away or All Lights Off. Each step targets one computer, plug, or Roku, or a set of tags that must all match, with wake, on, off, cycle, or shutdown. A step can wait before it runs. The salvo stops on the first error, or keeps going. Run shows a preview of every device it will hit, then one confirmation covers the whole sequence. Each device is written to the history log. A schedule column is stored and unused.
+- **Salvos.** A named sequence such as Home Away or All Lights Off. Each step targets one computer, plug, or Roku, or a set of tags that must all match, with wake, on, off, cycle, or shutdown. A step can wait before it runs. The salvo stops on the first error, or keeps going. Run shows a preview of every device it will hit, then one confirmation covers the whole sequence. Each device is written to the history log. The slug, such as `home-away`, stays in the run URL when the name changes. A schedule column is stored and unused.
 - **Roku.** Add by IP. External Control Protocol on port 8060: power on, off and toggle, and status from device-info (power mode, model, name). Discovery uses SSDP `roku:ecp` and the Roku MAC vendor. Test checks device-info without sending a key. Control by mobile apps must be enabled on the TV. Some models need network standby before they can power back on. Off and toggle ask for confirmation.
 - **CyberPower RCCARD100.** SNMP v1, v2c or v3. Status, on line or on battery, capacity, runtime, input and output voltage, load, current and watts. Shutdown, reboot, turn off (immediate or delayed), battery test, and outlet-bank control. The UI warns before those commands.
 - **Discovery.** The scan box is filled from this host's primary IPv4 subnet. Docker, veth and bridge interfaces are skipped, and a picker appears when more than one LAN remains. Ping, ARP and fingerprinting run together. Each host is grouped by a suggested type (AMT, Kasa, Shelly, JetKVM, Synaccess, CyberPower, or a generic PC) with a confidence and a one-click add. Hosts already in the inventory are marked.
@@ -106,7 +106,70 @@ POST http://192.168.1.10:8765/mcp
 Authorization: Bearer $WAKEHUB_TOKEN
 ```
 
-Call `list_devices`, then `wake_device` with the `device_id`.
+Call `list_devices`, then `wake_device` with the `device_id`. To run a scene, call `list_salvos`, then `run_salvo` with that salvo's slug and `confirm=true`. `dry_run=true` lists the devices and changes nothing.
+
+## Home Assistant
+
+Home Assistant, or any other service, runs a salvo with one POST. The path uses the slug so the automation does not break when the numeric id changes. The body is JSON and needs `confirm`. The response `results` list is one entry per device.
+
+Wake Hub has one API bearer token. It is not the UI password. The Settings page shows it, and the container writes it to `/config/token`. Put it in Home Assistant's `secrets.yaml` and reference it with `!secret`. Do not commit the token. There is no second token in this version. Rotating the token on the Settings page replaces the only one, so update the secret afterward.
+
+`secrets.yaml`:
+
+```yaml
+wakehub_token: "paste-the-api-token"
+wakehub_auth: "Bearer paste-the-api-token"
+```
+
+`configuration.yaml`:
+
+```yaml
+rest_command:
+  wakehub_run_salvo:
+    url: "http://192.168.1.10:8765/api/v1/salvos/{{ slug }}/run"
+    method: POST
+    content_type: application/json
+    headers:
+      Authorization: !secret wakehub_auth
+    payload: '{"confirm": true}'
+  wakehub_wake_device:
+    url: "http://192.168.1.10:8765/api/v1/devices/{{ device_id }}/wake"
+    method: POST
+    headers:
+      Authorization: !secret wakehub_auth
+  wakehub_tag_action:
+    url: "http://192.168.1.10:8765/api/v1/tags/action"
+    method: POST
+    content_type: application/json
+    headers:
+      Authorization: !secret wakehub_auth
+    payload: '{"tags": ["{{ tag }}"], "action": "{{ action }}", "confirm": true}'
+
+script:
+  home_away:
+    alias: Home Away
+    sequence:
+      - action: rest_command.wakehub_run_salvo
+        data:
+          slug: home-away
+  wake_desk:
+    alias: Wake Desk
+    sequence:
+      - action: rest_command.wakehub_wake_device
+        data:
+          device_id: 1
+  lights_off:
+    alias: Lights off
+    sequence:
+      - action: rest_command.wakehub_tag_action
+        data:
+          tag: Lights
+          action: "off"
+```
+
+Replace the host and the device id. `slug` is the value shown on the salvo card. `tag` is the tag without a leading `#`. `action` for a tag is `wake`, `on`, or `off`. A tag action requires every listed tag to match. The run response looks like `{"slug": "home-away", "results": [{"action": "off", "kind": "plug", "id": 3, "name": "Lamp", "ok": true, "detail": "salvo Home Away"}]}`.
+
+An MCP client should call `list_salvos` to read the slugs, then `run_salvo` with that slug. Those two tool descriptions say when to use them, so a model can choose a salvo instead of powering devices one at a time.
 
 ## Development
 
