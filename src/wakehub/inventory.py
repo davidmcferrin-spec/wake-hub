@@ -125,6 +125,12 @@ def _host(value: str | None) -> str | None:
     return validate_host(text)
 
 
+def _effect_table() -> dict[str, dict[str, str]]:
+    from wakehub.power import effect_table
+
+    return effect_table()
+
+
 def public_device(row: Any) -> dict[str, Any]:
     return {
         "id": row["id"],
@@ -144,6 +150,7 @@ def public_device(row: Any) -> dict[str, Any]:
         "power_method": row["power_method"] or "auto",
         "methods": json.loads(row["methods"]),
         "priority": [item.get("kind") for item in json.loads(row["methods"] or "[]")],
+        "effects": _effect_table(),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }

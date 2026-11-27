@@ -44,7 +44,7 @@ def test_confirms_name_the_target_and_use_menu_skips_wol(live_server, hub):
         assert any("Turn off UNRAID via AMT (hard power off)" in text for text in messages)
         unraid.locator(".more-toggle").click()
         unraid.get_by_role("button", name="Shutdown via AMT").click()
-        assert any("Shut down UNRAID via AMT (graceful)" in text for text in messages)
+        assert any("Shut down UNRAID via AMT (soft graceful off)" in text for text in messages)
         bench = page.locator("article").filter(has=page.get_by_role("heading", name="Bench AMT", exact=True))
         bench.get_by_role("button", name="Off", exact=True).click()
         assert any("Bench AMT" in text and "AMT" in text for text in messages)
@@ -101,7 +101,12 @@ def test_unraid_can_force_wol_for_wake_and_off_does_not_use_it(live_server, hub,
         assert "PDU outlet" in off.locator("option").all_text_contents()
         assert "Wake-on-LAN" not in off.locator("option").all_text_contents()
         wake.select_option("wol")
-        unraid.get_by_role("button", name="Wake via AMT").click()
+        expect_wake = unraid.get_by_role("button", name="Wake via WOL")
+        expect_wake.wait_for()
+        page.click("#page-title")
+        page.wait_for_timeout(12000)
+        assert wake.input_value() == "wol"
+        expect_wake.click()
         page.wait_for_function(
             """() => {
               const banner = document.querySelector("#banner");

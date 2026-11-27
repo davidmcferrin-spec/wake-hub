@@ -15,6 +15,8 @@ const state = {
   salvoDraft: null,
   salvoReplace: false,
   selection: [],
+  methodPicks: {},
+  effects: null,
 };
 
 const titles = {
@@ -140,6 +142,27 @@ function methodName(kind) {
   return { wol: "Wake-on-LAN", amt: "AMT", pdu: "PDU outlet", plug: "plug", jetkvm: "JetKVM", ups: "UPS", roku: "Roku" }[kind] || kind;
 }
 
+function methodShort(kind) {
+  return { wol: "WOL", amt: "AMT", pdu: "PDU", plug: "plug", jetkvm: "JetKVM", ups: "UPS", roku: "Roku" }[kind] || methodName(kind);
+}
+
+function effectNote(kind, action) {
+  const table = state.effects && state.effects[kind];
+  return (table && table[action]) || "";
+}
+
+function storedPick(device, action) {
+  const value = (state.methodPicks || {})[`${device.id}:${action}`];
+  if (!value || value === "auto") return "auto";
+  return methodsForAction(device, action).includes(value) ? value : "auto";
+}
+
+function activeKind(device, action) {
+  const stored = storedPick(device, action);
+  if (stored !== "auto") return stored;
+  return (methodForAction(device, action) || {}).kind;
+}
+
 const ACTION_KINDS = {
   on: ["wol", "plug", "pdu", "amt", "ups", "jetkvm", "roku"],
   off: ["plug", "pdu", "amt", "ups", "jetkvm", "roku"],
@@ -170,20 +193,34 @@ function methodForAction(device, action) {
 
 function methodSelect(device, action, label) {
   if (!methodForAction(device, action)) return "";
-  const choices = methodsForAction(device, action).map((kind) => `<option value="${escapeHtml(kind)}">${escapeHtml(methodName(kind))}</option>`).join("");
-  return `<label>${escapeHtml(label)} <select class="action-method" data-action="${action}" aria-label="${escapeHtml(label)} method"><option value="auto">Auto</option>${choices}</select></label>`;
+  const selected = storedPick(device, action);
+  const choices = ["auto", ...methodsForAction(device, action)].map((kind) => {
+    const text = kind === "auto" ? "Auto" : methodName(kind);
+    const mark = kind === selected ? " selected" : "";
+    return `<option value="${escapeHtml(kind)}"${mark}>${escapeHtml(text)}</option>`;
+  }).join("");
+  return `<label class="method-pick"><span>${escapeHtml(label)}</span><select class="action-method" data-action="${action}" aria-label="${escapeHtml(label)} method">${choices}</select></label>`;
+}
+
+function actionTitle(verb, kind, action) {
+  const full = methodName(kind);
+  const note = effectNote(kind, action);
+  if (note && (action === "off" || action === "shutdown")) return `${verb} via ${full} (${note})`;
+  return `${verb} via ${full}`;
 }
 
 function actionButton(device, action, verb, tone) {
   if (!methodForAction(device, action)) return "";
-  return `<button type="button" class="${tone}" data-cap="power_action" data-fields="action,confirm,method" data-action="${action}" data-id="${device.id}">${escapeHtml(via(device, action, verb))}</button>`;
+  const kind = activeKind(device, action);
+  const label = kind ? `${verb} via ${methodShort(kind)}` : verb;
+  const title = kind ? actionTitle(verb, kind, action) : verb;
+  return `<button type="button" class="${tone}" data-cap="power_action" data-fields="action,confirm,method" data-action="${action}" data-verb="${escapeHtml(verb)}" data-id="${device.id}" title="${escapeHtml(title)}">${escapeHtml(label)}</button>`;
 }
 
 function via(device, action, verb) {
-  const method = methodForAction(device, action);
-  if (!method) return verb;
-  const name = method.kind === "wol" ? "WOL" : methodName(method.kind);
-  return `${verb} via ${name}`;
+  const kind = activeKind(device, action);
+  if (!kind) return verb;
+  return `${verb} via ${methodShort(kind)}`;
 }
 
 function recordCard(spec) {
@@ -226,11 +263,13 @@ function deviceCard(device) {
     body: `${powerBlock(device)}${tagChips(device.tags)}`,
     primary: `${actionButton(device, "on", "Wake", "primary")}${actionButton(device, "off", "Off", "danger")}${actionButton(device, "reboot", "Reset", "danger")}`,
     more: `
-      ${methodSelect(device, "on", "Wake")}
-      ${methodSelect(device, "off", "Off")}
-      ${methodSelect(device, "reboot", "Reset")}
-      ${methodSelect(device, "cycle", "Cycle")}
-      ${methodSelect(device, "shutdown", "Shutdown")}
+      <div class="method-picks">
+        ${methodSelect(device, "on", "Wake")}
+        ${methodSelect(device, "off", "Off")}
+        ${methodSelect(device, "reboot", "Reset")}
+        ${methodSelect(device, "cycle", "Cycle")}
+        ${methodSelect(device, "shutdown", "Shutdown")}
+      </div>
       <button type="button" class="ghost" data-open-kind="device" data-id="${device.id}">Open</button>
       <button type="button" class="ghost" data-cap="get_device" data-fields="" data-id="${device.id}" aria-label="Edit ${escapeHtml(device.name)}">Edit</button>
       ${actionButton(device, "cycle", "Cycle", "danger")}
@@ -992,7 +1031,17 @@ function writeRoute(page, slug) {
   if (location.hash !== next) history.replaceState(null, "", next);
 }
 
+function rememberPicks() {
+  document.querySelectorAll("article.card .action-method").forEach((select) => {
+    const card = select.closest("article.card");
+    const marked = card && card.querySelector("[data-id]");
+    if (!marked || !select.dataset.action) return;
+    state.methodPicks[`${marked.dataset.id}:${select.dataset.action}`] = select.value;
+  });
+}
+
 function captureTransient() {
+  rememberPicks();
   const menus = [...document.querySelectorAll("article.card .more .menu:not(.hidden)")].map((node) => {
     const card = node.closest("article.card");
     const marked = card && card.querySelector("[data-id]");
@@ -1046,6 +1095,7 @@ function placeMenu(wrap) {
   const anchor = toggle.getBoundingClientRect();
   const bounds = contentBounds();
   menu.style.maxWidth = `${Math.max(120, bounds.right - bounds.left)}px`;
+  menu.style.maxHeight = `${Math.max(160, bounds.bottom - bounds.top)}px`;
   const width = Math.min(menu.offsetWidth, bounds.right - bounds.left);
   const height = menu.offsetHeight;
   const roomRight = bounds.right - anchor.left;
@@ -1157,6 +1207,8 @@ async function refreshDevices() {
   if (state.deviceQuery) params.set("q", state.deviceQuery);
   if (state.tagFilter && state.tagFilter.length) params.set("tags", state.tagFilter.join(","));
   state.devices = await api("GET", `/api/v1/devices${params.toString() ? `?${params}` : ""}`);
+  const withEffects = (state.devices || []).find((item) => item.effects);
+  if (withEffects) state.effects = withEffects.effects;
   if (typeof refreshPower === "function") await refreshPower();
   try {
     state.tags = await api("GET", "/api/v1/tags");
@@ -1718,6 +1770,22 @@ document.addEventListener("keydown", (event) => {
   const toggle = menu.parentElement.querySelector(".more-toggle");
   closeMenus();
   if (toggle) toggle.focus();
+});
+
+document.body.addEventListener("change", (event) => {
+  const select = event.target.closest && event.target.closest("select.action-method");
+  if (!select) return;
+  rememberPicks();
+  const card = select.closest("article");
+  const action = select.dataset.action;
+  const button = card && [...card.querySelectorAll("button[data-cap=power_action]")].find((node) => node.dataset.action === action);
+  if (!button) return;
+  const device = (state.devices || []).find((item) => item.id === Number(button.dataset.id));
+  const verb = button.dataset.verb || "Wake";
+  const kind = select.value !== "auto" ? select.value : (methodForAction(device, action) || {}).kind;
+  if (!kind) return;
+  button.textContent = `${verb} via ${methodShort(kind)}`;
+  button.title = actionTitle(verb, kind, action);
 });
 
 document.body.addEventListener("click", (event) => {

@@ -321,7 +321,20 @@ button.sr-only {
 
 .card .actions { flex-wrap: wrap; }
 
-.card .actions > button { max-width: 100%; }
+.card .actions > button { max-width: 100%; white-space: nowrap; }
+
+.method-picks {
+  display: grid;
+  grid-template-columns: 4.8rem minmax(0, 1fr);
+  gap: 0.15rem 0.35rem;
+  align-items: center;
+}
+
+.method-picks .method-pick { display: contents; margin: 0; }
+
+.method-picks span { font-size: 0.82rem; color: var(--muted); }
+
+.method-picks select { height: 2rem; width: 100%; }
 
 .card.detail h3 { margin: 0.45rem 0 0.15rem; font-size: 1rem; }
 
@@ -371,6 +384,8 @@ button.sr-only {
   border: 1px solid var(--line);
   border-radius: 12px;
   box-shadow: var(--shadow);
+  max-height: calc(100vh - 1rem);
+  overflow: auto;
 }
 
 .more .menu button,

@@ -679,8 +679,9 @@ function hardwareName(kind, id, fallback) {
 
 function amtConfirm(id, action) {
   const name = hardwareName("amt", id, "AMT");
-  const verb = { shutdown: "Shut down", off: "Shut down", off_hard: "Hard off", reboot: "Reset", cycle: "Power cycle" }[action] || action;
-  return `${verb} ${name} via AMT?`;
+  const verb = { shutdown: "Shut down", off: "Turn off", off_hard: "Hard off", reboot: "Reset", cycle: "Power cycle" }[action] || action;
+  const note = typeof effectNote === "function" ? effectNote("amt", action) : "";
+  return note ? `${verb} ${name} via AMT (${note})?` : `${verb} ${name} via AMT?`;
 }
 
 function jetVerb(action) {
@@ -983,32 +984,20 @@ window.CONTROL_HANDLERS = {
   list_metrics(el) { return window.handlePowerCap(el); },
 };
 
-function powerNote(action, kind) {
-  if (action === "off") {
-    if (kind === "amt") return "hard power off";
-    if (kind === "plug" || kind === "pdu" || kind === "ups") return "cuts power";
-    if (kind === "jetkvm") return "holds the power button";
-    return "power off";
-  }
-  if (action === "shutdown") {
-    if (kind === "jetkvm") return "presses the power button";
-    return "graceful";
-  }
-  return "";
-}
-
 function powerConfirm(device, action, method) {
   const verb = { off: "Turn off", shutdown: "Shut down", reboot: "Reset", cycle: "Power cycle" }[action] || action;
   const name = device && device.name ? device.name : "this device";
   const chosen = method && method !== "auto" ? method : ((typeof methodForAction === "function" && methodForAction(device, action)) || {}).kind;
-  const via = chosen ? ` via ${chosen === "wol" ? "WOL" : (typeof methodName === "function" ? methodName(chosen) : chosen)}` : "";
-  const note = powerNote(action, chosen);
-  return note ? `${verb} ${name}${via} (${note})?` : `${verb} ${name}${via}?`;
+  const via = chosen ? ` via ${(typeof methodName === "function" ? methodName(chosen) : chosen)}` : "";
+  const note = chosen && typeof effectNote === "function" ? effectNote(chosen, action) : "";
+  if (note && (action === "off" || action === "shutdown")) return `${verb} ${name}${via} (${note})?`;
+  return `${verb} ${name}${via}?`;
 }
 
 function chosenMethod(article, device, action) {
   const pick = article && article.querySelector(`.action-method[data-action="${action}"]`);
-  const method = (pick && pick.value) || "auto";
+  const stored = device && state.methodPicks ? state.methodPicks[`${device.id}:${action}`] : "";
+  const method = (pick && pick.value) || stored || "auto";
   const allowed = typeof methodsForAction === "function" ? methodsForAction(device, action) : null;
   if (method !== "auto" && allowed && !allowed.includes(method)) return "auto";
   return method;

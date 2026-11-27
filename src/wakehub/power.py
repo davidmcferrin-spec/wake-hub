@@ -136,6 +136,94 @@ _ACTION_PHRASE = {
 }
 
 
+def client_command(kind: str, action: str) -> dict[str, Any]:
+    """The command this method's client sends. Notes are classified from this, not from the action name."""
+    if kind == "amt":
+        from wakehub.clients.amt import POWER_COMMANDS
+
+        if action not in POWER_COMMANDS:
+            raise WakeHubError(f"AMT cannot {action}")
+        return {"code": POWER_COMMANDS[action]}
+    if kind == "ups":
+        from wakehub.clients.ups import command_set
+
+        mapped = {"off": "turn_off", "shutdown": "shutdown", "reboot": "reboot", "cycle": "reboot", "on": "turn_on"}[action]
+        sets = command_set(mapped)
+        return {"oids": [oid for oid, _value, _asn in sets], "values": [value for _oid, value, _asn in sets]}
+    if kind == "jetkvm":
+        from wakehub.clients.jetkvm import ATX_ACTIONS
+
+        wire = {"on": "power-short", "off": "power-long", "shutdown": "power-short", "reboot": "reset", "cycle": "reset"}[action]
+        if wire not in ATX_ACTIONS:
+            raise WakeHubError(f"JetKVM cannot {action}")
+        return {"atx": wire}
+    if kind == "pdu":
+        mapped = {"on": "on", "off": "off", "cycle": "reboot", "reboot": "reboot"}[action]
+        if mapped == "reboot":
+            return {"command": "$A4"}
+        return {"command": "$A3", "on": mapped == "on"}
+    if kind == "plug":
+        if action == "on":
+            return {"set_on": True, "cycle": False}
+        if action == "off":
+            return {"set_on": False, "cycle": False}
+        if action in {"cycle", "reboot"}:
+            return {"set_on": False, "cycle": True}
+        raise WakeHubError(f"a plug cannot {action}")
+    if kind == "roku":
+        from wakehub.clients.roku import KEYS
+
+        if action not in KEYS:
+            raise WakeHubError(f"a Roku cannot {action}")
+        return {"key": KEYS[action]}
+    if kind == "wol":
+        if action != "on":
+            raise WakeHubError("Wake-on-LAN only supports action on")
+        return {"packet": "magic"}
+    raise WakeHubError(f"unknown power method {kind}")
+
+
+def effect_note(kind: str, action: str) -> str:
+    """Short phrase for the command client_command reports."""
+    command = client_command(kind, action)
+    if kind == "amt":
+        # CIM RequestPowerStateChange: 8 is the hard power off, 12 is the soft graceful off, 6 is power off hard.
+        return {2: "power on", 5: "power cycle", 6: "power off hard", 8: "hard power off", 10: "reset", 12: "soft graceful off"}[command["code"]]
+    if kind == "ups":
+        from wakehub.clients.ups import OIDS
+
+        oids = command["oids"]
+        if OIDS["ups_off"] in oids:
+            return "cuts power"
+        if OIDS["reboot"] in oids:
+            return "reboots the UPS"
+        if OIDS["turn_on"] in oids:
+            return "turns the UPS on"
+        raise WakeHubError("unclassified UPS command")
+    if kind == "jetkvm":
+        return {"power-long": "holds the power button", "power-short": "presses the power button", "reset": "reset"}[command["atx"]]
+    if kind == "pdu":
+        if command["command"] == "$A4":
+            return "power cycle"
+        return "turns the outlet on" if command.get("on") else "cuts power"
+    if kind == "plug":
+        if command["cycle"]:
+            return "power cycle"
+        return "turns the plug on" if command["set_on"] else "cuts power"
+    if kind == "roku":
+        return f"{command['key']} key"
+    return "magic packet"
+
+
+def effect_table() -> dict[str, dict[str, str]]:
+    table: dict[str, dict[str, str]] = {}
+    for action, kinds in _ACTION_KINDS.items():
+        for kind in kinds:
+            table.setdefault(kind, {})[action] = effect_note(kind, action)
+    table.setdefault("amt", {})["off_hard"] = effect_note("amt", "off_hard")
+    return table
+
+
 def _select_method(methods: list[dict[str, Any]], requested: str, action: str, *, device_name: str = "this device") -> dict[str, Any]:
     capable = [item for item in methods if item.get("kind") in _ACTION_KINDS.get(action, set())]
     if requested in {None, "", "auto"}:
