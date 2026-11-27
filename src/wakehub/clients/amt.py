@@ -12,6 +12,7 @@ import xml.etree.ElementTree as ET
 from urllib.request import HTTPDigestAuthHandler, HTTPPasswordMgrWithDefaultRealm, Request, build_opener
 
 from wakehub.errors import UpstreamError, WakeHubError
+from wakehub.inventory import host_for_url
 
 POWER_COMMANDS = {
     "on": 2,
@@ -168,7 +169,7 @@ class AmtClient:
         poster=None,
     ):
         scheme = "https" if use_tls else "http"
-        self.uri = f"{scheme}://{host}:{port}/wsman"
+        self.uri = f"{scheme}://{host_for_url(host)}:{port}/wsman"
         self._timeout = timeout
         self._poster = poster
         if poster is None:

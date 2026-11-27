@@ -9,21 +9,22 @@ from __future__ import annotations
 
 import asyncio
 import json
+import ssl
 
 from wakehub.clients.jetkvm import parse_rpc, rpc_request, signaling_offer
 from wakehub.errors import UpstreamError
 
 
-def rpc_call(base: str, cookie: str, method: str, params: dict | None, timeout: float = 12):
+def rpc_call(base: str, cookie: str, method: str, params: dict | None, timeout: float = 12, insecure_tls: bool = False):
     try:
-        return asyncio.run(_rpc_call(base, cookie, method, params, timeout))
+        return asyncio.run(_rpc_call(base, cookie, method, params, timeout, insecure_tls))
     except UpstreamError:
         raise
     except (OSError, TimeoutError) as exc:
         raise UpstreamError(f"JetKVM WebRTC failed: {exc}") from exc
 
 
-async def _rpc_call(base: str, cookie: str, method: str, params: dict | None, timeout: float):
+async def _rpc_call(base: str, cookie: str, method: str, params: dict | None, timeout: float, insecure_tls: bool = False):
     try:
         from aiortc import RTCPeerConnection, RTCSessionDescription
         import websockets
@@ -34,6 +35,11 @@ async def _rpc_call(base: str, cookie: str, method: str, params: dict | None, ti
     host = base.split("://", 1)[1]
     url = f"{scheme}://{host}/webrtc/signaling/client"
     headers = {"Cookie": f"authToken={cookie}"} if cookie else None
+    ssl_context = None
+    if scheme == "wss" and insecure_tls:
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
     connection = RTCPeerConnection()
     channel = connection.createDataChannel("rpc")
     connection.addTransceiver("video", direction="recvonly")
@@ -57,7 +63,10 @@ async def _rpc_call(base: str, cookie: str, method: str, params: dict | None, ti
             result.set_result(payload.get("result"))
 
     try:
-        async with websockets.connect(url, additional_headers=headers, open_timeout=timeout) as socket:
+        connect_kwargs = {"additional_headers": headers, "open_timeout": timeout}
+        if ssl_context is not None:
+            connect_kwargs["ssl"] = ssl_context
+        async with websockets.connect(url, **connect_kwargs) as socket:
             await asyncio.wait_for(socket.recv(), timeout)
             offer = await connection.createOffer()
             await connection.setLocalDescription(offer)
@@ -71,7 +80,12 @@ async def _rpc_call(base: str, cookie: str, method: str, params: dict | None, ti
                     raw = await asyncio.wait_for(socket.recv(), timeout)
                     if raw in ("ping", "pong"):
                         continue
-                    message = json.loads(raw)
+                    try:
+                        message = json.loads(raw)
+                    except json.JSONDecodeError:
+                        if not result.done():
+                            result.set_exception(UpstreamError("JetKVM signaling message was not JSON"))
+                        return
                     kind = message.get("type")
                     if kind == "answer":
                         answer = parse_signaling_answer(message)

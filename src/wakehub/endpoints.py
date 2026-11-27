@@ -14,7 +14,7 @@ from wakehub.clients.ups import PysnmpTransport, UpsClient
 from wakehub.crypto import decrypt, encrypt
 from wakehub.errors import NotFound, WakeHubError
 from wakehub.hub import Hub
-from wakehub.inventory import utcnow, validate_host
+from wakehub.inventory import host_for_url, utcnow, validate_host
 
 TABLES = {
     "pdu": "pdus",
@@ -92,6 +92,8 @@ def public_jetkvm(row) -> dict[str, Any]:
         "use_tls": bool(row["use_tls"]),
         "insecure_tls": bool(row["insecure_tls"]),
         "password_set": bool(row["password_enc"]),
+        "extension": row["extension"] or "",
+        "poll_metrics": bool(row["poll_metrics"]),
         "device_id": row["device_id"],
         "console_url": _console(row),
         "created_at": row["created_at"],
@@ -138,7 +140,21 @@ def public_ups(row) -> dict[str, Any]:
 
 def _console(row) -> str:
     scheme = "https" if row["use_tls"] else "http"
-    return f"{scheme}://{row['host']}:{row['port']}/"
+    return f"{scheme}://{host_for_url(row['host'])}:{row['port']}/"
+
+
+def _updated_host(payload: dict[str, Any], current) -> str:
+    raw = payload.get("host")
+    if raw is None or str(raw).strip() == "":
+        return current["host"]
+    return validate_host(str(raw))
+
+
+def _jet_extension(value: str | None) -> str:
+    text = (value or "").strip()
+    if text not in {"", "atx-power", "dc-power"}:
+        raise WakeHubError("JetKVM extension must be atx-power, dc-power, or empty")
+    return text
 
 
 def _require_host(payload: dict[str, Any]) -> str:
@@ -195,7 +211,7 @@ def update_pdu(hub: Hub, pdu_id: int, payload: dict[str, Any]) -> dict[str, Any]
         """,
         (
             payload.get("name") or current["name"],
-            payload.get("host") or current["host"],
+            _updated_host(payload, current),
             int(payload.get("port") if payload.get("port") is not None else current["port"]),
             int(payload["use_tls"]) if "use_tls" in payload else current["use_tls"],
             int(payload["insecure_tls"]) if "insecure_tls" in payload else current["insecure_tls"],
@@ -282,7 +298,7 @@ def update_amt(hub: Hub, amt_id: int, payload: dict[str, Any]) -> dict[str, Any]
         """,
         (
             payload.get("name") or current["name"],
-            payload.get("host") or current["host"],
+            _updated_host(payload, current),
             int(payload.get("port") if payload.get("port") is not None else current["port"]),
             int(payload["use_tls"]) if "use_tls" in payload else current["use_tls"],
             int(payload["insecure_tls"]) if "insecure_tls" in payload else current["insecure_tls"],
@@ -327,14 +343,16 @@ def add_jetkvm(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
             "use_tls": 1 if payload.get("use_tls") else 0,
             "insecure_tls": 1 if payload.get("insecure_tls") else 0,
             "password_enc": _secret(hub, payload.get("password")),
+            "extension": _jet_extension(payload.get("extension")),
+            "poll_metrics": 1 if payload.get("poll_metrics") else 0,
             "device_id": payload.get("device_id"),
         }
     )
     item_id = hub.write(
         """
         INSERT INTO jetkvm_endpoints (
-            name, host, port, use_tls, insecure_tls, password_enc, device_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            name, host, port, use_tls, insecure_tls, password_enc, extension, poll_metrics, device_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             fields["name"],
@@ -343,6 +361,8 @@ def add_jetkvm(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
             fields["use_tls"],
             fields["insecure_tls"],
             fields["password_enc"],
+            fields["extension"],
+            fields["poll_metrics"],
             fields["device_id"],
             fields["created_at"],
             fields["updated_at"],
@@ -355,19 +375,23 @@ def add_jetkvm(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
 def update_jetkvm(hub: Hub, jetkvm_id: int, payload: dict[str, Any]) -> dict[str, Any]:
     current = _row(hub, "jetkvm", jetkvm_id)
     password = current["password_enc"] if "password" not in payload else _secret(hub, payload.get("password"))
+    extension = _jet_extension(payload["extension"]) if "extension" in payload else (current["extension"] or "")
+    poll_metrics = (1 if payload.get("poll_metrics") else 0) if "poll_metrics" in payload else current["poll_metrics"]
     hub.write(
         """
         UPDATE jetkvm_endpoints
-        SET name=?, host=?, port=?, use_tls=?, insecure_tls=?, password_enc=?, device_id=?, updated_at=?
+        SET name=?, host=?, port=?, use_tls=?, insecure_tls=?, password_enc=?, extension=?, poll_metrics=?, device_id=?, updated_at=?
         WHERE id=?
         """,
         (
             payload.get("name") or current["name"],
-            payload.get("host") or current["host"],
+            _updated_host(payload, current),
             int(payload.get("port") if payload.get("port") is not None else current["port"]),
             int(payload["use_tls"]) if "use_tls" in payload else current["use_tls"],
             int(payload["insecure_tls"]) if "insecure_tls" in payload else current["insecure_tls"],
             password,
+            extension,
+            poll_metrics,
             payload["device_id"] if "device_id" in payload else current["device_id"],
             utcnow(),
             jetkvm_id,
@@ -459,7 +483,7 @@ def update_plug(hub: Hub, plug_id: int, payload: dict[str, Any]) -> dict[str, An
         (
             payload.get("name") or current["name"],
             kind,
-            payload.get("host") or current["host"],
+            _updated_host(payload, current),
             int(payload.get("port") if payload.get("port") is not None else current["port"]),
             payload.get("username") if payload.get("username") is not None else current["username"],
             password,
@@ -562,7 +586,7 @@ def update_ups(hub: Hub, ups_id: int, payload: dict[str, Any]) -> dict[str, Any]
         """,
         (
             payload.get("name") or current["name"],
-            payload.get("host") or current["host"],
+            _updated_host(payload, current),
             int(payload.get("port") if payload.get("port") is not None else current["port"]),
             version,
             current["community_enc"] if "community" not in payload else _secret(hub, payload.get("community")),

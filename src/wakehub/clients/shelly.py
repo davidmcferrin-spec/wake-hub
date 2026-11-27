@@ -7,6 +7,7 @@ import json
 import httpx
 
 from wakehub.errors import UpstreamError
+from wakehub.inventory import host_for_url
 
 
 def parse_switch_status(payload: dict) -> dict:
@@ -55,7 +56,7 @@ class ShellyClient:
         http: httpx.Client | None = None,
     ):
         scheme = "https" if use_tls else "http"
-        self.base = f"{scheme}://{host}:{port}"
+        self.base = f"{scheme}://{host_for_url(host)}:{port}"
         self.switch_id = switch_id
         self._timeout = timeout
         self._poster = poster

@@ -31,6 +31,7 @@ class _Jet:
     def __init__(self, led):
         self.led = led
         self.pressed = []
+        self.dc = []
 
     def status(self):
         return {"atx": {"power_led": self.led}, "reachable": True, "console_url": "http://jet.local/"}
@@ -41,6 +42,10 @@ class _Jet:
     def atx_action(self, action):
         self.pressed.append(action)
         return {"action": action}
+
+    def dc_set(self, on):
+        self.dc.append(on)
+        return {"on": on, "extension": "dc-power"}
 
     def close(self):
         pass
@@ -95,3 +100,29 @@ def test_jetkvm_on_does_not_press_when_the_led_is_on(hub, monkeypatch):
     result = _call("power_action", {"device_id": device["id"], "action": "on", "method": "jetkvm", "confirm": False})
     assert result.is_error is not True
     assert jet.pressed == ["power-short"]
+
+
+def test_jetkvm_shutdown_is_a_short_press(hub, monkeypatch):
+    set_hub(hub)
+    device = add_device(hub, {"name": "Desk", "mac": "AA:BB:CC:DD:EE:03", "host": "10.0.0.11"})
+    jet = _Jet(True)
+    endpoint = add_jetkvm(hub, {"name": "KVM", "host": "10.0.0.12", "device_id": device["id"]})
+    monkeypatch.setattr("wakehub.power.jetkvm_client", lambda *_args, **_kwargs: (endpoint, jet))
+    with pytest.raises(ToolError, match="confirm"):
+        _call("power_action", {"device_id": device["id"], "action": "shutdown", "method": "jetkvm", "confirm": False})
+    assert jet.pressed == []
+    result = _call("power_action", {"device_id": device["id"], "action": "shutdown", "method": "jetkvm", "confirm": True})
+    assert result.is_error is not True
+    assert jet.pressed == ["power-short"]
+
+
+def test_jetkvm_on_uses_dc_when_that_extension_is_configured(hub, monkeypatch):
+    set_hub(hub)
+    device = add_device(hub, {"name": "Desk", "mac": "AA:BB:CC:DD:EE:04", "host": "10.0.0.13"})
+    jet = _Jet(None)
+    endpoint = add_jetkvm(hub, {"name": "KVM", "host": "10.0.0.14", "device_id": device["id"], "extension": "dc-power"})
+    monkeypatch.setattr("wakehub.power.jetkvm_client", lambda *_args, **_kwargs: (endpoint, jet))
+    result = _call("power_action", {"device_id": device["id"], "action": "on", "method": "jetkvm"})
+    assert result.is_error is not True
+    assert jet.pressed == []
+    assert jet.dc == [True]

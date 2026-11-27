@@ -12,6 +12,7 @@ from urllib.parse import quote
 import httpx
 
 from wakehub.errors import UpstreamError
+from wakehub.inventory import host_for_url
 
 
 @dataclass(frozen=True)
@@ -115,7 +116,7 @@ class SynaccessClient:
         http: httpx.Client | None = None,
     ):
         scheme = "https" if use_tls else "http"
-        self._base = f"{scheme}://{host}:{port}/cmd.cgi?"
+        self._base = f"{scheme}://{host_for_url(host)}:{port}/cmd.cgi?"
         self._owns = http is None
         self._http = http or httpx.Client(
             auth=(username, password),

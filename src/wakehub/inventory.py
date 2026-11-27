@@ -100,6 +100,20 @@ def validate_host(value: str) -> str:
     return text
 
 
+def host_for_url(host: str) -> str:
+    """IPv6 literals need brackets before a port, or the URL parser splits on the wrong colon."""
+    text = host.strip()
+    if text.startswith("[") and text.endswith("]"):
+        return text
+    try:
+        parsed = ipaddress.ip_address(text)
+    except ValueError:
+        return text
+    if parsed.version == 6:
+        return f"[{parsed}]"
+    return str(parsed)
+
+
 def _host(value: str | None) -> str | None:
     if value is None:
         return None

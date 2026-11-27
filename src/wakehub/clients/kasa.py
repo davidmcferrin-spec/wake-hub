@@ -17,6 +17,7 @@ from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from wakehub.errors import UpstreamError, WakeHubError
+from wakehub.inventory import host_for_url
 
 XOR_KEY = 171
 XOR_PORT = 9999
@@ -306,7 +307,7 @@ class KasaClient:
         headers = {"Content-Type": "application/octet-stream"}
         if self._cookie:
             headers["Cookie"] = self._cookie
-        url = f"http://{self.host}:{self.port}{path}"
+        url = f"http://{host_for_url(self.host)}:{self.port}{path}"
         try:
             response = httpx.post(url, content=body, headers=headers, timeout=self.timeout)
         except httpx.HTTPError as exc:

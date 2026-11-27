@@ -92,15 +92,15 @@ def register(server) -> None:
 
     @server.tool()
     @expose
-    def add_jetkvm(name: str, host: str, password: str = "", port: int | None = None, use_tls: bool = False, insecure_tls: bool = False, device_id: int | None = None) -> dict[str, Any]:
-        """Add a JetKVM by IP. Leave password empty when the device is in no-password mode. insecure_tls skips certificate checks for that device only."""
-        return ends.add_jetkvm(get_hub(), {"name": name, "host": host, "password": password, "port": port, "use_tls": use_tls, "insecure_tls": insecure_tls, "device_id": device_id})
+    def add_jetkvm(name: str, host: str, password: str = "", port: int | None = None, use_tls: bool = False, insecure_tls: bool = False, extension: str = "", poll_metrics: bool = False, device_id: int | None = None) -> dict[str, Any]:
+        """Add a JetKVM by IP. Leave password empty when the device is in no-password mode. insecure_tls skips certificate checks for that device only. extension is atx-power or dc-power. poll_metrics opens a WebRTC session on the metrics interval and should stay off unless the DC extension is installed."""
+        return ends.add_jetkvm(get_hub(), {"name": name, "host": host, "password": password, "port": port, "use_tls": use_tls, "insecure_tls": insecure_tls, "extension": extension, "poll_metrics": poll_metrics, "device_id": device_id})
 
     @server.tool()
     @expose
-    def update_jetkvm(jetkvm_id: int, name: str | None = None, host: str | None = None, password: str | None = None, port: int | None = None, use_tls: bool | None = None, insecure_tls: bool | None = None, device_id: int | None = None) -> dict[str, Any]:
-        """Edit a JetKVM endpoint."""
-        payload = {key: value for key, value in {"name": name, "host": host, "password": password, "port": port, "use_tls": use_tls, "insecure_tls": insecure_tls, "device_id": device_id}.items() if value is not None}
+    def update_jetkvm(jetkvm_id: int, name: str | None = None, host: str | None = None, password: str | None = None, port: int | None = None, use_tls: bool | None = None, insecure_tls: bool | None = None, extension: str | None = None, poll_metrics: bool | None = None, device_id: int | None = None) -> dict[str, Any]:
+        """Edit a JetKVM endpoint. poll_metrics is off by default because a poll takes the device's single WebRTC session."""
+        payload = {key: value for key, value in {"name": name, "host": host, "password": password, "port": port, "use_tls": use_tls, "insecure_tls": insecure_tls, "extension": extension, "poll_metrics": poll_metrics, "device_id": device_id}.items() if value is not None}
         return ends.update_jetkvm(get_hub(), jetkvm_id, payload)
 
     @server.tool()

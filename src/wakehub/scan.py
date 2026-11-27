@@ -15,7 +15,7 @@ import httpx
 from wakehub.clients.synaccess import parse_status, synaccess_realm
 from wakehub.errors import Conflict, NotFound, WakeHubError
 from wakehub.hub import Hub
-from wakehub.inventory import add_device, utcnow
+from wakehub.inventory import add_device, host_for_url, utcnow
 from wakehub.oui import vendor
 from wakehub.wol import ping
 
@@ -252,13 +252,14 @@ def _http_kinds(ip: str) -> list[str]:
     kinds = []
     try:
         with httpx.Client(timeout=0.6, verify=True) as client:
-            status = client.get(f"http://{ip}/device/status")
+            host = host_for_url(ip)
+            status = client.get(f"http://{host}/device/status")
             if status.status_code == 200 and "isSetup" in status.text:
                 kinds.append("jetkvm")
-            shelly = client.get(f"http://{ip}/shelly")
+            shelly = client.get(f"http://{host}/shelly")
             if shelly.status_code == 200 and "gen" in shelly.text:
                 kinds.append("shelly")
-            pdu = client.get(f"http://{ip}/cmd.cgi?$A5")
+            pdu = client.get(f"http://{host}/cmd.cgi?$A5")
             if pdu.status_code == 401 and synaccess_realm(pdu.headers.get("www-authenticate", "")):
                 kinds.append("synaccess")
             elif pdu.status_code == 200:
@@ -268,7 +269,7 @@ def _http_kinds(ip: str) -> list[str]:
                 except WakeHubError:
                     if "netBooter" in pdu.text or "Synaccess" in pdu.text:
                         kinds.append("synaccess")
-            root = client.get(f"http://{ip}/")
+            root = client.get(f"http://{host}/")
             if any(token in root.text for token in ("CyberPower", "RCCARD", "RMCARD")):
                 kinds.append("ups")
     except httpx.HTTPError:

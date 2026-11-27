@@ -78,7 +78,7 @@ function renderPower() {
         <button type="button" data-cap="jetkvm_power" data-fields="action,confirm,extension" data-id="${item.id}" data-action="dc-on" data-extension="dc-power">DC on</button>
         <button type="button" class="danger" data-cap="jetkvm_power" data-fields="action,confirm,extension" data-id="${item.id}" data-action="dc-off" data-extension="dc-power">DC off</button>
         <a class="ghost" data-cap="jetkvm_console" data-fields="" href="${escapeHtml(item.console_url)}" target="_blank" rel="noopener">Open console</a>
-        <button type="button" data-cap="update_jetkvm" data-fields="device_id,host,insecure_tls,name,password,port,use_tls" data-id="${item.id}">Edit</button>
+        <button type="button" data-cap="update_jetkvm" data-fields="device_id,extension,host,insecure_tls,name,password,poll_metrics,port,use_tls" data-id="${item.id}">Edit</button>
         <button type="button" class="danger" data-cap="remove_jetkvm" data-fields="" data-id="${item.id}">Remove</button>
       </div>
     </article>`).join("");
@@ -156,9 +156,17 @@ function renderPower() {
         <input name="password" placeholder="Password or blank" type="password">
         <label class="check"><input type="checkbox" name="use_tls"> TLS</label>
         <label class="check"><input type="checkbox" name="insecure_tls"> Allow self-signed</label>
+        <label>Extension
+          <select name="extension">
+            <option value="">Not set</option>
+            <option value="atx-power">ATX</option>
+            <option value="dc-power">DC</option>
+          </select>
+        </label>
+        <label class="check"><input type="checkbox" name="poll_metrics"> Poll DC metrics</label>
         <input name="port" type="number" placeholder="Port">
         <input name="device_id" type="number" placeholder="device id">
-        <button type="submit" data-cap="add_jetkvm" data-fields="device_id,host,insecure_tls,name,password,port,use_tls">Add JetKVM</button>
+        <button type="submit" data-cap="add_jetkvm" data-fields="device_id,extension,host,insecure_tls,name,password,poll_metrics,port,use_tls">Add JetKVM</button>
       </form>
       <div class="grid">${jetCards}</div>
     </section>
@@ -288,7 +296,40 @@ window.handlePowerCap = async function handlePowerCap(button) {
       if (existing) return true;
       const path = { update_pdu: "pdus", update_amt: "amt", update_jetkvm: "jetkvm", update_plug: "plugs", update_ups: "ups" }[cap];
       const fields = (button.dataset.fields || "").split(",");
-      const inputs = fields.map((name) => `<label>${name}<input name="${name}" ${name.includes("password") || name.includes("auth") || name.includes("priv") ? "type=\"password\"" : ""}></label>`).join("");
+      const labels = {
+        host: "Host",
+        insecure_tls: "Allow self-signed certificate",
+        name: "Name",
+        outlet_names: "Outlet names",
+        password: "Password",
+        port: "Port",
+        use_tls: "TLS",
+        username: "Username",
+        device_id: "Linked device",
+        kind: "Kind",
+        protocol: "Protocol",
+        switch_id: "Switch",
+        community: "SNMP community",
+        snmp_version: "SNMP version",
+        v3_user: "SNMPv3 user",
+        v3_auth: "SNMPv3 auth password",
+        v3_auth_proto: "SNMPv3 auth protocol",
+        v3_priv: "SNMPv3 privacy password",
+        v3_priv_proto: "SNMPv3 privacy protocol",
+        extension: "Extension",
+        poll_metrics: "Poll DC metrics",
+      };
+      const inputs = fields.map((name) => {
+        const label = labels[name] || name;
+        if (name === "use_tls" || name === "insecure_tls" || name === "poll_metrics") {
+          return `<label class="check"><input name="${name}" type="checkbox"> ${label}</label>`;
+        }
+        if (name === "extension") {
+          return `<label>${label}<select name="extension"><option value="">Not set</option><option value="atx-power">ATX</option><option value="dc-power">DC</option></select></label>`;
+        }
+        const secret = name === "password" || name === "community" || name === "v3_auth" || name === "v3_priv";
+        return `<label>${label}<input name="${name}" ${secret ? "type=\"password\"" : ""}></label>`;
+      }).join("");
       card.insertAdjacentHTML("beforeend", `<form class="endpoint-edit fields">${inputs}<button type="submit" data-cap="${cap}" data-fields="${button.dataset.fields}" data-id="${id}" data-path="${path}">Save</button></form>`);
       return true;
     }
@@ -308,7 +349,7 @@ document.body.addEventListener("submit", async (event) => {
     const data = Object.fromEntries(new FormData(edit).entries());
     const payload = {};
     for (const [key, value] of Object.entries(data)) {
-      if (value !== "") payload[key] = value;
+      if (value !== "" || key === "extension") payload[key] = value;
     }
     if (payload.outlet_names && typeof payload.outlet_names === "string") {
       const names = {};
@@ -318,7 +359,7 @@ document.body.addEventListener("submit", async (event) => {
       });
       payload.outlet_names = names;
     }
-    for (const key of ["use_tls", "insecure_tls"]) {
+    for (const key of ["use_tls", "insecure_tls", "poll_metrics"]) {
       const box = edit.querySelector(`[name=${key}]`);
       if (box && box.type === "checkbox") payload[key] = box.checked;
     }
@@ -351,6 +392,9 @@ document.body.addEventListener("submit", async (event) => {
       data.insecure_tls = form.elements.insecure_tls.checked;
       await api("POST", "/api/v1/amt", data);
     } else if (form.id === "jet-form") {
+      data.use_tls = form.elements.use_tls.checked;
+      data.insecure_tls = form.elements.insecure_tls.checked;
+      data.poll_metrics = form.elements.poll_metrics.checked;
       await api("POST", "/api/v1/jetkvm", data);
     } else if (form.id === "plug-form") {
       await api("POST", "/api/v1/plugs", data);
@@ -406,7 +450,7 @@ window.CONTROL_HANDLERS = {
   remove_jetkvm(el) { return window.handlePowerCap(el); },
   jetkvm_status(el) { return window.handlePowerCap(el); },
   jetkvm_power(el) { return window.handlePowerCap(el); },
-  jetkvm_console(el) { window.open(el.getAttribute("href"), "_blank", "noopener"); },
+  jetkvm_console() {},
   list_plugs() { return show("power"); },
   add_plug() { return show("power"); },
   update_plug(el) { return window.handlePowerCap(el); },

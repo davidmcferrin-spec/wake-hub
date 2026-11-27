@@ -103,6 +103,8 @@ class JetIn(BaseModel):
     use_tls: bool = False
     insecure_tls: bool = False
     password: str | None = None
+    extension: str = ""
+    poll_metrics: bool = False
     device_id: int | None = None
 
 
@@ -113,6 +115,8 @@ class JetPatch(BaseModel):
     use_tls: bool | None = None
     insecure_tls: bool | None = None
     password: str | None = None
+    extension: str | None = None
+    poll_metrics: bool | None = None
     device_id: int | None = None
 
 

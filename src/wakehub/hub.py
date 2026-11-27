@@ -7,6 +7,7 @@ import os
 import secrets
 import threading
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 from wakehub.config import Settings
@@ -29,6 +30,7 @@ class Hub:
         self.cipher = load_cipher(settings.config_dir, settings.secret_key)
         self.token = self._load_or_create_token()
         self._ensure_cors_default()
+        self._abandon_running_scans()
         self._attempts: dict[str, list[float]] = {}
         self._attempt_lock = threading.Lock()
 
@@ -53,6 +55,14 @@ class Hub:
         self._write_setting("api_token", encrypt(self.cipher, token))
         self._publish_token(token)
         return token
+
+    def _abandon_running_scans(self) -> None:
+        # The scan thread dies with the process. A leftover running row would block every later scan.
+        now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+        self.write(
+            "UPDATE scans SET status = 'error', message = ?, finished_at = ? WHERE status = 'running'",
+            ("interrupted by restart", now),
+        )
 
     def _ensure_cors_default(self) -> None:
         row = self.db.execute("SELECT value FROM settings WHERE key = 'cors_origins'").fetchone()

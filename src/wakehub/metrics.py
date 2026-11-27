@@ -172,8 +172,12 @@ def _collect_ups(hub: Hub) -> int:
 def _collect_jetkvm(hub: Hub) -> int:
     from wakehub.power import jetkvm_status
 
+    # A poll opens a WebRTC session. JetKVM keeps one session, so this stays off unless the
+    # device is a DC extension and the operator turned polling on for that endpoint.
     count = 0
-    for item in hub.query("SELECT id, device_id FROM jetkvm_endpoints"):
+    for item in hub.query(
+        "SELECT id, device_id FROM jetkvm_endpoints WHERE poll_metrics = 1 AND extension = 'dc-power'"
+    ):
         try:
             status = jetkvm_status(hub, item["id"])
         except Exception as exc:

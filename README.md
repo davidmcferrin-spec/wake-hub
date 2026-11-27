@@ -2,7 +2,7 @@
 
 Self-hosted power control for a home LAN. One process serves a web UI, a versioned REST API and an MCP server, all on the same port. It can wake a machine, switch a Synaccess outlet or a smart plug, drive Intel AMT and JetKVM power buttons, and read or command a CyberPower UPS card.
 
-The web UI can stay open on the LAN. The API and MCP always require a bearer token. Stored passwords are encrypted and are never returned.
+The web UI requires a password. The API and MCP always require a bearer token. Stored passwords are encrypted and are never returned.
 
 ## Run with Docker
 
@@ -45,7 +45,7 @@ Config lives in `/config`. SQLite lives in `/data`.
 - **Kasa (EP10, EP25, KP125M and the same family).** Legacy XOR on port 9999, and KLAP on current firmware using the TP-Link account email and password. Energy is read on models that report it.
 - **CyberPower RCCARD100.** SNMP v1, v2c or v3. Status, on line or on battery, capacity, runtime, input and output voltage, load, current and watts. Shutdown, reboot, turn off (immediate or delayed), battery test, and outlet-bank control. The UI warns before those commands.
 - **Discovery.** Ping and ARP sweep of a CIDR (the host subnet by default), plus reverse DNS, MAC vendor from the bundled IEEE OUI list, and probes for AMT, Synaccess, JetKVM, Shelly, Kasa and CyberPower. Scans run in the background. Every type can also be added by hand with an IP.
-- **Telemetry.** Bank current, plug power and energy, and UPS load and voltages are polled into SQLite. The UI shows the latest values and a small chart. Retention and the poll interval are settings.
+- **Telemetry.** Bank current, plug power and energy, and UPS load and voltages are polled into SQLite. JetKVM DC voltage, current and watts are polled only when that endpoint is set to the DC extension and its metrics toggle is on, because a poll opens a WebRTC session and can take over an open console. The UI shows the latest values and a small chart. Retention and the poll interval are settings.
 
 ## REST API
 
@@ -61,7 +61,7 @@ A missing or wrong token is `401`. `off`, `cycle`, `reboot`, `shutdown`, outlet 
 
 Streamable HTTP at `/mcp`, same bearer token. Without the token the endpoint is `401`.
 
-Tools: `list_devices`, `get_device`, `add_device`, `update_device`, `remove_device`, `set_device_enabled`, `wake_device`, `power_action`, `device_status`, `list_status`, `list_actions`, `get_settings`, `update_settings`, `get_access_token`, `rotate_token`, `ui_login`, `list_pdus`, `add_pdu`, `update_pdu`, `remove_pdu`, `list_pdu_outlets`, `set_pdu_outlet`, `list_amt`, `add_amt`, `update_amt`, `remove_amt`, `amt_power_state`, `list_jetkvm`, `add_jetkvm`, `update_jetkvm`, `remove_jetkvm`, `jetkvm_status`, `jetkvm_power`, `jetkvm_console`, `list_plugs`, `add_plug`, `update_plug`, `remove_plug`, `plug_status`, `plug_power`, `list_ups`, `add_ups`, `update_ups`, `remove_ups`, `ups_status`, `ups_action`, `scan_subnet`, `list_scans`, `scan_results`, `add_from_scan`, `device_metrics`, `list_metrics`.
+Tools: `list_devices`, `get_device`, `add_device`, `update_device`, `remove_device`, `set_device_enabled`, `wake_device`, `power_action`, `device_status`, `list_status`, `list_actions`, `get_settings`, `update_settings`, `get_access_token`, `rotate_token`, `ui_login`, `ui_setup`, `get_ui_session`, `list_pdus`, `add_pdu`, `update_pdu`, `remove_pdu`, `list_pdu_outlets`, `set_pdu_outlet`, `list_amt`, `add_amt`, `update_amt`, `remove_amt`, `amt_power_state`, `list_jetkvm`, `add_jetkvm`, `update_jetkvm`, `remove_jetkvm`, `jetkvm_status`, `jetkvm_power`, `jetkvm_console`, `list_plugs`, `add_plug`, `update_plug`, `remove_plug`, `plug_status`, `plug_power`, `list_ups`, `add_ups`, `update_ups`, `remove_ups`, `ups_status`, `ups_action`, `scan_subnet`, `list_scans`, `scan_results`, `add_from_scan`, `device_metrics`, `list_metrics`.
 
 `tests/test_parity.py` fails if any of these is missing from the OpenAPI document, the MCP tool list, or a `data-cap` control in the UI.
 
@@ -125,7 +125,7 @@ In particular, without those devices it is not confirmed that:
 - a directed broadcast crosses the Unraid host's switch and that a NIC with SecureOn accepts the password bytes
 - an NP-1601DU's live `$A5` string matches the bank-current layout used here (the parser follows Synaccess's published format)
 - an AMT stack accepts the WS-Management body and digest challenge this client sends
-- a JetKVM completes the WebRTC offer and answers `getATXState` / `setATXPowerAction` / `setDCPowerState` (the JSON-RPC and signaling bytes are covered by fixtures; the live data channel is not)
+- a JetKVM completes the WebRTC offer and answers `getATXState` / `setATXPowerAction` / `setDCPowerState` (the JSON-RPC and signaling bytes are covered by fixtures; the live data channel is not). DC volts, amps and watts are collected only after the endpoint is set to the DC extension and metrics polling is turned on for that device. A poll opens a WebRTC session, which can take the console away from someone who already has it open. That takeover was not checked on hardware
 - a current Kasa firmware accepts this KLAP handshake (the hash and AES framing are covered by test vectors; no plug was attached)
 - an RCCARD100 reports runtime as TimeTicks and accepts the graceful-delay SET (the client follows the CPS-MIB; the card was not queried)
 - SNMP v3 auth and privacy on that card match the protocols selected in the form

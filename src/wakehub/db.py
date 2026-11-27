@@ -82,6 +82,8 @@ CREATE TABLE IF NOT EXISTS jetkvm_endpoints (
     use_tls INTEGER NOT NULL DEFAULT 0,
     insecure_tls INTEGER NOT NULL DEFAULT 0,
     password_enc TEXT,
+    extension TEXT NOT NULL DEFAULT '',
+    poll_metrics INTEGER NOT NULL DEFAULT 0,
     device_id INTEGER,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -173,5 +175,7 @@ def connect(path: Path) -> sqlite3.Connection:
     conn.executescript(SCHEMA)
     _ensure_column(conn, "pdus", "insecure_tls", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(conn, "plugs", "insecure_tls", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(conn, "jetkvm_endpoints", "extension", "TEXT NOT NULL DEFAULT ''")
+    _ensure_column(conn, "jetkvm_endpoints", "poll_metrics", "INTEGER NOT NULL DEFAULT 0")
     conn.commit()
     return conn

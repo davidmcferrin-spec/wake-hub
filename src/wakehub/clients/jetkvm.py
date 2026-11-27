@@ -14,6 +14,7 @@ from urllib.parse import urlencode
 import httpx
 
 from wakehub.errors import UpstreamError, WakeHubError
+from wakehub.inventory import host_for_url
 
 ATX_ACTIONS = {"power-short", "power-long", "reset"}
 DESTRUCTIVE_ATX = {"power-long", "reset"}
@@ -103,8 +104,9 @@ class JetKvmClient:
         rpc=None,
     ):
         scheme = "https" if use_tls else "http"
-        self.base = f"{scheme}://{host}:{port}"
+        self.base = f"{scheme}://{host_for_url(host)}:{port}"
         self.password = password
+        self.insecure_tls = insecure_tls
         self._rpc = rpc
         self._owns = http is None
         self._http = http or httpx.Client(timeout=timeout, verify=not insecure_tls)
@@ -173,7 +175,7 @@ class JetKvmClient:
 
         self._login_if_needed()
         cookie = self._http.cookies.get("authToken", "")
-        return rpc_call(self.base, cookie, method, params)
+        return rpc_call(self.base, cookie, method, params, insecure_tls=self.insecure_tls)
 
     def _login_if_needed(self) -> None:
         if not self.password:

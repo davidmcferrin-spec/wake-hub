@@ -62,6 +62,10 @@ def dispatch_device(
     if chosen["kind"] == "amt":
         return amt_power(hub, chosen["amt_id"], action, confirm=confirm, source=source)
     if chosen["kind"] == "jetkvm":
+        endpoint, client = jetkvm_client(hub, chosen["jetkvm_id"])
+        client.close()
+        if endpoint["extension"] == "dc-power" and action == "on":
+            return jetkvm_power(hub, chosen["jetkvm_id"], "dc-on", confirm=confirm, source=source)
         if action == "on":
             state = jetkvm_status(hub, chosen["jetkvm_id"])
             atx = state.get("atx") or {}
@@ -74,7 +78,7 @@ def dispatch_device(
                     "noop": True,
                     "reason": "power LED is already on",
                 }
-        jet_action = {"on": "power-short", "off": "power-long", "shutdown": "power-long", "reboot": "reset", "cycle": "reset"}.get(action)
+        jet_action = {"on": "power-short", "off": "power-long", "shutdown": "power-short", "reboot": "reset", "cycle": "reset"}.get(action)
         if jet_action is None:
             raise WakeHubError(f"JetKVM cannot {action}")
         return jetkvm_power(hub, chosen["jetkvm_id"], jet_action, confirm=confirm, source=source)
