@@ -18,6 +18,17 @@ const state = {
   methodPicks: {},
   effects: null,
   amtAvailable: {},
+  confirming: false,
+};
+
+const ask = window.confirm.bind(window);
+window.confirm = (message) => {
+  state.confirming = true;
+  try {
+    return ask(message);
+  } finally {
+    state.confirming = false;
+  }
 };
 
 const titles = {
@@ -111,12 +122,45 @@ function deviceLinks(device) {
 
 function pill(device) {
   const reach = state.status[device.id];
-  if (!device.enabled) return '<span class="pill off">Disabled</span>';
-  if (!reach) return '<span class="pill off">Checking</span>';
-  if (reach.reachable === true) return '<span class="pill up">Up</span>';
-  if (reach.reachable === false) return '<span class="pill down">Down</span>';
-  return '<span class="pill off">No address</span>';
+  const mark = ` data-device-status="${device.id}"`;
+  if (!device.enabled) return `<span class="pill off"${mark}>Disabled</span>`;
+  if (!reach) return `<span class="pill off"${mark}>Checking</span>`;
+  if (reach.reachable === true) return `<span class="pill up"${mark}>Up</span>`;
+  if (reach.reachable === false) return `<span class="pill down"${mark}>Down</span>`;
+  return `<span class="pill off"${mark}>No address</span>`;
 }
+
+function applyDevicePills() {
+  document.querySelectorAll("[data-device-status]").forEach((node) => {
+    const device = (state.devices || []).find((item) => item.id === Number(node.dataset.deviceStatus));
+    if (!device) return;
+    const next = document.createElement("template");
+    next.innerHTML = pill(device);
+    const fresh = next.content.firstElementChild;
+    if (!fresh || (node.textContent === fresh.textContent && node.className === fresh.className)) return;
+    node.textContent = fresh.textContent;
+    node.className = fresh.className;
+  });
+}
+
+async function pollStatus() {
+  if (state.confirming || document.hidden || !state.token) return;
+  if (state.page !== "devices" && state.page !== "power") return;
+  try {
+    if (state.page === "devices") {
+      const status = await api("GET", "/api/v1/status");
+      state.status = {};
+      status.forEach((item) => { state.status[item.device_id] = item; });
+      applyDevicePills();
+    }
+    if (window.loadOperateStatus) await window.loadOperateStatus();
+    if (window.loadLivePdus) await window.loadLivePdus();
+  } catch (_error) {
+    /* a status poll leaves the page where the operator left it */
+  }
+}
+
+window.pollStatus = pollStatus;
 
 function tagChips(tags) {
   return `<div class="tags">${(tags || []).map((tag) => {
@@ -858,8 +902,10 @@ function renderDevices() {
     filter.addEventListener("change", () => {
       state.kindFilter = filter.value;
       const grid = $("device-grid");
-      if (grid) grid.innerHTML = deviceCardsHtml();
-      else render();
+      if (grid) {
+        grid.innerHTML = deviceCardsHtml();
+        if (window.bindOutlets) window.bindOutlets(grid);
+      } else render();
     });
   }
   const search = $("device-search");
@@ -870,7 +916,10 @@ function renderDevices() {
       state.tagFilter = parsed.tags;
       suggestTags(search);
       const grid = $("device-grid");
-      if (grid) grid.innerHTML = deviceCardsHtml();
+      if (grid) {
+        grid.innerHTML = deviceCardsHtml();
+        if (window.bindOutlets) window.bindOutlets(grid);
+      }
       syncBulkBar();
     });
   }
@@ -1201,6 +1250,7 @@ function render() {
     }
   }
   restoreTransient(transient);
+  if (window.bindOutlets) window.bindOutlets();
   Object.entries(state.amtAvailable || {}).forEach(([id, available]) => {
     if (typeof applyAmtAvailable === "function") applyAmtAvailable(id, available);
   });
@@ -1584,16 +1634,10 @@ async function boot() {
   }
   if (state.booted) return;
   state.booted = true;
-  window.setInterval(() => {
-    if (state.page !== "devices" || !state.token || state.editing || state.focus) return;
-    const active = document.activeElement;
-    if (active && active.closest && active.closest("input, textarea, select")) return;
-    refreshDevices().then(() => {
-      const current = document.activeElement;
-      if (current && current.closest && current.closest("input, textarea, select")) return;
-      if (!state.editing && !state.focus && state.page === "devices") render();
-    }).catch(() => {});
-  }, 10000);
+  window.setInterval(() => { pollStatus(); }, 8000);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) pollStatus();
+  });
 }
 
 function markField(form, name, message) {

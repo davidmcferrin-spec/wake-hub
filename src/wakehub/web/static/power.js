@@ -78,7 +78,17 @@ function hardwareFields(kind, record) {
     const fromDevice = editing
       ? `<p class="sub device-names">${escapeHtml(deviceNamesText(current.device_outlet_names))}</p>`
       : `<p class="sub">Outlet names are read from the PDU when it is added.</p>`;
-    return `${name}${hostPort}${tls}${login}${fromDevice}<label>Local outlet names<input name="outlet_names" value="${names}" placeholder="1=NAS, 2=Desk"></label>${saved}${tagsField}`;
+    const namesError = `<p class="name-error error" role="alert">${editing ? escapeHtml(current.outlet_names_error || "") : ""}</p>`;
+    const outletTags = editing
+      ? (current.outlets || []).map((outlet) => {
+        const tags = (outlet.tags || []).join(" ");
+        return `<label>${escapeHtml(outlet.name)} tags<input data-outlet-tag="${outlet.number}" value="${escapeHtml(tags)}" aria-label="Tags for ${escapeHtml(outlet.name)}"></label>`;
+      }).join("")
+      : "";
+    const saveTags = editing
+      ? `<button type="button" data-cap="update_pdu_outlet" data-fields="tags" data-pdu="${current.id}" data-outlet="1">Save tags</button>`
+      : "";
+    return `${name}${hostPort}${tls}${login}${fromDevice}${namesError}<label>Local outlet names<input name="outlet_names" value="${names}" placeholder="1=NAS, 2=Desk"></label>${outletTags}${saveTags}${saved}${tagsField}`;
   }
   if (kind === "roku") {
     const help = editing ? "" : `<button type="button" class="ghost icon-button" id="roku-help" aria-expanded="false" aria-controls="roku-help-text">Info</button><p id="roku-help-text" class="sub hidden">Control by mobile apps must be enabled on the TV. Some models need network standby turned on to power back on.</p>`;
@@ -175,6 +185,10 @@ window.saveHardware = async function (button) {
   if (!form) return;
   try {
     await api("PATCH", `/api/v1/${button.dataset.path}/${button.dataset.id}`, payloadFrom(form));
+    const tagBoxes = [...form.querySelectorAll("[data-outlet-tag]")];
+    await Promise.all(tagBoxes.map((box) => api("PATCH", `/api/v1/pdus/${button.dataset.id}/outlets/${box.dataset.outletTag}`, {
+      tags: box.value.split(/[\s,]+/).filter(Boolean),
+    })));
     await refreshPower();
     if (state.page === "power") renderPower();
     if (state.page === "devices") render();
@@ -253,21 +267,52 @@ function outletShown(outlet) {
   return wanted.every((tag) => owned.includes(String(tag).toLowerCase()));
 }
 
+function outletStateLabel(outlet) {
+  const stateText = outlet.on === true ? "on" : outlet.on === false ? "off" : "state unknown";
+  return `${outlet.name} · ${stateText}`;
+}
+
 function outletRow(pduId, outlet) {
   if (!outletShown(outlet)) return "";
-  const stateText = outlet.on === true ? "on" : outlet.on === false ? "off" : "state unknown";
-  const tags = (outlet.tags || []).join(" ");
   const pdu = ((state.power && state.power.pdus) || []).find((row) => Number(row.id) === Number(pduId));
   const pduName = pdu && pdu.name ? pdu.name : "PDU";
-  return `<div class="row-actions outlet-line" data-outlet-row="${outlet.number}">
-    <span>${escapeHtml(outlet.name)} · ${escapeHtml(stateText)}</span>
-    <button type="button" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${pduId}" data-pdu-name="${escapeHtml(pduName)}" data-outlet="${outlet.number}" data-outlet-name="${escapeHtml(outlet.name)}" data-action="on">On</button>
-    <button type="button" class="danger" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${pduId}" data-pdu-name="${escapeHtml(pduName)}" data-outlet="${outlet.number}" data-outlet-name="${escapeHtml(outlet.name)}" data-action="off">Off</button>
-    <button type="button" class="danger" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${pduId}" data-pdu-name="${escapeHtml(pduName)}" data-outlet="${outlet.number}" data-outlet-name="${escapeHtml(outlet.name)}" data-action="cycle">Cycle</button>
-    <input class="outlet-tags" value="${escapeHtml(tags)}" aria-label="Tags for ${escapeHtml(outlet.name)}">
-    <button type="button" data-cap="update_pdu_outlet" data-fields="tags" data-pdu="${pduId}" data-outlet="${outlet.number}">Save tags</button>
+  const button = (action, label, tone) => `<button type="button" class="${tone}" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${pduId}" data-pdu-name="${escapeHtml(pduName)}" data-outlet="${outlet.number}" data-outlet-name="${escapeHtml(outlet.name)}" data-action="${action}">${label}</button>`;
+  return `<div class="outlet-line" data-outlet-row="${outlet.number}">
+    <span class="outlet-state" data-outlet-state>${escapeHtml(outletStateLabel(outlet))}</span>
+    <div class="outlet-ops">
+      ${button("on", "On", "")}
+      ${button("off", "Off", "danger")}
+      ${button("cycle", "Cycle", "danger")}
+    </div>
   </div>`;
 }
+
+function outletsOpenMap() {
+  try {
+    return JSON.parse(localStorage.getItem("wakehub.outlets") || "{}");
+  } catch (_error) {
+    return {};
+  }
+}
+
+window.bindOutlets = function (root) {
+  const saved = outletsOpenMap();
+  const scope = root || document;
+  const nodes = [...scope.querySelectorAll("details.outlets")];
+  if (scope.matches && scope.matches("details.outlets")) nodes.unshift(scope);
+  nodes.forEach((node) => {
+    const id = node.dataset.pduLive;
+    if (!id) return;
+    if (saved[id] === "1") node.open = true;
+    if (node.dataset.bound) return;
+    node.dataset.bound = "1";
+    node.addEventListener("toggle", () => {
+      const next = outletsOpenMap();
+      next[id] = node.open ? "1" : "0";
+      localStorage.setItem("wakehub.outlets", JSON.stringify(next));
+    });
+  });
+};
 
 window.loadLivePdus = async function () {
   const nodes = [...document.querySelectorAll("[data-pdu-live]")];
@@ -277,13 +322,27 @@ window.loadLivePdus = async function () {
     try {
       const data = await api("GET", `/api/v1/pdus/${id}/outlets`);
       if (bank) bank.textContent = `Bank current ${(data.bank_amps || []).map((value) => `${value} A`).join(", ") || "unknown"}.`;
-      const rows = (data.outlets || []).map((outlet) => outletRow(id, outlet)).join("") || `<p class="sub">No outlets stored yet.</p>`;
-      const summary = node.querySelector("summary");
-      if (summary) {
-        node.innerHTML = "";
-        node.append(summary);
-        node.insertAdjacentHTML("beforeend", rows);
-      } else node.innerHTML = rows;
+      const shown = (data.outlets || []).filter(outletShown);
+      const rows = [...node.querySelectorAll("[data-outlet-row]")];
+      const sameShape = rows.length === shown.length && rows.every((row, index) => row.dataset.outletRow === String(shown[index].number));
+      if (sameShape && rows.length) {
+        rows.forEach((row, index) => {
+          const outlet = shown[index];
+          const label = row.querySelector("[data-outlet-state]");
+          const text = outletStateLabel(outlet);
+          if (label && label.textContent !== text) label.textContent = text;
+          row.querySelectorAll("[data-outlet-name]").forEach((button) => { button.dataset.outletName = outlet.name; });
+        });
+      } else {
+        const markup = shown.map((outlet) => outletRow(id, outlet)).join("") || `<p class="sub">No outlets stored yet.</p>`;
+        const summary = node.querySelector("summary");
+        if (summary) {
+          node.innerHTML = "";
+          node.append(summary);
+          node.insertAdjacentHTML("beforeend", markup);
+        } else node.innerHTML = markup;
+        if (window.bindOutlets) window.bindOutlets(node);
+      }
     } catch (error) {
       if (bank) bank.textContent = error.message;
     }
@@ -314,9 +373,12 @@ window.hardwareControls = function (kind, item, full) {
   }
   if (kind === "pdu") {
     const rows = (item.outlets || []).map((outlet) => outletRow(id, outlet)).join("");
+    const open = (() => {
+      try { return JSON.parse(localStorage.getItem("wakehub.outlets") || "{}")[id] === "1"; } catch (_error) { return false; }
+    })() ? "open" : "";
     return `
       ${statusPill(`pdu-${id}`, "Checking")}
-      <details class="outlets" id="pdu-${id}" data-pdu-live="${id}">
+      <details class="outlets" id="pdu-${id}" data-pdu-live="${id}" ${open}>
         <summary>Outlets</summary>
         ${rows || `<p class="sub">No outlets stored yet.</p>`}
       </details>`;
@@ -775,10 +837,19 @@ window.handlePowerCap = async function handlePowerCap(button) {
       }
       return true;
     } else if (cap === "update_pdu_outlet") {
-      const row = button.closest("[data-outlet-row]");
-      const raw = row && row.querySelector(".outlet-tags") ? row.querySelector(".outlet-tags").value : "";
-      const tags = String(raw).split(/[\s,]+/).map((item) => item.trim()).filter(Boolean);
-      await api("PATCH", `/api/v1/pdus/${button.dataset.pdu}/outlets/${button.dataset.outlet}`, { tags });
+      const form = button.closest("form");
+      const boxes = form ? [...form.querySelectorAll("[data-outlet-tag]")] : [];
+      if (boxes.length) {
+        await Promise.all(boxes.map((box) => {
+          const tags = String(box.value || "").split(/[\s,]+/).map((item) => item.trim()).filter(Boolean);
+          return api("PATCH", `/api/v1/pdus/${button.dataset.pdu || button.dataset.id}/outlets/${box.dataset.outletTag}`, { tags });
+        }));
+      } else {
+        const row = button.closest("[data-outlet-row]");
+        const raw = row && row.querySelector(".outlet-tags") ? row.querySelector(".outlet-tags").value : "";
+        const tags = String(raw).split(/[\s,]+/).map((item) => item.trim()).filter(Boolean);
+        await api("PATCH", `/api/v1/pdus/${button.dataset.pdu}/outlets/${button.dataset.outlet}`, { tags });
+      }
       showBanner("Outlet tags saved");
       return true;
     } else if (cap === "set_pdu_outlet") {
@@ -788,6 +859,8 @@ window.handlePowerCap = async function handlePowerCap(button) {
       const outletPrompt = action === "off" ? `Turn off ${outletName} on ${pduName}?` : `Cycle ${outletName} on ${pduName}?`;
       if ((action === "off" || action === "reboot" || action === "cycle") && !window.confirm(outletPrompt)) return true;
       await api("POST", `/api/v1/pdus/${button.dataset.pdu}/outlets/${button.dataset.outlet}`, { action, confirm: action !== "on" });
+      if (window.pollStatus) await window.pollStatus();
+      return true;
     } else if (cap === "remove_pdu" || cap === "remove_amt" || cap === "remove_jetkvm" || cap === "remove_plug" || cap === "remove_ups" || cap === "remove_roku") {
       const kind = { remove_pdu: "pdu", remove_amt: "amt", remove_jetkvm: "jetkvm", remove_plug: "plug", remove_ups: "ups", remove_roku: "roku" }[cap];
       await window.confirmDelete([{ kind, id }], []);
@@ -857,10 +930,17 @@ window.handlePowerCap = async function handlePowerCap(button) {
       const data = await api("POST", `/api/v1/pdus/${id}/outlet-names`);
       await refreshPower();
       const note = document.querySelector("form.hardware-edit .device-names");
+      const alert = document.querySelector("form.hardware-edit .name-error");
       if (note) note.textContent = deviceNamesText(data.device_outlet_names);
-      else if (state.page === "power") renderPower();
-      else if (state.page === "devices") render();
-      showBanner("Outlet names read from the PDU");
+      if (data.names_error) {
+        if (alert) alert.textContent = data.names_error;
+        showBanner(data.names_error, true);
+      } else {
+        if (alert) alert.textContent = "";
+        if (!note && state.page === "power") renderPower();
+        else if (!note && state.page === "devices" && window.pollStatus) await window.pollStatus();
+        showBanner("Outlet names read from the PDU");
+      }
       return true;
     } else if (cap === "list_metrics") {
       const rows = await api("GET", "/api/v1/metrics?limit=60");
@@ -1052,8 +1132,7 @@ async function sendPower(el) {
   if (destructive && !window.confirm(powerConfirm(device, action, method))) return;
   const result = await api("POST", `/api/v1/devices/${id}/power`, { action, method, confirm: destructive });
   showBanner(reachText(result));
-  await refreshDevices();
-  render();
+  if (window.pollStatus) await window.pollStatus();
 }
 
 async function sendUps(el) {

@@ -86,6 +86,69 @@ def test_netbooter_setup_page_and_challenge_are_recognized():
     assert not synaccess_http({"Server": "nginx"}, "<title>Router</title>", 401)
 
 
+NP1601_NAMES = (
+    "Attic POE",
+    "HDMI Streaming",
+    "Home PC",
+    "Internet Fiber Jack",
+    "Network Gear",
+    "Work HP",
+    "Work Peplink",
+)
+
+
+def _np1601_setup_page() -> str:
+    inputs = "".join(
+        f'<input type="text" name="oName{index}" value="{label}">' for index, label in enumerate(NP1601_NAMES, start=1)
+    )
+    return f"<html><title>netBooter NP-1601DU</title><body><h1>Outlet Setup</h1><form>{inputs}</form></body></html>"
+
+
+def test_np1601_setup_page_names_are_not_in_the_status_command(monkeypatch):
+    monkeypatch.undo()
+    assert parse_outlet_names("$A5\n1111111111111111,0.42,0.18,27") == {}
+    assert parse_outlet_names(_np1601_setup_page()) == {index: label for index, label in enumerate(NP1601_NAMES, start=1)}
+    quoted = ",".join(f'"{label}"' for label in NP1601_NAMES)
+    assert parse_outlet_names(f"<script>var olName = new Array({quoted});</script>")[1] == "Attic POE"
+    assert parse_outlet_names(f"<script>var olName = new Array({quoted});</script>")[7] == "Work Peplink"
+
+    def handler(request):
+        if request.url.path == "/outletsetup.htm":
+            return httpx.Response(200, text=_np1601_setup_page())
+        if request.url.path == "/cmd.cgi":
+            return httpx.Response(200, text="1111111111111111,0.42,0.18,27")
+        return httpx.Response(404, text="missing")
+
+    client = SynaccessClient("192.168.0.8", "admin", "admin", http=httpx.Client(transport=httpx.MockTransport(handler)))
+    assert client.read_outlet_names()[3] == "Home PC"
+    assert client.read_outlet_names()[4] == "Internet Fiber Jack"
+    client.close()
+
+
+def test_np1601_name_read_logs_the_response_when_the_page_has_no_names(monkeypatch, caplog):
+    import logging
+
+    monkeypatch.undo()
+    body = "<html><title>netBooter NP-1601DU</title><body>Please login</body></html>" + ("x" * 600)
+
+    def handler(_request):
+        return httpx.Response(200, text=body)
+
+    client = SynaccessClient("192.168.0.8", "admin", "admin", http=httpx.Client(transport=httpx.MockTransport(handler)))
+    with caplog.at_level(logging.INFO, logger="wakehub.synaccess"):
+        try:
+            client.read_outlet_names()
+        except Exception as exc:
+            message = str(exc)
+        else:
+            message = ""
+    client.close()
+    assert message.startswith("Couldn't read outlet names from the PDU")
+    assert "HTTP 200" in caplog.text
+    assert "Please login" in caplog.text
+    assert "x" * 500 not in caplog.text
+
+
 def test_amt_wsman_round_trip():
     request = build_power_change("http://amt.local:16992/wsman", 2, "uuid:test")
     assert "RequestPowerStateChange" in request

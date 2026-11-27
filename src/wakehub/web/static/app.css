@@ -254,6 +254,10 @@ button.sr-only {
   border-color: #f0d0cb;
 }
 
+.name-error { margin: 0.2rem 0; padding: 0.45rem 0.7rem; border: 1px solid; border-radius: 10px; }
+
+.name-error:empty { display: none; }
+
 .stack { display: flex; flex-direction: column; gap: 0.45rem; margin-bottom: 0.9rem; }
 
 .toolbar, .row-actions, .inline, .page-actions, .bulk-bar, .tablist {
@@ -306,12 +310,20 @@ button.sr-only {
 
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(22rem, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr));
   gap: var(--s3);
   align-items: start;
 }
 
-.card { height: auto; padding: var(--s4); display: flex; flex-direction: column; gap: var(--s2); }
+.card {
+  height: auto;
+  padding: var(--s4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  min-width: 0;
+  max-width: 100%;
+}
 
 .card-head { align-items: baseline; }
 
@@ -319,9 +331,9 @@ button.sr-only {
 
 .card-head .check { margin: 0; align-self: baseline; }
 
-.card .actions { flex-wrap: wrap; }
+.card .actions, .card > .row-actions { flex-wrap: wrap; min-width: 0; max-width: 100%; }
 
-.card .actions > button { max-width: 100%; white-space: nowrap; }
+.card .actions > button, .card > .row-actions > button { max-width: 100%; }
 
 .method-picks {
   display: grid;
@@ -343,8 +355,6 @@ button.sr-only {
 .card.detail .actions { margin-top: 0.1rem; }
 
 @media (min-width: 1100px) {
-  .card .actions,
-  .card > .row-actions { flex-wrap: nowrap; }
   .card .actions > button,
   .card > .row-actions > button,
   .card .more-toggle { padding-left: 0.55rem; padding-right: 0.55rem; }
@@ -397,7 +407,20 @@ body:has(.more .menu:not(.hidden)) .banner {
   display: none;
 }
 
-.outlet-line { display: grid; grid-template-columns: minmax(6rem, 1fr) auto auto auto; gap: var(--s2); align-items: center; }
+.outlet-line {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.35rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.outlet-state { min-width: 0; overflow-wrap: anywhere; }
+
+.outlet-ops { display: flex; flex-wrap: wrap; gap: 0.35rem; min-width: 0; max-width: 100%; }
+
+.outlet-ops button { height: 2rem; padding: 0 0.65rem; }
 
 .more-toggle { height: var(--control); }
 
@@ -510,7 +533,7 @@ button.name-button {
 
 .icon-button { min-width: var(--control); padding: 0 var(--s3); }
 
-details.outlets { border: 1px solid var(--line); border-radius: 12px; padding: var(--s2) var(--s3); }
+details.outlets { border: 1px solid var(--line); border-radius: 12px; padding: var(--s2) var(--s3); min-width: 0; max-width: 100%; }
 
 details.outlets summary { cursor: pointer; }
 

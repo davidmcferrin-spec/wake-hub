@@ -97,6 +97,7 @@ def public_pdu(row, hub: Hub | None = None) -> dict[str, Any]:
         "password_set": bool(row["password_enc"]),
         "outlet_names": json.loads(row["outlet_names"] or "{}"),
         "device_outlet_names": json.loads(row["device_outlet_names"] or "{}"),
+        "outlet_names_error": row["outlet_names_error"] if "outlet_names_error" in row.keys() else "",
         "outlets": outlets,
         "credential_profile_id": row["credential_profile_id"],
         "tags": _stored_tags(row),
@@ -250,7 +251,7 @@ def add_pdu(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
     def _read_names() -> None:
         try:
             # A dead address must not sit on hub.lock. This runs after the save commits.
-            refresh_pdu_outlet_names(hub, item_id, timeout=1.5)
+            refresh_pdu_outlet_names(hub, item_id, timeout=4)
         except Exception:
             pass
 
@@ -303,33 +304,47 @@ def outlet_labels(row) -> dict[int, str]:
 
 def sync_pdu_outlets(hub: Hub, pdu_id: int, count: int, names: dict[int, str]) -> None:
     current = {row["number"]: row for row in hub.query("SELECT * FROM pdu_outlets WHERE pdu_id = ?", (pdu_id,))}
-    labels = outlet_labels(_row(hub, "pdu", pdu_id))
-    for number, label in names.items():
-        if label:
-            labels[number] = labels.get(number) or label
-    for number in range(1, max(int(count or 0), 0) + 1):
+    row = _row(hub, "pdu", pdu_id)
+    user = {}
+    for key, value in json.loads(row["outlet_names"] or "{}").items():
+        if value is not None and str(value).strip():
+            user[int(key)] = str(value).strip()
+    previous = {int(key): str(value) for key, value in json.loads(row["device_outlet_names"] or "{}").items() if value}
+    for number in range(1, max(int(count or 0), max(names) if names else 0, 0) + 1):
         existing = current.get(number)
-        candidate = labels.get(number) or ""
-        if candidate.lower() in {"0", "1", "on", "off", "true", "false"}:
-            candidate = ""
-        name = candidate or (existing["name"] if existing and existing["name"] else f"Outlet {number}")
+        device_name = names.get(number) or ""
+        if device_name.lower() in {"0", "1", "on", "off", "true", "false"}:
+            device_name = ""
+        if number in user:
+            chosen = user[number]
+        elif existing and existing["name"] not in {"", f"Outlet {number}", previous.get(number, "")}:
+            # A name typed in Wake Hub stays when the PDU is read again.
+            chosen = existing["name"]
+        elif device_name:
+            chosen = device_name
+        elif existing and existing["name"]:
+            chosen = existing["name"]
+        else:
+            chosen = f"Outlet {number}"
         if existing is None:
             hub.write(
                 "INSERT INTO pdu_outlets (pdu_id, number, name, tags) VALUES (?, ?, ?, '[]')",
-                (pdu_id, number, name),
+                (pdu_id, number, chosen),
             )
-        elif name and existing["name"] != name:
-            hub.write("UPDATE pdu_outlets SET name = ? WHERE id = ?", (name, existing["id"]))
+        elif chosen and existing["name"] != chosen:
+            hub.write("UPDATE pdu_outlets SET name = ? WHERE id = ?", (chosen, existing["id"]))
 
 
 def refresh_pdu_outlet_names(hub: Hub, pdu_id: int, *, timeout: float | None = None) -> dict[str, Any]:
     _current, client = pdu_client(hub, pdu_id, timeout=timeout)
     names: dict[int, str] = {}
     count = 0
+    names_error = ""
     try:
         try:
             names = client.read_outlet_names()
-        except Exception:
+        except UpstreamError as exc:
+            names_error = str(exc)
             names = {}
         try:
             count = len(client.status().outlets)
@@ -338,15 +353,38 @@ def refresh_pdu_outlet_names(hub: Hub, pdu_id: int, *, timeout: float | None = N
     finally:
         client.close()
     if not names and count == 0:
-        raise UpstreamError("the PDU did not return outlet names")
+        message = _names_failure(names_error)
+        _store_names_error(hub, pdu_id, message)
+        raise UpstreamError(message)
+    # Sync while device_outlet_names is still the previous read, so a name
+    # the user changed is not treated as the device's last name.
+    sync_pdu_outlets(hub, pdu_id, count or (max(names) if names else 0), names)
     if names:
         stored = {str(number): label for number, label in sorted(names.items())}
         hub.write(
-            "UPDATE pdus SET device_outlet_names = ?, updated_at = ? WHERE id = ?",
+            "UPDATE pdus SET device_outlet_names = ?, outlet_names_error = '', updated_at = ? WHERE id = ?",
             (json.dumps(stored), utcnow(), pdu_id),
         )
-    sync_pdu_outlets(hub, pdu_id, count or (max(names) if names else 0), names)
-    return public_pdu(_row(hub, "pdu", pdu_id), hub)
+    elif names_error:
+        _store_names_error(hub, pdu_id, _names_failure(names_error))
+    body = public_pdu(_row(hub, "pdu", pdu_id), hub)
+    if body.get("outlet_names_error"):
+        body["names_error"] = body["outlet_names_error"]
+    return body
+
+
+def _names_failure(detail: str) -> str:
+    text = (detail or "the PDU did not return outlet names").strip()
+    if text.startswith("Couldn't read outlet names from the PDU"):
+        return text
+    return f"Couldn't read outlet names from the PDU ({text})"
+
+
+def _store_names_error(hub: Hub, pdu_id: int, message: str) -> None:
+    hub.write(
+        "UPDATE pdus SET outlet_names_error = ?, updated_at = ? WHERE id = ?",
+        (message, utcnow(), pdu_id),
+    )
 
 
 def update_pdu_outlet(hub: Hub, pdu_id: int, outlet: int, payload: dict[str, Any]) -> dict[str, Any]:

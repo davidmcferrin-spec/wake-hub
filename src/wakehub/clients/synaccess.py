@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import html
 import json
+import logging
 import re
 from dataclasses import dataclass
 from urllib.parse import quote
@@ -16,6 +17,8 @@ import httpx
 
 from wakehub.errors import UpstreamError
 from wakehub.inventory import host_for_url
+
+log = logging.getLogger("wakehub.synaccess")
 
 
 @dataclass(frozen=True)
@@ -118,8 +121,9 @@ def parse_result(body: str) -> None:
     raise UpstreamError(f"Synaccess returned an unknown result: {text!r}")
 
 
+# The NP-1601DU setup page uses oName1, not the $A5 status string, which has no names.
 _OUTLET_INPUT = re.compile(
-    r"^(?:outlet[_-]?)?(?:name|nm|custom)[_-]?(\d+)$",
+    r"^(?:outlet[_-]?name|outletname|out[_-]?name|o[_-]?name|nm|name|custom)[_-]?(\d+)$",
     re.IGNORECASE,
 )
 _JUNK_NAME = {"0", "1", "on", "off", "true", "false"}
@@ -176,7 +180,17 @@ def _names_from_html(text: str) -> dict[int, str]:
             names[int(found.group(1))] = label
     if names:
         return names
-    array = re.search(r"outlet[_ \-]*names?\s*=\s*(?:new\s+Array)?\s*\(?\s*\[(.*?)\]", text, re.IGNORECASE | re.DOTALL)
+    array = re.search(
+        r"(?:outlet[_ \-]*names?|ol[_ \-]*names?|name[_ \-]*array)\s*=\s*(?:new\s+Array)?\s*\(?\s*\[(.*?)\]",
+        text,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if array is None:
+        array = re.search(
+            r"(?:outlet[_ \-]*names?|ol[_ \-]*names?|name[_ \-]*array)\s*=\s*new\s+Array\s*\((.*?)\)",
+            text,
+            re.IGNORECASE | re.DOTALL,
+        )
     if not array:
         return {}
     labels = re.findall(r"""["']([^"']*)["']""", array.group(1))
@@ -230,19 +244,28 @@ class SynaccessClient:
         parse_result(self._command(f"$A7 {1 if on else 0}"))
 
     def read_outlet_names(self) -> dict[int, str]:
-        # $A5/$A0 is on/off bits and bank current. Names live on the setup pages.
+        # $A5 is on/off bits and bank current. The NP-1601DU keeps names on the outlet setup page.
         origin = self._base.split("/cmd.cgi", 1)[0]
-        for path in ("/api/outlets", "/outletsetup.htm", "/outlets.htm", "/outlet.htm", "/setup.htm", "/"):
+        paths = ("/outletsetup.htm", "/outlets.htm", "/outlet.htm", "/api/outlets", "/setup.htm", "/")
+        last = ("", 0, "")
+        for path in paths:
             try:
                 response = self._http.get(origin + path, timeout=min(2.0, self._timeout))
-            except httpx.HTTPError:
+            except httpx.HTTPError as exc:
+                last = (path, 0, str(exc))
+                log.info("PDU outlet names %s failed before a response: %s", path, exc)
                 continue
-            if response.status_code >= 400:
-                continue
-            names = parse_outlet_names(response.text)
+            snippet = (response.text or "")[:500]
+            names = parse_outlet_names(response.text) if response.status_code < 400 else {}
             if names:
                 return names
-        raise UpstreamError("the PDU did not return outlet names")
+            last = (path, response.status_code, snippet)
+            log.info("PDU outlet names %s HTTP %s %s", path, response.status_code, snippet)
+        path, status, snippet = last
+        reason = f"{path or 'no page'} HTTP {status}"
+        if snippet:
+            reason = f"{reason}: {snippet[:120]}"
+        raise UpstreamError(f"Couldn't read outlet names from the PDU ({reason})")
 
     def _command(self, command: str) -> str:
         url = self._base + quote(command, safe="$")

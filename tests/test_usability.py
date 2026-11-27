@@ -172,6 +172,45 @@ def test_pdu_outlet_names_are_read_and_local_overrides_win(client, monkeypatch):
     assert offline.json()["device_outlet_names"] == {}
 
 
+def test_reread_keeps_a_name_set_in_wake_hub_and_records_a_failed_read(client, hub, monkeypatch):
+    from wakehub.clients.synaccess import parse_status
+    from wakehub.errors import UpstreamError
+
+    current = {"names": {1: "Attic POE", 2: "HDMI Streaming", 3: "Home PC"}}
+
+    def names(self):
+        return dict(current["names"])
+
+    def status(self, labels=None):
+        return parse_status("111,0.40,22", labels)
+
+    monkeypatch.setattr("wakehub.clients.synaccess.SynaccessClient.read_outlet_names", names)
+    monkeypatch.setattr("wakehub.clients.synaccess.SynaccessClient.status", status)
+    created = client.post("/api/v1/pdus", json={"name": "NP-1601DU", "host": "192.168.0.8", "outlet_names": {"2": "Work HP"}})
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["outlets"][0]["name"] == "Attic POE"
+    assert body["outlets"][1]["name"] == "Work HP"
+    hub.write("UPDATE pdu_outlets SET name = ? WHERE pdu_id = ? AND number = ?", ("Internet Fiber Jack", body["id"], 3))
+    current["names"] = {1: "Attic POE", 2: "HDMI Streaming", 3: "Home PC"}
+    kept = client.post(f"/api/v1/pdus/{body['id']}/outlet-names")
+    assert kept.status_code == 200, kept.text
+    outlets = {item["number"]: item["name"] for item in kept.json()["outlets"]}
+    assert outlets[2] == "Work HP"
+    assert outlets[3] == "Internet Fiber Jack"
+
+    def missing(self):
+        raise UpstreamError("Couldn't read outlet names from the PDU (/outletsetup.htm HTTP 200: <html>login)")
+
+    monkeypatch.setattr("wakehub.clients.synaccess.SynaccessClient.read_outlet_names", missing)
+    failed = client.post(f"/api/v1/pdus/{body['id']}/outlet-names")
+    assert failed.status_code == 200, failed.text
+    assert failed.json()["names_error"].startswith("Couldn't read outlet names from the PDU")
+    again = {item["number"]: item["name"] for item in failed.json()["outlets"]}
+    assert again[1] == "Attic POE"
+    assert again[2] == "Work HP"
+
+
 def test_credential_profile_is_stored_encrypted_and_selectable(client):
     created = client.post("/api/v1/credential-profiles", json={"name": "rack", "username": "admin", "password": "secret-pw"})
     assert created.status_code == 201
