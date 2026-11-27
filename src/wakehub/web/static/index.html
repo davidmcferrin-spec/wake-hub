@@ -46,6 +46,7 @@
         <button type="button" data-page="devices" data-cap="list_devices">Devices</button>
         <button type="button" data-page="scan" data-cap="list_scans" data-fields="">Scan</button>
         <button type="button" data-page="power" data-cap="list_pdus">Hardware</button>
+        <button type="button" data-page="salvos" data-cap="list_salvos" data-fields="">Salvos</button>
         <button type="button" data-page="history" data-cap="list_actions">History</button>
         <button type="button" data-page="settings" data-cap="get_settings">Settings</button>
       </nav>
@@ -56,11 +57,12 @@
           <p id="page-kicker" class="eyebrow">Inventory</p>
           <h1 id="page-title">Devices</h1>
         </div>
-        <p id="banner" class="banner hidden" role="status"></p>
+        <div id="page-actions" class="page-actions"></div>
       </header>
       <main id="view"></main>
     </div>
   </div>
+  <p id="banner" class="banner hidden" role="status"></p>
   <script src="/static/app.js"></script>
   <script src="/static/power.js"></script>
 </body>

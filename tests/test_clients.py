@@ -19,7 +19,7 @@ from wakehub.clients.kasa import (
     xor_tcp_unframe,
 )
 from wakehub.clients.shelly import parse_shelly_info, parse_switch_status
-from wakehub.clients.synaccess import SynaccessClient, parse_outlet_names, parse_result, parse_status
+from wakehub.clients.synaccess import SynaccessClient, parse_outlet_names, parse_result, parse_status, synaccess_http
 from wakehub.clients.ups import OIDS, command_set, status_from_varbinds
 
 
@@ -68,6 +68,19 @@ def test_synaccess_outlet_names_come_from_json_or_the_setup_page(monkeypatch):
     client = SynaccessClient("10.0.0.5", "admin", "secret", http=httpx.Client(transport=httpx.MockTransport(handler)))
     assert client.read_outlet_names() == {1: "NAS", 2: "Desk"}
     client.close()
+
+
+def test_netbooter_setup_page_and_challenge_are_recognized():
+    html = "<html><title>netBooter NP-1601DU</title><body>" + "".join(
+        f'<input name="outletname{number}" value="Load {number}">' for number in range(1, 17)
+    ) + "</body></html>"
+    names = parse_outlet_names(html)
+    assert len(names) == 16
+    assert names[1] == "Load 1"
+    assert names[16] == "Load 16"
+    assert synaccess_http({"Server": "Synaccess"}, html, 200)
+    assert synaccess_http({"WWW-Authenticate": 'Basic realm="netBooter"'}, "", 401)
+    assert not synaccess_http({"Server": "nginx"}, "<title>Router</title>", 401)
 
 
 def test_amt_wsman_round_trip():

@@ -26,7 +26,7 @@ def test_tag_chips_filter_the_device_list(live_server, hub):
         assert "Desk" in page.inner_text("#view")
         assert "Spare" not in page.inner_text("#view")
         page.fill("#device-search", "#Office #TV")
-        page.click("button[data-cap=list_devices]")
+        page.locator("#device-search").press("Enter")
         page.wait_for_function("!document.body.innerText.includes('Spare')")
         assert "Desk" in page.inner_text("#view")
         assert "Den TV" not in page.inner_text("#view")

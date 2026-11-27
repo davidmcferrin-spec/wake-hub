@@ -14,7 +14,7 @@ from wakehub.clients.synaccess import SynaccessClient
 from wakehub.clients.ups import PysnmpTransport, UpsClient
 from wakehub.credentials import remember_profile
 from wakehub.crypto import decrypt, encrypt
-from wakehub.errors import NotFound, WakeHubError
+from wakehub.errors import NotFound, UpstreamError, WakeHubError
 from wakehub.identity import assert_available, bind_identity
 from wakehub.tags import normalize_tags
 from wakehub.hub import Hub
@@ -66,7 +66,26 @@ def _stamp(fields: dict[str, Any]) -> dict[str, Any]:
     return fields
 
 
-def public_pdu(row) -> dict[str, Any]:
+def _outlet_record(row) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "pdu_id": row["pdu_id"],
+        "number": row["number"],
+        "name": row["name"],
+        "tags": json.loads(row["tags"] or "[]"),
+    }
+
+
+def list_outlet_records(hub: Hub, pdu_id: int | None = None) -> list[dict[str, Any]]:
+    if pdu_id is None:
+        rows = hub.query("SELECT * FROM pdu_outlets ORDER BY pdu_id, number")
+    else:
+        rows = hub.query("SELECT * FROM pdu_outlets WHERE pdu_id = ? ORDER BY number", (pdu_id,))
+    return [_outlet_record(row) for row in rows]
+
+
+def public_pdu(row, hub: Hub | None = None) -> dict[str, Any]:
+    outlets = list_outlet_records(hub, row["id"]) if hub is not None else []
     return {
         "id": row["id"],
         "name": row["name"],
@@ -78,6 +97,7 @@ def public_pdu(row) -> dict[str, Any]:
         "password_set": bool(row["password_enc"]),
         "outlet_names": json.loads(row["outlet_names"] or "{}"),
         "device_outlet_names": json.loads(row["device_outlet_names"] or "{}"),
+        "outlets": outlets,
         "credential_profile_id": row["credential_profile_id"],
         "tags": _stored_tags(row),
         "created_at": row["created_at"],
@@ -199,7 +219,7 @@ def _require_name(payload: dict[str, Any]) -> str:
 
 
 def list_pdus(hub: Hub) -> list[dict[str, Any]]:
-    return [public_pdu(row) for row in hub.query("SELECT * FROM pdus ORDER BY name COLLATE NOCASE")]
+    return [public_pdu(row, hub) for row in hub.query("SELECT * FROM pdus ORDER BY name COLLATE NOCASE")]
 
 
 def add_pdu(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
@@ -231,7 +251,7 @@ def add_pdu(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
     except Exception:
         # Adding the record still succeeds when the PDU is offline or has no name API.
         pass
-    return public_pdu(_row(hub, "pdu", item_id))
+    return public_pdu(_row(hub, "pdu", item_id), hub)
 
 
 def update_pdu(hub: Hub, pdu_id: int, payload: dict[str, Any]) -> dict[str, Any]:
@@ -263,7 +283,7 @@ def update_pdu(hub: Hub, pdu_id: int, payload: dict[str, Any]) -> dict[str, Any]
     bind_identity(hub, "pdu", pdu_id, host)
     remember_profile(hub, "pdus", pdu_id, payload)
     _apply_tags(hub, "pdus", pdu_id, payload)
-    return public_pdu(_row(hub, "pdu", pdu_id))
+    return public_pdu(_row(hub, "pdu", pdu_id), hub)
 
 
 def outlet_labels(row) -> dict[int, str]:
@@ -277,25 +297,71 @@ def outlet_labels(row) -> dict[int, str]:
     return merged
 
 
+def sync_pdu_outlets(hub: Hub, pdu_id: int, count: int, names: dict[int, str]) -> None:
+    current = {row["number"]: row for row in hub.query("SELECT * FROM pdu_outlets WHERE pdu_id = ?", (pdu_id,))}
+    labels = outlet_labels(_row(hub, "pdu", pdu_id))
+    for number, label in names.items():
+        if label:
+            labels[number] = labels.get(number) or label
+    for number in range(1, max(int(count or 0), 0) + 1):
+        existing = current.get(number)
+        name = labels.get(number) or (existing["name"] if existing and existing["name"] else f"Outlet {number}")
+        if existing is None:
+            hub.write(
+                "INSERT INTO pdu_outlets (pdu_id, number, name, tags) VALUES (?, ?, ?, '[]')",
+                (pdu_id, number, name),
+            )
+        elif name and existing["name"] != name:
+            hub.write("UPDATE pdu_outlets SET name = ? WHERE id = ?", (name, existing["id"]))
+
+
 def refresh_pdu_outlet_names(hub: Hub, pdu_id: int) -> dict[str, Any]:
-    _row(hub, "pdu", pdu_id)
-    row, client = pdu_client(hub, pdu_id)
+    _current, client = pdu_client(hub, pdu_id)
+    names: dict[int, str] = {}
+    count = 0
     try:
-        names = client.read_outlet_names()
+        try:
+            names = client.read_outlet_names()
+        except Exception:
+            names = {}
+        try:
+            count = len(client.status().outlets)
+        except Exception:
+            count = max(names) if names else 0
     finally:
         client.close()
-    stored = {str(number): label for number, label in sorted(names.items())}
-    hub.write(
-        "UPDATE pdus SET device_outlet_names = ?, updated_at = ? WHERE id = ?",
-        (json.dumps(stored), utcnow(), pdu_id),
-    )
-    return public_pdu(_row(hub, "pdu", pdu_id))
+    if not names and count == 0:
+        raise UpstreamError("the PDU did not return outlet names")
+    if names:
+        stored = {str(number): label for number, label in sorted(names.items())}
+        hub.write(
+            "UPDATE pdus SET device_outlet_names = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(stored), utcnow(), pdu_id),
+        )
+    sync_pdu_outlets(hub, pdu_id, count or (max(names) if names else 0), names)
+    return public_pdu(_row(hub, "pdu", pdu_id), hub)
+
+
+def update_pdu_outlet(hub: Hub, pdu_id: int, outlet: int, payload: dict[str, Any]) -> dict[str, Any]:
+    row = hub.query_one("SELECT * FROM pdu_outlets WHERE pdu_id = ? AND number = ?", (pdu_id, outlet))
+    if row is None:
+        raise NotFound(f"outlet {outlet} was not found on PDU {pdu_id}")
+    if payload.get("tags") is not None:
+        hub.write(
+            "UPDATE pdu_outlets SET tags = ? WHERE id = ?",
+            (json.dumps(normalize_tags(payload["tags"])), row["id"]),
+        )
+    saved = hub.query_one("SELECT * FROM pdu_outlets WHERE id = ?", (row["id"],))
+    return _outlet_record(saved)
 
 
 def remove_pdu(hub: Hub, pdu_id: int) -> None:
     _row(hub, "pdu", pdu_id)
     from wakehub.removal import detach
 
+    for outlet in hub.query("SELECT id FROM pdu_outlets WHERE pdu_id = ?", (pdu_id,)):
+        detach(hub, "outlet", outlet["id"])
+    hub.write("DELETE FROM pdu_outlets WHERE pdu_id = ?", (pdu_id,))
     detach(hub, "pdu", pdu_id)
     hub.write("DELETE FROM pdus WHERE id = ?", (pdu_id,))
 

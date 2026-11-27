@@ -17,6 +17,7 @@ from wakehub.inventory import host_for_url
 POWER_COMMANDS = {
     "on": 2,
     "cycle": 5,
+    "off_hard": 6,
     "off": 8,
     "reboot": 10,
     "shutdown": 12,
@@ -191,7 +192,7 @@ class AmtClient:
 
     def request_power(self, action: str) -> dict:
         if action not in POWER_COMMANDS:
-            raise WakeHubError("AMT action must be on, off, cycle, reboot, or shutdown")
+            raise WakeHubError("AMT action must be on, off, off_hard, cycle, reboot, or shutdown")
         code = POWER_COMMANDS[action]
         if action == "shutdown":
             current = self.power_state()

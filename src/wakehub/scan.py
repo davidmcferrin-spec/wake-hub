@@ -16,7 +16,7 @@ from typing import Any, Callable
 
 import httpx
 
-from wakehub.clients.synaccess import parse_status, synaccess_realm
+from wakehub.clients.synaccess import parse_status, synaccess_http
 from wakehub.errors import ConfirmationRequired, Conflict, NotFound, WakeHubError
 from wakehub.fingerprint import suggest
 from wakehub.hub import Hub
@@ -485,6 +485,15 @@ def _fingerprint(ip: str, mac: str, mdns: list[str] | None = None) -> tuple[list
     return kinds, {"ports": sorted(ports), "suggestion": suggestion}
 
 
+def _status_is_synaccess(text: str) -> bool:
+    try:
+        parse_status(text)
+        return True
+    except Exception:
+        lowered = text.lower()
+        return "netbooter" in lowered or "synaccess" in lowered
+
+
 def _port_open(ip: str, port: int) -> bool:
     try:
         with socket.create_connection((ip, port), 0.3):
@@ -505,16 +514,13 @@ def _http_kinds(ip: str) -> list[str]:
             if shelly.status_code == 200 and "gen" in shelly.text:
                 kinds.append("shelly")
             pdu = client.get(f"http://{host}/cmd.cgi?$A5")
-            if pdu.status_code == 401 and synaccess_realm(pdu.headers.get("www-authenticate", "")):
+            if synaccess_http(dict(pdu.headers), pdu.text, pdu.status_code) or (
+                pdu.status_code == 200 and _status_is_synaccess(pdu.text)
+            ):
                 kinds.append("synaccess")
-            elif pdu.status_code == 200:
-                try:
-                    parse_status(pdu.text)
-                    kinds.append("synaccess")
-                except WakeHubError:
-                    if "netBooter" in pdu.text or "Synaccess" in pdu.text:
-                        kinds.append("synaccess")
             root = client.get(f"http://{host}/")
+            if "synaccess" not in kinds and synaccess_http(dict(root.headers), root.text, root.status_code):
+                kinds.append("synaccess")
             if any(token in root.text for token in ("CyberPower", "RCCARD", "RMCARD")):
                 kinds.append("ups")
     except httpx.HTTPError:

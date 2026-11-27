@@ -27,7 +27,7 @@ from wakehub.hub import Hub
 from wakehub.inventory import _get_row, _require_enabled, record_action, wake_device
 
 PLUG_ACTIONS = {"on", "off", "toggle", "cycle"}
-PDU_ACTIONS = {"on", "off", "reboot"}
+PDU_ACTIONS = {"on", "off", "reboot", "cycle"}
 DEVICE_ACTIONS = {"on", "off", "cycle", "reboot", "shutdown"}
 
 
@@ -130,8 +130,10 @@ def power_on_linked(hub: Hub, row, source: str) -> None:
 
 
 def set_pdu_outlet(hub: Hub, pdu_id: int, outlet: int, action: str, *, confirm: bool, source: str) -> dict[str, Any]:
+    if action == "cycle":
+        action = "reboot"
     if action not in PDU_ACTIONS:
-        raise WakeHubError("PDU action must be on, off, or reboot")
+        raise WakeHubError("PDU action must be on, off, or cycle")
     if action in {"off", "reboot"}:
         require_confirm("off" if action == "off" else "reboot", confirm)
     row, client = pdu_client(hub, pdu_id)
@@ -161,6 +163,9 @@ def list_pdu_outlets(hub: Hub, pdu_id: int) -> dict[str, Any]:
     except Exception:
         pass
     row, client = pdu_client(hub, pdu_id)
+    from wakehub.endpoints import list_outlet_records
+
+    stored = {item["number"]: item for item in list_outlet_records(hub, pdu_id)}
     try:
         status = client.status(outlet_labels(row))
     finally:
@@ -170,7 +175,16 @@ def list_pdu_outlets(hub: Hub, pdu_id: int) -> dict[str, Any]:
         "bank_amps": list(status.bank_amps),
         "temperature_c": status.temperature_c,
         "per_outlet_current": False,
-        "outlets": [{"number": item.number, "name": item.name, "on": item.on} for item in status.outlets],
+        "outlets": [
+            {
+                "id": stored.get(item.number, {}).get("id"),
+                "number": item.number,
+                "name": item.name,
+                "on": item.on,
+                "tags": stored.get(item.number, {}).get("tags") or [],
+            }
+            for item in status.outlets
+        ],
     }
 
 
@@ -241,6 +255,16 @@ def tag_action(hub: Hub, tags: list[str], action: str, *, confirm: bool, source:
                 results.append({"kind": "roku", "id": roku["id"], "name": roku["name"], "ok": True, "detail": action})
             except Exception as exc:
                 results.append({"kind": "roku", "id": roku["id"], "name": roku["name"], "ok": False, "detail": str(exc)})
+        from wakehub.endpoints import list_outlet_records
+
+        for outlet in list_outlet_records(hub):
+            if not has_tags(outlet["tags"], wanted):
+                continue
+            try:
+                set_pdu_outlet(hub, outlet["pdu_id"], outlet["number"], action, confirm=True, source=source)
+                results.append({"kind": "outlet", "id": outlet["id"], "name": outlet["name"], "ok": True, "detail": action})
+            except Exception as exc:
+                results.append({"kind": "outlet", "id": outlet["id"], "name": outlet["name"], "ok": False, "detail": str(exc)})
     return {"action": action, "tags": wanted, "matched": len(results), "results": results}
 
 
@@ -289,7 +313,9 @@ def plug_status(hub: Hub, plug_id: int) -> dict[str, Any]:
 
 
 def amt_power(hub: Hub, amt_id: int, action: str, *, confirm: bool, source: str) -> dict[str, Any]:
-    if action in {"off", "cycle", "reboot", "shutdown"}:
+    if action == "off_hard":
+        require_confirm("off", confirm)
+    elif action in {"off", "cycle", "reboot", "shutdown"}:
         require_confirm(action, confirm)
     row, client = amt_client(hub, amt_id)
     try:

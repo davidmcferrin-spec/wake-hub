@@ -13,12 +13,13 @@ from wakehub.inventory import utcnow
 from wakehub.tags import has_tags, normalize_tags
 
 ACTIONS = {"wake", "on", "off", "cycle", "shutdown"}
-TARGET_KINDS = {"device", "plug", "roku", "tag"}
+TARGET_KINDS = {"device", "plug", "roku", "outlet", "tag"}
 ON_ERROR = {"stop", "continue"}
 _SUPPORTS = {
     "device": ACTIONS,
     "plug": {"on", "off", "cycle"},
     "roku": {"on", "off"},
+    "outlet": {"on", "off", "cycle"},
 }
 
 
@@ -118,7 +119,12 @@ def run_salvo(hub: Hub, salvo: str, *, confirm: bool, dry_run: bool, source: str
         steps.append({**_step_view(step), "targets": rows})
         if stopped:
             break
-    return _envelope(current, dry_run=False, stopped=stopped, steps=steps)
+    envelope = _envelope(current, dry_run=False, stopped=stopped, steps=steps)
+    hub.write(
+        "UPDATE salvos SET last_run = ? WHERE id = ?",
+        (json.dumps({"ran_at": utcnow(), "stopped": stopped, "results": envelope["results"]}), current["id"]),
+    )
+    return envelope
 
 
 def _plan_step(hub: Hub, index: int, step: dict[str, Any]) -> dict[str, Any]:
@@ -155,10 +161,21 @@ def _tagged(hub: Hub, tags: list[str], action: str) -> list[dict[str, Any]]:
         for roku in list_rokus(hub):
             if has_tags(roku["tags"], tags):
                 found.append({"kind": "roku", "id": roku["id"], "name": roku["name"]})
+    if action in _SUPPORTS["outlet"]:
+        from wakehub.endpoints import list_outlet_records
+
+        for outlet in list_outlet_records(hub):
+            if has_tags(outlet["tags"], tags):
+                found.append({"kind": "outlet", "id": outlet["id"], "name": outlet["name"], "pdu_id": outlet["pdu_id"], "number": outlet["number"]})
     return found
 
 
 def _one(hub: Hub, kind: str, item_id: int) -> dict[str, Any]:
+    if kind == "outlet":
+        row = hub.query_one("SELECT id, name, pdu_id, number FROM pdu_outlets WHERE id = ?", (item_id,))
+        if row is None:
+            return {"kind": kind, "id": item_id, "name": f"missing outlet {item_id}", "missing": True}
+        return {"kind": kind, "id": row["id"], "name": row["name"], "pdu_id": row["pdu_id"], "number": row["number"], "missing": False}
     table = {"device": "devices", "plug": "plugs", "roku": "rokus"}[kind]
     row = hub.query_one(f"SELECT id, name FROM {table} WHERE id = ?", (item_id,))
     if row is None:
@@ -185,6 +202,10 @@ def _execute(hub: Hub, salvo_name: str, action: str, target: dict[str, Any], sou
             dispatch_device(hub, item_id, action=action, confirm=True, source=source)
         elif kind == "plug":
             plug_power(hub, item_id, action, confirm=True, source=source)
+        elif kind == "outlet":
+            from wakehub.power import set_pdu_outlet
+
+            set_pdu_outlet(hub, int(target["pdu_id"]), int(target["number"]), action, confirm=True, source=source)
         else:
             roku_power(hub, item_id, action, confirm=True, source=source)
     except Exception as exc:
@@ -249,6 +270,7 @@ def _public(row) -> dict[str, Any]:
         "on_error": row["on_error"],
         # Nothing schedules a salvo yet. The column is here so a timer can be added without a new table.
         "schedule": row["schedule"],
+        "last_run": json.loads(row["last_run"]) if row["last_run"] else None,
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -286,7 +308,7 @@ def _step(item: object, index: int) -> dict[str, Any]:
         raise WakeHubError(f"step {index + 1} action must be wake, on, off, cycle, or shutdown")
     kind = str(item.get("target_kind") or "")
     if kind not in TARGET_KINDS:
-        raise WakeHubError(f"step {index + 1} target must be a device, plug, roku, or tag")
+        raise WakeHubError(f"step {index + 1} target must be a device, plug, roku, outlet, or tag")
     if kind != "tag" and action not in _SUPPORTS[kind]:
         raise WakeHubError(f"a {kind} cannot {action}")
     try:

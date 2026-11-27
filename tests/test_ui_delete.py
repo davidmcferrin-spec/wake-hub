@@ -48,6 +48,7 @@ def test_delete_button_names_the_device_and_the_salvos(live_server, hub):
         assert page.locator("article", has_text="Desk").count() == 0
 
         page.locator("article", has_text="Lamp").locator(".select-record").check()
+        page.wait_for_selector("#bulk-bar:not(.hidden)")
         with page.expect_event("dialog"):
             page.click("#delete-selected")
         assert "Delete Lamp?" in messages[1]

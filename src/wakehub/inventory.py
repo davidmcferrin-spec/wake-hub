@@ -27,6 +27,14 @@ from wakehub.wol import (
 log = logging.getLogger("wakehub.actions")
 
 WAKE_STRATEGIES = {"wol_only", "power_then_wol"}
+POWER_METHODS = {"auto", "wol", "pdu", "amt", "jetkvm", "plug", "ups", "roku"}
+
+
+def _power_method(value: object) -> str:
+    text = str(value or "auto")
+    if text not in POWER_METHODS:
+        raise WakeHubError("power_method must be auto, wol, pdu, amt, jetkvm, plug, ups, or roku")
+    return text
 REACH_MODES = {"icmp", "tcp"}
 
 
@@ -133,6 +141,7 @@ def public_device(row: Any) -> dict[str, Any]:
         "reach_port": row["reach_port"],
         "reach_timeout": row["reach_timeout"],
         "wake_strategy": row["wake_strategy"],
+        "power_method": row["power_method"] or "auto",
         "methods": json.loads(row["methods"]),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
@@ -198,9 +207,9 @@ def _insert_values(hub: Hub, fields: dict[str, Any]) -> dict[str, Any]:
             """
             INSERT INTO devices (
                 name, mac, host, broadcast, wol_port, secureon_enc, notes, tags,
-                enabled, reach_mode, reach_port, reach_timeout, wake_strategy, methods,
+                enabled, reach_mode, reach_port, reach_timeout, wake_strategy, power_method, methods,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 fields["name"],
@@ -216,6 +225,7 @@ def _insert_values(hub: Hub, fields: dict[str, Any]) -> dict[str, Any]:
                 fields["reach_port"],
                 fields["reach_timeout"],
                 fields["wake_strategy"],
+                fields["power_method"],
                 fields["methods"],
                 now,
                 now,
@@ -249,7 +259,11 @@ def add_device(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
         reach_port = int(reach_port)
         if reach_port < 1 or reach_port > 65535:
             raise WakeHubError("reach_port must be between 1 and 65535")
-    timeout = float(payload.get("reach_timeout") if payload.get("reach_timeout") is not None else 30)
+    if payload.get("reach_timeout") is None:
+        raw = hub.setting("default_wake_timeout", "30") or "30"
+        timeout = float(raw)
+    else:
+        timeout = float(payload.get("reach_timeout"))
     if timeout <= 0 or timeout > 300:
         raise WakeHubError("reach_timeout must be between 0 and 300 seconds")
     notes = payload.get("notes") or ""
@@ -273,6 +287,7 @@ def add_device(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
             "reach_port": reach_port,
             "reach_timeout": timeout,
             "wake_strategy": strategy,
+            "power_method": _power_method(payload.get("power_method")),
             "methods": json.dumps(normalize_methods(payload.get("methods"))),
         },
     )
@@ -294,6 +309,7 @@ def update_device(hub: Hub, device_id: int, payload: dict[str, Any]) -> dict[str
         "reach_port": row["reach_port"],
         "reach_timeout": row["reach_timeout"],
         "wake_strategy": row["wake_strategy"],
+        "power_method": row["power_method"] or "auto",
         "methods": row["methods"],
     }
     if "name" in payload and payload["name"] is not None:
@@ -345,6 +361,8 @@ def update_device(hub: Hub, device_id: int, payload: dict[str, Any]) -> dict[str
         if payload["wake_strategy"] not in WAKE_STRATEGIES:
             raise WakeHubError("wake_strategy must be wol_only or power_then_wol")
         fields["wake_strategy"] = payload["wake_strategy"]
+    if "power_method" in payload and payload["power_method"] is not None:
+        fields["power_method"] = _power_method(payload["power_method"])
     if "methods" in payload and payload["methods"] is not None:
         fields["methods"] = json.dumps(normalize_methods(payload["methods"]))
     assert_available(hub, "device", fields["host"], fields["mac"], exclude_id=device_id)
@@ -353,7 +371,7 @@ def update_device(hub: Hub, device_id: int, payload: dict[str, Any]) -> dict[str
             """
             UPDATE devices SET
                 name=?, mac=?, host=?, broadcast=?, wol_port=?, secureon_enc=?, notes=?, tags=?,
-                enabled=?, reach_mode=?, reach_port=?, reach_timeout=?, wake_strategy=?, methods=?,
+                enabled=?, reach_mode=?, reach_port=?, reach_timeout=?, wake_strategy=?, power_method=?, methods=?,
                 updated_at=?
             WHERE id=?
             """,
@@ -371,6 +389,7 @@ def update_device(hub: Hub, device_id: int, payload: dict[str, Any]) -> dict[str
                 fields["reach_port"],
                 fields["reach_timeout"],
                 fields["wake_strategy"],
+                fields["power_method"],
                 fields["methods"],
                 utcnow(),
                 device_id,
@@ -616,6 +635,7 @@ def public_settings(hub: Hub) -> dict[str, Any]:
         "session_days": int(hub.setting("session_days", "30") or 30),
         "scan_keep": int(hub.setting("scan_keep", "0") or 0),
         "scan_keep_days": int(hub.setting("scan_keep_days", "0") or 0),
+        "default_wake_timeout": float(hub.setting("default_wake_timeout", "30") or 30),
         "duplicate_records": _duplicate_records(hub),
     }
 
@@ -667,6 +687,11 @@ def update_settings(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
         if keep < 0 or keep > 500:
             raise WakeHubError("scan history length must be between 0 and 500")
         hub._write_setting("scan_keep", str(keep))
+    if payload.get("default_wake_timeout") is not None:
+        timeout = float(payload["default_wake_timeout"])
+        if timeout <= 0 or timeout > 300:
+            raise WakeHubError("default wake timeout must be between 0 and 300 seconds")
+        hub._write_setting("default_wake_timeout", str(timeout))
     if payload.get("scan_keep_days") is not None:
         days = int(payload["scan_keep_days"])
         if days < 0 or days > 3650:

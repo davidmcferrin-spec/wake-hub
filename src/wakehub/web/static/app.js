@@ -21,6 +21,7 @@ const titles = {
   devices: ["Inventory", "Devices"],
   scan: ["Discovery", "Scan"],
   power: ["Managed hardware", "Hardware"],
+  salvos: ["Sequences", "Salvos"],
   history: ["Log", "History"],
   settings: ["Access", "Settings"],
 };
@@ -74,61 +75,43 @@ async function api(method, path, body) {
 
 function powerBlock(device) {
   const power = device.power;
-  if (!power || !power.metered) {
-    return `<p class="sub">No metered source is linked. A smart plug, PDU, UPS, or JetKVM DC supply would show watts here.</p>`;
-  }
+  if (!power || !power.metered) return "";
   const bits = [];
   if (power.watts != null) bits.push(`${power.watts} W`);
   if (power.current_a != null) bits.push(`${power.current_a} A`);
   if (power.energy_wh != null) bits.push(`${power.energy_wh} Wh`);
-  const source = power.source ? power.source.label : "meter";
-  if (!bits.length) {
-    return `<p class="sub">${escapeHtml(power.message || `${source} has not reported yet.`)}</p>`;
-  }
+  if (!bits.length) return "";
   const history = power.history || [];
-  const unit = history.some((point) => point.watts != null) ? "W" : "A";
   const series = history.slice().reverse().map((point) => ({ value: point.watts != null ? point.watts : point.current_a })).filter((row) => row.value != null);
-  const chart = series.length && typeof sparkline === "function" ? `<p class="sub">Recent ${unit}</p>${sparkline(series)}` : "";
-  return `<p class="sub">${escapeHtml(bits.join(" · "))} from ${escapeHtml(source)}</p>${chart}`;
+  const chart = series.length && typeof sparkline === "function" ? sparkline(series) : "";
+  return `<p class="meta">${escapeHtml(bits.join(" · "))}</p>${chart}`;
 }
 
 function deviceLinks(device) {
-  const hardware = state.power || { pdus: [], amts: [], jetkvms: [], plugs: [], ups: [] };
+  const hardware = state.power || { pdus: [] };
   const lines = [];
-  const test = `data-cap="test_target" data-fields="broadcast,community,confirm,host,insecure_tls,kind,mac,password,plug_kind,port,snmp_version,use_tls,username"`;
-  lines.push(`<button type="button" class="ghost" ${test} data-kind="wol" data-confirm="false" data-mac="${escapeHtml(device.mac || "")}" data-broadcast="${escapeHtml(device.broadcast)}" data-host="${escapeHtml(device.host || "")}">Test wake</button>`);
-  lines.push(`<button type="button" class="ghost" ${test} data-kind="wol" data-confirm="true" data-mac="${escapeHtml(device.mac || "")}" data-broadcast="${escapeHtml(device.broadcast)}" data-host="${escapeHtml(device.host || "")}">Send wake packet</button>`);
   for (const method of device.methods || []) {
-    if (method.kind === "pdu") {
-      const item = (hardware.pdus || []).find((row) => row.id === method.pdu_id);
-      lines.push(`<p class="sub">PDU ${escapeHtml(item ? item.name : "outlet")} outlet ${method.outlet}. Off and reboot ask for confirmation.</p>`);
-    } else if (method.kind === "plug") {
-      const item = (hardware.plugs || []).find((row) => row.id === method.plug_id);
-      lines.push(`<p class="sub">Smart plug ${escapeHtml(item ? item.name : "plug")} can cut power to this computer.</p>`);
-    } else if (method.kind === "amt") {
-      const item = (hardware.amts || []).find((row) => row.id === method.amt_id);
-      lines.push(`<p class="sub">Intel AMT ${escapeHtml(item ? item.name : "endpoint")} reads power state and can shut the PC down.</p>`);
-    } else if (method.kind === "jetkvm") {
-      const item = (hardware.jetkvms || []).find((row) => row.id === method.jetkvm_id);
-      lines.push(`<p class="sub">JetKVM ${escapeHtml(item ? item.name : "endpoint")} presses the power button. Shutdown is a short press. Force off is the long press.</p>`);
-    } else if (method.kind === "ups") {
-      const item = (hardware.ups || []).find((row) => row.id === method.ups_id);
-      lines.push(`<p class="sub">UPS ${escapeHtml(item ? item.name : "card")} can drop every load on that UPS. Those actions ask for confirmation.</p>`);
-    } else if (method.kind === "roku") {
-      const item = (hardware.rokus || []).find((row) => row.id === method.roku_id);
-      lines.push(`<p class="sub">Roku ${escapeHtml(item ? item.name : "TV")} uses External Control on port 8060. Control by mobile apps must be enabled. Power off asks for confirmation.</p>`);
-    }
+    if (method.kind !== "pdu") continue;
+    const item = (hardware.pdus || []).find((row) => row.id === method.pdu_id);
+    const outlet = (item && item.outlets || []).find((row) => row.number === method.outlet);
+    const label = outlet ? outlet.name : `Outlet ${method.outlet}`;
+    lines.push(`<div class="row-actions">
+      <span class="meta">${escapeHtml(item ? item.name : "PDU")} ${escapeHtml(label)}</span>
+      <button type="button" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${method.pdu_id}" data-outlet="${method.outlet}" data-action="on">On</button>
+      <button type="button" class="danger" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${method.pdu_id}" data-outlet="${method.outlet}" data-action="off">Off</button>
+      <button type="button" class="danger" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${method.pdu_id}" data-outlet="${method.outlet}" data-action="cycle">Cycle</button>
+    </div>`);
   }
-  return `<div class="row-actions">${lines.join("")}</div>`;
+  return lines.join("");
 }
 
 function pill(device) {
   const reach = state.status[device.id];
-  if (!device.enabled) return '<span class="pill off">disabled</span>';
-  if (!reach) return '<span class="pill off">checking</span>';
-  if (reach.reachable === true) return '<span class="pill up">up</span>';
-  if (reach.reachable === false) return '<span class="pill down">down</span>';
-  return '<span class="pill off">no host</span>';
+  if (!device.enabled) return '<span class="pill off">Disabled</span>';
+  if (!reach) return '<span class="pill off">Checking</span>';
+  if (reach.reachable === true) return '<span class="pill up">Up</span>';
+  if (reach.reachable === false) return '<span class="pill down">Down</span>';
+  return '<span class="pill off">No address</span>';
 }
 
 function tagChips(tags) {
@@ -157,28 +140,20 @@ function deviceCard(device) {
     <article class="card">
       <header>
         <label class="check"><input type="checkbox" class="select-record" data-kind="device" data-id="${device.id}" ${isSelected("device", device.id) ? "checked" : ""} aria-label="Select ${escapeHtml(device.name)}"></label>
-        <h2>${escapeHtml(device.name)}</h2>
+        <h2><button type="button" class="name-button" data-open-kind="device" data-id="${device.id}">${escapeHtml(device.name)}</button></h2>
         ${pill(device)}
         <button type="button" class="danger delete" data-cap="remove_device" data-fields="" data-id="${device.id}">Delete</button>
       </header>
-      <p class="meta">${escapeHtml(device.host || "no host")} · ${escapeHtml(device.mac || "no MAC")}</p>
+      <p class="meta" title="Broadcast ${escapeHtml(device.broadcast)}:${escapeHtml(device.wol_port)}">${escapeHtml(device.host || "no host")} · ${escapeHtml(device.mac || "no MAC")}</p>
       ${powerBlock(device)}
-      <p class="sub">Broadcast ${escapeHtml(device.broadcast)}:${escapeHtml(device.wol_port)}. Wake-on-LAN, and any PDU outlet, plug, AMT, JetKVM or UPS linked below, are controlled from this computer.</p>
       ${deviceLinks(device)}
       ${tagChips(device.tags)}
       <div class="row-actions">
-        <label class="sub">Method <select class="method-picker" aria-label="Power method"><option value="auto">auto</option><option value="wol">wol</option><option value="pdu">pdu</option><option value="amt">amt</option><option value="jetkvm">jetkvm</option><option value="plug">plug</option><option value="ups">ups</option></select></label>
-        <input class="wake-timeout" name="timeout" type="number" placeholder="timeout" aria-label="Wake timeout">
         <button type="button" class="primary" data-cap="wake_device" data-fields="timeout" data-id="${device.id}">Wake</button>
-        <button type="button" class="ghost" data-cap="power_action" data-fields="action,confirm,method" data-action="on" data-id="${device.id}">On</button>
         <button type="button" class="danger" data-cap="power_action" data-fields="action,confirm,method" data-action="off" data-id="${device.id}">Off</button>
-        <button type="button" class="danger" data-cap="power_action" data-fields="action,confirm,method" data-action="cycle" data-id="${device.id}">Cycle</button>
-        <button type="button" class="danger" data-cap="power_action" data-fields="action,confirm,method" data-action="reboot" data-id="${device.id}">Reboot</button>
-        <button type="button" class="danger" data-cap="power_action" data-fields="action,confirm,method" data-action="shutdown" data-id="${device.id}">Shutdown</button>
-        <button type="button" class="ghost" data-cap="device_status" data-fields="" data-id="${device.id}">Status</button>
-        <button type="button" class="ghost" data-cap="get_device" data-fields="" data-id="${device.id}">Edit</button>
-        <button type="button" class="ghost" data-cap="device_metrics" data-fields="limit" data-id="${device.id}">Metrics</button>
-        <button type="button" class="ghost" data-cap="set_device_enabled" data-fields="enabled" data-id="${device.id}" data-enabled="${device.enabled ? "0" : "1"}">${device.enabled ? "Disable" : "Enable"}</button>
+        <button type="button" class="danger" data-cap="power_action" data-fields="action,confirm,method" data-action="reboot" data-id="${device.id}">Reset</button>
+        <button type="button" class="ghost" data-open-kind="device" data-id="${device.id}">Open</button>
+        <button type="button" class="ghost" data-cap="get_device" data-fields="" data-id="${device.id}" aria-label="Edit ${escapeHtml(device.name)}">Edit</button>
       </div>
     </article>`;
 }
@@ -206,7 +181,8 @@ function editorHtml() {
         </div>
         <div>
           <label for="broadcast">Broadcast</label>
-          <input id="broadcast" name="broadcast" value="${value("broadcast", "255.255.255.255")}">
+          <input id="broadcast" name="broadcast" value="${value("broadcast", "255.255.255.255")}" title="Magic packets are sent to this address">
+          <p class="sub">Magic packets go to this broadcast address and the WOL port. Wake, outlets, plugs, and AMT are the buttons on the device card.</p>
         </div>
         <div>
           <label for="wol_port">WOL port</label>
@@ -228,8 +204,17 @@ function editorHtml() {
           <input id="reach_port" name="reach_port" type="number" value="${value("reach_port")}">
         </div>
         <div>
+          <label for="power_method">Wake method</label>
+          <select id="power_method" name="power_method">
+            ${[["auto", "Auto: plug, PDU outlet, AMT, UPS, JetKVM, then Wake-on-LAN"], ["wol", "Wake-on-LAN"], ["pdu", "PDU outlet"], ["amt", "AMT"], ["jetkvm", "JetKVM"], ["plug", "Shelly or Kasa"], ["ups", "UPS"], ["roku", "Roku"]].map(([method, label]) => `<option value="${method}" ${device && device.power_method === method ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}
+          </select>
+          <p class="sub">Auto uses that order and skips a method this computer does not have. The choice is saved on this device.</p>
+          <button type="button" id="test-wake-method">Test this method</button>
+        </div>
+        <div>
           <label for="reach_timeout">Wake timeout (seconds)</label>
-          <input id="reach_timeout" name="reach_timeout" type="number" value="${value("reach_timeout", 30)}">
+          <input id="reach_timeout" name="reach_timeout" type="number" value="${value("reach_timeout", (state.settings && state.settings.default_wake_timeout) || 30)}">
+          <p class="sub">Overrides the default wake timeout in Settings.</p>
         </div>
         <div>
           <label for="wake_strategy">Wake strategy</label>
@@ -274,8 +259,8 @@ function editorHtml() {
           <input id="link-ups" name="ups_id" type="number" placeholder="ups id">
         </div>
         ${device
-          ? `<button type="submit" data-cap="update_device" data-fields="broadcast,enabled,host,mac,methods,name,notes,reach_mode,reach_port,reach_timeout,secureon,tags,wake_strategy,wol_port">Save</button>`
-          : `<button type="submit" data-cap="add_device" data-fields="broadcast,enabled,host,mac,methods,name,notes,reach_mode,reach_port,reach_timeout,secureon,tags,wake_strategy,wol_port">Add device</button>`}
+          ? `<button type="submit" data-cap="update_device" data-fields="broadcast,enabled,host,mac,methods,name,notes,power_method,reach_mode,reach_port,reach_timeout,secureon,tags,wake_strategy,wol_port">Save</button>`
+          : `<button type="submit" data-cap="add_device" data-fields="broadcast,enabled,host,mac,methods,name,notes,power_method,reach_mode,reach_port,reach_timeout,secureon,tags,wake_strategy,wol_port">Add device</button>`}
         ${device ? `<button type="button" class="danger delete" data-cap="remove_device" data-fields="" data-id="${device.id}">Delete ${escapeHtml(device.name)}</button>` : ""}
         <button type="button" class="ghost" id="close-editor">Close</button>
       </div>
@@ -316,14 +301,16 @@ function hardwareInventoryCard(entry) {
     <article class="card" data-kind="${entry.kind}">
       <header>
         <label class="check"><input type="checkbox" class="select-record" data-kind="${entry.kind}" data-id="${item.id}" ${isSelected(entry.kind, item.id) ? "checked" : ""} aria-label="Select ${escapeHtml(item.name)}"></label>
-        <h2>${escapeHtml(item.name)}</h2>
+        <h2><button type="button" class="name-button" data-open-kind="${entry.kind}" data-id="${item.id}">${escapeHtml(item.name)}</button></h2>
         <span class="pill">${entry.label}</span>
         <button type="button" class="danger delete" data-cap="${removeCap(entry.kind)}" data-fields="" data-id="${item.id}">Delete</button>
       </header>
-      <p class="meta">${escapeHtml(item.host || "no host")}${item.port ? `:${item.port}` : ""}</p>
+      <p class="meta">${escapeHtml(item.host || "no host")}${item.port ? `:${escapeHtml(item.port)}` : ""}</p>
       ${tagChips(item.tags)}
+      ${window.hardwareControls ? window.hardwareControls(entry.kind, item, false) : ""}
       <div class="row-actions">
-        <button type="button" data-open-kind="${entry.kind}" data-id="${item.id}">Open</button>
+        <button type="button" class="ghost" data-open-kind="${entry.kind}" data-id="${item.id}">Open</button>
+        <button type="button" class="ghost" data-edit-kind="${entry.kind}" data-id="${item.id}" aria-label="Edit ${escapeHtml(item.name)}">Edit</button>
       </div>
     </article>`;
 }
@@ -375,7 +362,13 @@ function salvoPayload(draft) {
 }
 
 function salvoRecordOptions(kind, selected) {
-  const records = kind === "device" ? state.devices : kind === "plug" ? ((state.power && state.power.plugs) || []) : ((state.power && state.power.rokus) || []);
+  const outlets = [];
+  ((state.power && state.power.pdus) || []).forEach((pdu) => {
+    (pdu.outlets || []).forEach((outlet) => {
+      if (outlet.id) outlets.push({ id: outlet.id, name: `${pdu.name} ${outlet.name}` });
+    });
+  });
+  const records = kind === "device" ? state.devices : kind === "plug" ? ((state.power && state.power.plugs) || []) : kind === "outlet" ? outlets : ((state.power && state.power.rokus) || []);
   if (!records.length) return `<option value="">No ${kind} records</option>`;
   return records.map((item) => `<option value="${escapeHtml(item.id)}" ${String(selected) === String(item.id) ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("");
 }
@@ -383,7 +376,7 @@ function salvoRecordOptions(kind, selected) {
 function salvoStepHtml(step) {
   const kind = step.target_kind || "tag";
   const actions = ["wake", "on", "off", "cycle", "shutdown"].map((action) => `<option value="${action}" ${step.action === action ? "selected" : ""}>${action}</option>`).join("");
-  const kinds = [["tag", "Tags"], ["device", "Computer"], ["plug", "Plug"], ["roku", "Roku"]]
+  const kinds = [["tag", "Tags"], ["device", "Computer"], ["plug", "Plug"], ["roku", "Roku"], ["outlet", "PDU outlet"]]
     .map(([value, label]) => `<option value="${value}" ${kind === value ? "selected" : ""}>${label}</option>`).join("");
   const target = kind === "tag"
     ? `<input class="salvo-tags" value="${escapeHtml(step.tags || "")}" placeholder="#Lights #LivingRoom" aria-label="Tags"><input class="salvo-id" type="hidden" value="">`
@@ -396,13 +389,38 @@ function salvoStepHtml(step) {
   </div>`;
 }
 
+function salvoTags(salvo) {
+  const tags = [];
+  (salvo.steps || []).forEach((step) => {
+    if (step.target_kind === "tag") (step.tags || []).forEach((tag) => tags.push(tag));
+  });
+  return tags;
+}
+
+function salvoLastRun(salvo) {
+  const last = salvo.last_run;
+  if (!last || !last.results) return `<p class="sub">No run yet.</p>`;
+  const lines = last.results.map((item) => `${item.ok ? "ok" : "failed"} ${item.action} ${item.name || ""}`).join("; ");
+  return `<p class="sub">Last run ${escapeHtml(last.ran_at || "")}: ${escapeHtml(lines)}</p>`;
+}
+
+function salvoUrl(salvo) {
+  const slug = salvo.slug || salvo.id;
+  return `${location.origin}/api/v1/salvos/${encodeURIComponent(slug)}/run`;
+}
+
 function salvoPanel() {
   const draft = salvoDraft();
   const cards = (state.salvos || []).map((salvo) => `
     <article class="card">
       <h2>${escapeHtml(salvo.name)}</h2>
       <p class="meta">${escapeHtml(salvo.slug || "")}</p>
-      <p class="sub">${salvo.steps.length} step${salvo.steps.length === 1 ? "" : "s"} · ${salvo.on_error === "continue" ? "continue on error" : "stop on error"}</p>
+      <p class="sub">${salvo.steps.length} step${salvo.steps.length === 1 ? "" : "s"} · ${escapeHtml((salvoTags(salvo) || []).map((tag) => `#${tag}`).join(" ") || "no tags")} · ${salvo.on_error === "continue" ? "continue on error" : "stop on error"}</p>
+      ${salvoLastRun(salvo)}
+      <label>Home Assistant URL<input readonly value="${escapeHtml(salvoUrl(salvo))}" aria-label="Home Assistant URL for ${escapeHtml(salvo.name)}"></label>
+      <div class="row-actions">
+        <button type="button" class="ghost copy-salvo-url" data-url="${escapeHtml(salvoUrl(salvo))}">Copy URL</button>
+      </div>
       <div class="row-actions">
         <button type="button" class="primary" data-cap="run_salvo" data-fields="confirm,dry_run" data-id="${escapeHtml(salvo.slug || salvo.id)}">Run</button>
         <button type="button" class="ghost" data-cap="get_salvo" data-fields="" data-id="${escapeHtml(salvo.slug || salvo.id)}">Edit</button>
@@ -415,7 +433,7 @@ function salvoPanel() {
     <p class="lede">A salvo is a named sequence, such as Home Away or All Lights Off. One confirmation covers the whole run, after a preview of every device it will hit.</p>
     <form id="salvo-form" class="hardware-form">
       <label>Name<input name="name" value="${escapeHtml(draft.name || "")}" required></label>
-      <label>Slug<input name="slug" value="${escapeHtml(draft.slug || "")}" placeholder="home-away"></label>
+      <label>Short link<input name="slug" value="${escapeHtml(draft.slug || "")}" placeholder="home-away"></label>
       <p class="sub">The slug is the stable path, for example /api/v1/salvos/home-away/run. Leave it blank to build one from the name. Renaming the salvo does not change it.</p>
       <label>If a step fails
         <select name="on_error">
@@ -433,7 +451,7 @@ function salvoPanel() {
           : `<button type="submit" data-cap="add_salvo" data-fields="name,on_error,slug,steps">Save salvo</button>`}
       </div>
     </form>
-    <div class="grid">${cards || `<div class="empty">No salvos yet.</div>`}</div>
+    <div class="grid">${cards || `<div class="empty"><p>No sequences yet. Name one, such as Home Away, and add a step.</p></div>`}</div>
   </section>`;
 }
 
@@ -480,6 +498,9 @@ window.editSalvo = async function (el) {
     })),
   };
   state.salvoReplace = true;
+  state.page = "salvos";
+  state.salvoSlug = salvo.slug || "";
+  writeRoute("salvos", state.salvoSlug);
   render();
 };
 
@@ -516,25 +537,20 @@ window.runSalvo = async function (el) {
   const targets = (result.steps || []).flatMap((step) => step.targets || []);
   const failed = targets.filter((item) => !item.ok).length;
   showBanner(result.stopped ? `${preview.name} stopped after an error.` : `${preview.name} ran ${targets.length}.`, failed > 0);
+  state.salvoReplace = true;
+  await refreshDevices();
+  render();
 };
 
-function renderDevices() {
-  if (!state.salvoReplace) captureSalvoDraft();
-  state.salvoReplace = false;
-  if (state.focus && window.hardwareEditor && window.findHardware) {
-    const record = window.findHardware(state.focus.kind, state.focus.id);
-    $("view").innerHTML = record
-      ? `<div class="row-actions"><button type="button" class="ghost" id="back-inventory">Back</button><button type="button" class="danger delete" data-cap="${removeCap(state.focus.kind)}" data-fields="" data-id="${record.id}">Delete ${escapeHtml(record.name)}</button></div>${window.hardwareEditor(state.focus.kind, record)}`
-      : `<div class="row-actions"><button type="button" class="ghost" id="back-inventory">Back</button></div><div class="empty">That hardware record is gone.</div>`;
-    return;
-  }
+function deviceCardsHtml() {
   const kind = state.kindFilter || "all";
   const query = (state.deviceQuery || "").toLowerCase();
   const wanted = state.tagFilter || [];
   const matches = (item) => {
     const text = !query || `${item.name} ${item.host || ""}`.toLowerCase().includes(query);
     const owned = (item.tags || []).map((tag) => String(tag).toLowerCase());
-    const tagged = !wanted.length || wanted.every((tag) => owned.includes(String(tag).toLowerCase()));
+    const outletTags = (item.outlets || []).flatMap((outlet) => outlet.tags || []).map((tag) => String(tag).toLowerCase());
+    const tagged = !wanted.length || wanted.every((tag) => owned.includes(String(tag).toLowerCase()) || outletTags.includes(String(tag).toLowerCase()));
     return text && tagged;
   };
   const computers = (kind === "all" || kind === "device" ? state.devices.filter(matches) : []).map(deviceCard).join("");
@@ -542,19 +558,81 @@ function renderDevices() {
     .filter((entry) => (kind === "all" || kind === entry.kind) && matches(entry.item))
     .map(hardwareInventoryCard)
     .join("");
-  const cards = `${computers}${hardware}` || `<div class="empty">Nothing in this view yet.</div>`;
+  if (computers || hardware) return `${computers}${hardware}`;
+  const any = (state.devices || []).length || hardwareInventory().length;
+  if (!any && !query && !wanted.length) {
+    return `<div class="empty"><p>No devices yet. Scan your network or add a device.</p><div class="row-actions"><button type="button" class="primary" id="empty-add">Add device</button><button type="button" class="ghost" data-page="scan">Scan your network</button></div></div>`;
+  }
+  return `<div class="empty">Nothing matches this search.</div>`;
+}
+
+function syncBulkBar() {
+  const bar = $("bulk-bar");
+  if (!bar) return;
+  const selected = state.selection || [];
+  const tags = state.tagFilter || [];
+  const show = selected.length > 0 || tags.length > 0;
+  bar.classList.toggle("hidden", !show);
+  const label = $("bulk-label");
+  const parts = [];
+  if (selected.length) parts.push(`${selected.length} selected`);
+  if (tags.length) parts.push(tags.map((tag) => `#${tag}`).join(" "));
+  if (label) label.textContent = parts.join(" · ");
+  bar.querySelectorAll("[data-action]").forEach((button) => {
+    button.classList.toggle("hidden", !tags.length);
+  });
+  const selectedDelete = $("delete-selected");
+  const taggedDelete = $("delete-tagged");
+  if (selectedDelete) selectedDelete.classList.toggle("hidden", !selected.length);
+  if (taggedDelete) taggedDelete.classList.toggle("hidden", !tags.length);
+}
+
+function renderDevices() {
+  if (!state.salvoReplace) captureSalvoDraft();
+  state.salvoReplace = false;
+  if (state.focus && state.focus.kind !== "device" && window.hardwareEditor && window.findHardware) {
+    const record = window.findHardware(state.focus.kind, state.focus.id);
+    const body = state.focus.mode === "edit"
+      ? (window.hardwareEditor ? window.hardwareEditor(state.focus.kind, record) : "")
+      : (window.hardwareControls ? window.hardwareControls(state.focus.kind, record, true) : "");
+    $("view").innerHTML = record
+      ? `<div class="row-actions"><button type="button" class="ghost" id="back-inventory">Back</button><button type="button" class="ghost" data-edit-kind="${state.focus.kind}" data-id="${record.id}">Edit</button><button type="button" class="danger delete" data-cap="${removeCap(state.focus.kind)}" data-fields="" data-id="${record.id}">Delete ${escapeHtml(record.name)}</button></div>${body}`
+      : `<div class="row-actions"><button type="button" class="ghost" id="back-inventory">Back</button></div><div class="empty">That record is gone. Go back and pick another.</div>`;
+    if (window.loadLivePdus) window.loadLivePdus();
+    if (window.loadOperateStatus) window.loadOperateStatus();
+    return;
+  }
+  if (state.focus && state.focus.kind === "device") {
+    const device = (state.devices || []).find((item) => item.id === Number(state.focus.id));
+    if (!device) {
+      state.focus = null;
+    } else if (state.focus.mode === "edit") {
+      state.editing = device.id;
+      state.focus = null;
+    } else {
+      $("view").innerHTML = `
+        <div class="row-actions"><button type="button" class="ghost" id="back-inventory">Back</button><button type="button" class="ghost" data-cap="get_device" data-fields="" data-id="${device.id}">Edit</button></div>
+        ${deviceCard(device)}
+        <div class="row-actions">
+          <button type="button" class="ghost" data-cap="power_action" data-fields="action,confirm,method" data-action="on" data-id="${device.id}">On</button>
+          <button type="button" class="danger" data-cap="power_action" data-fields="action,confirm,method" data-action="cycle" data-id="${device.id}">Cycle</button>
+          <button type="button" class="danger" data-cap="power_action" data-fields="action,confirm,method" data-action="shutdown" data-id="${device.id}">Shutdown</button>
+          <button type="button" class="ghost" data-cap="device_status" data-fields="" data-id="${device.id}">Status</button>
+          <button type="button" class="ghost" data-cap="device_metrics" data-fields="limit" data-id="${device.id}">Metrics</button>
+          <button type="button" class="ghost" data-cap="set_device_enabled" data-fields="enabled" data-id="${device.id}" data-enabled="${device.enabled ? "0" : "1"}">${device.enabled ? "Disable" : "Enable"}</button>
+        </div>`;
+      return;
+    }
+  }
+  const kind = state.kindFilter || "all";
   $("view").innerHTML = `
     <div class="toolbar">
-      <form id="filter-form" class="inline">
+      <form id="filter-form" class="search-line">
         <input id="device-search" name="q" data-cap="list_tags" data-fields="" placeholder="Search or #Office" aria-label="Search" value="${escapeHtml(searchValue())}" autocomplete="off">
-        <button type="submit" data-cap="list_devices" data-fields="q,tag,tags">Search</button>
+        <button type="submit" class="sr-only" tabindex="-1" aria-hidden="true" data-cap="list_devices" data-fields="q,tag,tags">Search</button>
       </form>
       <div id="tag-suggest" class="row-actions"></div>
-      <button type="button" data-cap="tag_action" data-fields="action,confirm,tags" data-action="wake">Wake tagged</button>
-      <button type="button" class="danger" data-cap="tag_action" data-fields="action,confirm,tags" data-action="off">Power off tagged</button>
-      <button type="button" class="danger delete" id="delete-selected" data-cap="bulk_remove" data-fields="confirm,tags,targets">Delete selected</button>
-      <button type="button" class="danger delete" id="delete-tagged" data-cap="bulk_remove" data-fields="confirm,tags,targets">Delete tagged</button>
-      <label class="sub">Type
+      <label>Type
         <select id="kind-filter" aria-label="Type">
           <option value="all">All</option>
           <option value="device">Computers</option>
@@ -566,11 +644,16 @@ function renderDevices() {
           <option value="roku">Roku</option>
         </select>
       </label>
-      <button type="button" class="primary" id="new-device">Add device</button>
-      <button type="button" class="ghost" data-cap="list_status" data-fields="">Refresh status</button>
     </div>
-    ${salvoPanel()}
-    <section class="grid">${cards}</section>
+    <div id="bulk-bar" class="bulk-bar hidden" role="region" aria-label="Actions for the current selection">
+      <span id="bulk-label"></span>
+      <button type="button" class="ghost" data-cap="tag_action" data-fields="action,confirm,tags" data-action="wake">Wake</button>
+      <button type="button" class="danger" data-cap="tag_action" data-fields="action,confirm,tags" data-action="off">Power off</button>
+      <button type="button" class="danger delete" id="delete-selected" data-cap="bulk_remove" data-fields="confirm,tags,targets">Delete</button>
+      <button type="button" class="danger delete" id="delete-tagged" data-cap="bulk_remove" data-fields="confirm,tags,targets">Delete tagged</button>
+    </div>
+    <p class="lede">A device is a machine. Wake-on-LAN, outlets, and plugs are ways to control it. Hardware is where you add a box and set its address.</p>
+    <section id="device-grid" class="grid">${deviceCardsHtml()}</section>
     ${state.metrics && state.metrics.length && typeof sparkline === "function" ? `<div class="card">${sparkline(state.metrics)}</div>` : ""}
     <div id="editor-slot">${state.editing ? editorHtml() : ""}</div>`;
   const filter = $("kind-filter");
@@ -578,12 +661,27 @@ function renderDevices() {
     filter.value = kind;
     filter.addEventListener("change", () => {
       state.kindFilter = filter.value;
-      render();
+      const grid = $("device-grid");
+      if (grid) grid.innerHTML = deviceCardsHtml();
+      else render();
     });
   }
   const search = $("device-search");
-  if (search) search.addEventListener("input", () => suggestTags(search));
+  if (search) {
+    search.addEventListener("input", () => {
+      const parsed = parseSearch(search.value);
+      state.deviceQuery = parsed.q;
+      state.tagFilter = parsed.tags;
+      suggestTags(search);
+      const grid = $("device-grid");
+      if (grid) grid.innerHTML = deviceCardsHtml();
+      syncBulkBar();
+    });
+  }
+  syncBulkBar();
   wireSalvoForm();
+  if (window.loadLivePdus) window.loadLivePdus();
+  if (window.loadOperateStatus) window.loadOperateStatus();
 }
 
 function suggestTags(input) {
@@ -617,7 +715,7 @@ function renderHistory() {
     </form>
     ${rows
       ? `<table><thead><tr><th>Time</th><th>Source</th><th>Target</th><th>Action</th><th>Result</th><th>Detail</th></tr></thead><tbody>${rows}</tbody></table>`
-      : `<div class="empty">No power actions yet.</div>`}`;
+      : `<div class="empty"><p>Nothing has been switched yet. Wake a device and the result will show here.</p></div>`}`;
 }
 
 function renderSettings() {
@@ -637,39 +735,122 @@ function renderSettings() {
       </div>
     </section>
     <form id="settings-form" class="editor">
-      <h2>Browser access</h2>
-      <label for="cors">CORS origins</label>
-      <input id="cors" name="cors" value="${escapeHtml(settings.cors_origins.join(", "))}">
-      <label for="new-password">UI password ${settings.ui_password_set ? "(one is set)" : "(required, at least 8 characters)"}</label>
-      <input id="new-password" name="ui_password" type="password" autocomplete="new-password" placeholder="leave blank to keep">
-      <label for="poll">Metrics poll seconds</label>
-      <input id="poll" name="metrics_poll_seconds" type="number" value="${settings.metrics_poll_seconds || 60}">
-      <label for="retention">Metrics retention days</label>
-      <input id="retention" name="metrics_retention_days" type="number" value="${settings.metrics_retention_days || 30}">
-      <label for="scan-keep">Keep the last N scans (0 keeps all)</label>
-      <input id="scan-keep" name="scan_keep" type="number" min="0" max="500" value="${settings.scan_keep || 0}">
-      <label for="scan-keep-days">Drop scans older than N days (0 keeps every age)</label>
-      <input id="scan-keep-days" name="scan_keep_days" type="number" min="0" max="3650" value="${settings.scan_keep_days || 0}">
-      <label class="check"><input type="checkbox" name="clear_ui_password"> Remove the UI password</label>
-      <div class="row-actions" style="margin-top:0.8rem">
-        <label for="session-days">Remember this browser (days)</label>
-        <input id="session-days" name="session_days" type="number" min="1" max="365" value="${settings.session_days || 30}">
-        <button type="submit" data-cap="update_settings" data-fields="clear_ui_password,cors_origins,metrics_poll_seconds,metrics_retention_days,scan_keep,scan_keep_days,session_days,ui_password">Save settings</button>
+      <h2>Settings</h2>
+      <div class="fields">
+        <div>
+          <label for="cors">Sites allowed to call this hub</label>
+          <input id="cors" name="cors" value="${escapeHtml(settings.cors_origins.join(", "))}">
+        </div>
+        <div>
+          <label for="new-password">New sign-in password ${settings.ui_password_set ? "(leave blank to keep the current one)" : "(at least 8 characters)"}</label>
+          <input id="new-password" name="ui_password" type="password" autocomplete="new-password" placeholder="Leave blank to keep">
+        </div>
+        <div>
+          <label for="default-wake-timeout">Default wake timeout (seconds)</label>
+          <input id="default-wake-timeout" name="default_wake_timeout" type="number" min="1" max="300" value="${settings.default_wake_timeout || 30}">
+        </div>
+        <div>
+          <label for="session-days">Remember this browser (days)</label>
+          <input id="session-days" name="session_days" type="number" min="1" max="365" value="${settings.session_days || 30}">
+        </div>
+        <div>
+          <label for="poll">How often to read power (seconds)</label>
+          <input id="poll" name="metrics_poll_seconds" type="number" value="${settings.metrics_poll_seconds || 60}">
+        </div>
+        <div>
+          <label for="retention">Keep power history (days)</label>
+          <input id="retention" name="metrics_retention_days" type="number" value="${settings.metrics_retention_days || 30}">
+        </div>
+        <div>
+          <label for="scan-keep">Keep the last N scans (0 keeps all)</label>
+          <input id="scan-keep" name="scan_keep" type="number" min="0" max="500" value="${settings.scan_keep || 0}">
+        </div>
+        <div>
+          <label for="scan-keep-days">Drop scans older than N days (0 keeps every age)</label>
+          <input id="scan-keep-days" name="scan_keep_days" type="number" min="0" max="3650" value="${settings.scan_keep_days || 0}">
+        </div>
+      </div>
+      <label class="check"><input type="checkbox" name="clear_ui_password"> Remove the sign-in password</label>
+      <div class="row-actions">
+        <button type="submit" data-cap="update_settings" data-fields="clear_ui_password,cors_origins,default_wake_timeout,metrics_poll_seconds,metrics_retention_days,scan_keep,scan_keep_days,session_days,ui_password">Save settings</button>
         <button type="button" class="ghost" data-cap="ui_logout" data-fields="">Sign out</button>
       </div>
     </form>`;
 }
 
+function renderSalvos() {
+  if (!state.salvoReplace) captureSalvoDraft();
+  const replaced = state.salvoReplace;
+  state.salvoReplace = false;
+  if (state.salvoSlug) {
+    const found = (state.salvos || []).find((item) => item.slug === state.salvoSlug || String(item.id) === String(state.salvoSlug));
+    const same = state.salvoDraft && String(state.salvoDraft.id) === String(found && (found.slug || found.id)) && state.salvoDraft.name;
+    if (found && !same) {
+      state.salvoDraft = {
+        id: found.slug || found.id,
+        name: found.name,
+        slug: found.slug || "",
+        on_error: found.on_error,
+        steps: (found.steps.length ? found.steps : [blankSalvoStep()]).map((step) => ({
+          target_kind: step.target_kind,
+          target_id: step.target_id || "",
+          tags: (step.tags || []).map((tag) => `#${tag}`).join(" "),
+          action: step.action,
+          delay_seconds: step.delay_seconds,
+        })),
+      };
+    }
+  }
+  $("view").innerHTML = salvoPanel();
+  wireSalvoForm();
+  document.querySelectorAll(".copy-salvo-url").forEach((button) => {
+    button.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(button.dataset.url);
+        showBanner("Copied the Home Assistant URL");
+      } catch (_error) {
+        showBanner("Select the URL and copy it.", true);
+      }
+    });
+  });
+}
+
+function readRoute() {
+  const raw = (location.hash || "").replace(/^#\/?/, "");
+  const slash = raw.indexOf("/");
+  const head = decodeURIComponent(slash === -1 ? raw : raw.slice(0, slash));
+  const tail = decodeURIComponent(slash === -1 ? "" : raw.slice(slash + 1));
+  const pages = { devices: "devices", scan: "scan", hardware: "power", salvos: "salvos", history: "history", settings: "settings" };
+  if (head === "salvos") return { page: "salvos", slug: tail };
+  if (head === "hardware") return { page: "power", slug: tail };
+  if (pages[head]) return { page: pages[head], slug: "" };
+  return { page: "devices", slug: "" };
+}
+
+function writeRoute(page, slug) {
+  const name = page === "power" ? "hardware" : page;
+  const next = slug && (page === "salvos" || page === "power") ? `#/${name}/${encodeURIComponent(slug)}` : `#/${name}`;
+  if (location.hash !== next) history.replaceState(null, "", next);
+}
+
 function render() {
-  const [kicker, title] = titles[state.page];
+  const [kicker, title] = titles[state.page] || ["Wake Hub", "Wake Hub"];
   $("page-kicker").textContent = kicker;
   $("page-title").textContent = title;
   document.querySelectorAll(".sidebar button").forEach((button) => {
     button.setAttribute("aria-current", button.dataset.page === state.page ? "page" : "false");
   });
+  const actions = $("page-actions");
+  if (actions) {
+    const showAdd = state.page === "devices" && !state.focus && !state.editing;
+    actions.innerHTML = showAdd
+      ? `<button type="button" class="primary" id="new-device">Add device</button><button type="button" class="ghost" data-cap="list_status" data-fields="">Refresh</button>`
+      : "";
+  }
   if (state.page === "devices") renderDevices();
   if (state.page === "scan") renderScan();
   if (state.page === "power") renderPower();
+  if (state.page === "salvos") renderSalvos();
   if (state.page === "history") renderHistory();
   if (state.page === "settings") renderSettings();
   if (state.page === "devices" && state.focus && window.findHardware) {
@@ -708,11 +889,21 @@ async function refreshSettings() {
   state.token = token.token;
 }
 
-async function show(page) {
+async function show(page, slug) {
   state.page = page;
+  state.salvoSlug = page === "salvos" ? (slug || "") : "";
+  if (page === "power" && slug) state.hardwareTab = slug;
+  if (page === "salvos" && state.salvoSlug) {
+    const draft = state.salvoDraft;
+    const same = draft && String(draft.id) === state.salvoSlug && draft.name;
+    if (!same) state.salvoReplace = true;
+  }
+  const routeSlug = page === "salvos" ? state.salvoSlug : page === "power" && state.hardwareTab && state.hardwareTab !== "all" ? state.hardwareTab : "";
+  writeRoute(page, routeSlug);
   showBanner("");
+  if (state.booted) render();
   try {
-    if (page === "devices") await refreshDevices();
+    if (page === "devices" || page === "salvos") await refreshDevices();
     if (page === "scan") await refreshScans();
     if (page === "power") await refreshPower();
     if (page === "history") await refreshActions();
@@ -720,7 +911,9 @@ async function show(page) {
   } catch (error) {
     showBanner(error.message, true, error.existing);
   }
-  render();
+  const active = document.activeElement;
+  const typing = active && active.closest && active.closest("#view input, #view textarea, #view select");
+  if (!document.querySelector("form.hardware-edit") && !typing) render();
 }
 
 function formData(form) {
@@ -752,7 +945,8 @@ function devicePayload(form) {
     methods: linkedMethods(data),
     reach_mode: data.reach_mode,
     reach_port: data.reach_port ? Number(data.reach_port) : null,
-    reach_timeout: Number(data.reach_timeout || 30),
+    reach_timeout: Number(data.reach_timeout || (state.settings && state.settings.default_wake_timeout) || 30),
+    power_method: data.power_method || "auto",
     wake_strategy: data.wake_strategy,
   };
   if (data.secureon) payload.secureon = data.secureon;
@@ -766,7 +960,7 @@ async function onClick(event) {
     await show(pageButton.dataset.page);
     return;
   }
-  if (event.target.id === "new-device") {
+  if (event.target.id === "new-device" || event.target.id === "empty-add") {
     state.focus = null;
     state.editing = "new";
     render();
@@ -775,6 +969,19 @@ async function onClick(event) {
   if (event.target.id === "close-editor") {
     state.editing = null;
     render();
+    return;
+  }
+  if (event.target.id === "test-wake-method") {
+    const form = document.getElementById("device-form");
+    const method = form && form.elements.power_method ? form.elements.power_method.value : "wol";
+    const result = await api("POST", "/api/v1/test", {
+      kind: method === "auto" || method === "wol" ? "wol" : method,
+      confirm: false,
+      host: form.elements.host.value,
+      mac: form.elements.mac.value,
+      timeout: Number(form.elements.reach_timeout.value || 30),
+    });
+    showBanner(result.message || (result.ok ? "Test ok" : "Test failed"), result.ok === false);
     return;
   }
   if (event.target.id === "copy-token") {
@@ -880,6 +1087,8 @@ async function onSubmit(event) {
       await refreshDevices();
       render();
     } catch (error) {
+      const nameError = /name/i.test(error.message || "");
+      if (nameError) markField(form, "name", error.message);
       showBanner(error.message, true, error.existing);
     }
     return;
@@ -895,6 +1104,7 @@ async function onSubmit(event) {
       session_days: Number(data.session_days || 30),
       scan_keep: Number(data.scan_keep || 0),
       scan_keep_days: Number(data.scan_keep_days || 0),
+      default_wake_timeout: Number(data.default_wake_timeout || 30),
     };
     if (data.ui_password) payload.ui_password = data.ui_password;
     try {
@@ -971,16 +1181,59 @@ async function boot() {
   $("setup").classList.add("hidden");
   $("login").classList.add("hidden");
   $("app").classList.remove("hidden");
-  if (!state.page) await show("devices");
+  if (!state.page) {
+    const route = readRoute();
+    await show(route.page, route.slug);
+  }
   if (state.booted) return;
   state.booted = true;
   window.setInterval(() => {
     if (state.page !== "devices" || !state.token || state.editing || state.focus) return;
+    const active = document.activeElement;
+    if (active && active.closest && active.closest("input, textarea, select")) return;
     refreshDevices().then(() => {
+      const current = document.activeElement;
+      if (current && current.closest && current.closest("input, textarea, select")) return;
       if (!state.editing && !state.focus && state.page === "devices") render();
     }).catch(() => {});
   }, 10000);
 }
+
+function markField(form, name, message) {
+  const input = form && form.elements ? form.elements[name] : null;
+  if (!input) return;
+  input.setAttribute("aria-invalid", "true");
+  let note = input.parentElement.querySelector(".field-error");
+  if (!note) {
+    note = document.createElement("p");
+    note.className = "field-error";
+    note.setAttribute("role", "alert");
+    input.after(note);
+  }
+  note.textContent = message;
+}
+
+document.addEventListener("invalid", (event) => {
+  const input = event.target;
+  if (!input || !input.form) return;
+  event.preventDefault();
+  const label = input.labels && input.labels[0] ? input.labels[0].textContent.trim() : "This";
+  const message = input.validity.valueMissing
+    ? `Enter ${label.replace(/\(.*\)/, "").trim().toLowerCase() || "a value"}.`
+    : input.validity.tooShort
+      ? "Use at least 8 characters."
+      : "Check this field and try again.";
+  markField(input.form, input.name, message);
+  input.focus();
+}, true);
+
+document.addEventListener("input", (event) => {
+  const input = event.target;
+  if (!input || !input.removeAttribute) return;
+  input.removeAttribute("aria-invalid");
+  const note = input.parentElement && input.parentElement.querySelector(".field-error");
+  if (note) note.remove();
+});
 
 window.runTest = async function (el) {
   const form = el.closest("form");
@@ -1086,6 +1339,13 @@ document.body.addEventListener("change", (event) => {
   const item = { kind: box.dataset.kind, id: Number(box.dataset.id) };
   state.selection = (state.selection || []).filter((row) => !(row.kind === item.kind && Number(row.id) === item.id));
   if (box.checked) state.selection.push(item);
+  syncBulkBar();
+});
+
+window.addEventListener("hashchange", () => {
+  if (!state.token) return;
+  const route = readRoute();
+  show(route.page, route.slug).catch((error) => showBanner(error.message, true, error.existing));
 });
 
 document.body.addEventListener("click", (event) => {
@@ -1124,6 +1384,23 @@ document.body.addEventListener("click", (event) => {
   }
   const field = event.target.closest("input, select, textarea, label");
   if (field && !event.target.closest("button, a")) return;
+  if (event.target.id === "roku-help") {
+    const note = $("roku-help-text");
+    if (note) {
+      note.classList.toggle("hidden");
+      event.target.setAttribute("aria-expanded", note.classList.contains("hidden") ? "false" : "true");
+    }
+    return;
+  }
+  const gear = event.target.closest("[data-edit-kind]");
+  if (gear) {
+    const kind = gear.dataset.editKind;
+    const id = Number(gear.dataset.id);
+    state.editing = null;
+    state.focus = { kind, id, mode: "edit" };
+    show("devices").catch((error) => showBanner(error.message, true, error.existing));
+    return;
+  }
   const opener = event.target.closest("[data-open-kind]");
   if (opener) {
     const kind = opener.dataset.openKind;
@@ -1140,7 +1417,7 @@ document.body.addEventListener("click", (event) => {
     return;
   }
   const nav = event.target.closest("button[data-page], a[data-page]");
-  if (nav && nav.closest("aside")) {
+  if (nav && nav.dataset.page) {
     state.focus = null;
     show(nav.dataset.page).catch((error) => showBanner(error.message, true, error.existing));
     return;
@@ -1149,7 +1426,14 @@ document.body.addEventListener("click", (event) => {
   if (control && control.type !== "submit") {
     const handler = window.CONTROL_HANDLERS && window.CONTROL_HANDLERS[control.dataset.cap];
     if (handler) {
-      Promise.resolve(handler(control)).catch((error) => showBanner(error.message, true, error.existing));
+      control.disabled = true;
+      control.setAttribute("aria-busy", "true");
+      Promise.resolve(handler(control)).catch((error) => showBanner(error.message, true, error.existing)).finally(() => {
+        if (control.isConnected) {
+          control.disabled = false;
+          control.removeAttribute("aria-busy");
+        }
+      });
       return;
     }
   }

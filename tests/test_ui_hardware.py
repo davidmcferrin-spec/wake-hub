@@ -57,7 +57,7 @@ def test_editing_each_hardware_type_stays_put_and_saves(live_server, hub):
             assert page.inner_text("#banner") == "Saved", page.inner_text("#banner")
             assert page.inner_text("#page-title") == "Hardware"
             page.locator("article.card", has_text=renamed).first.wait_for()
-        page.click("article.card:has-text('PDU renamed') button:has-text('Re-read from device')")
+        page.click("article.card:has-text('PDU renamed') button:has-text('Refresh names from device')")
         page.wait_for_selector("#banner.error")
         assert "did not return outlet names" in page.inner_text("#banner")
         assert page.inner_text("#page-title") == "Hardware"
@@ -68,7 +68,7 @@ def test_editing_each_hardware_type_stays_put_and_saves(live_server, hub):
         page.select_option("#kind-filter", "pdu")
         assert "PDU renamed" in page.inner_text("#view")
         assert "AMT renamed" not in page.inner_text("#view")
-        page.locator("article.card", has_text="PDU renamed").get_by_role("button", name="Open").click()
+        page.locator("article.card", has_text="PDU renamed").get_by_role("button", name="Edit").click()
         page.wait_for_selector("form.hardware-edit")
         assert page.inner_text("#page-title") == "PDU renamed"
         assert page.get_by_role("button", name="Re-read from device").count() >= 1

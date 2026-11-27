@@ -81,7 +81,8 @@ class DeviceIn(BaseModel):
     enabled: bool = True
     reach_mode: Literal["icmp", "tcp"] = "icmp"
     reach_port: int | None = None
-    reach_timeout: float = 30
+    reach_timeout: float | None = None
+    power_method: str = "auto"
     wake_strategy: Literal["wol_only", "power_then_wol"] = "wol_only"
     methods: list[dict[str, Any]] | None = None
 
@@ -101,6 +102,7 @@ class DevicePatch(BaseModel):
     reach_port: int | None = None
     reach_timeout: float | None = None
     wake_strategy: Literal["wol_only", "power_then_wol"] | None = None
+    power_method: str | None = None
     methods: list[dict[str, Any]] | None = None
 
 
@@ -127,6 +129,7 @@ class SettingsIn(BaseModel):
     session_days: int | None = None
     scan_keep: int | None = None
     scan_keep_days: int | None = None
+    default_wake_timeout: float | None = None
 
 
 class LoginIn(BaseModel):

@@ -32,12 +32,14 @@ def test_names_from_the_user_are_not_html(live_server, hub):
         page.fill("#ui-password", "correct horse")
         page.click("button[data-cap=ui_login]")
         page.wait_for_selector("#device-search")
-        page.wait_for_selector("text=Salvos")
+        page.click("aside button[data-page=salvos]")
+        page.wait_for_selector("button.copy-salvo-url")
         assert page.evaluate("() => window.__xss") is None
         assert page.locator("img[src='x']").count() == 0
         page.click("aside button[data-page=power]")
-        page.wait_for_selector("select[name=credential_profile_id]")
-        page.wait_for_selector("select[name=device_id]")
+        page.select_option("#hw-add-type", "amt")
+        page.wait_for_selector("#amt-form select[name=credential_profile_id]")
+        page.wait_for_selector("#amt-form select[name=device_id]")
         assert page.evaluate("() => window.__xss") is None
         assert page.locator("img[src='x']").count() == 0
         page.click("aside button[data-page=devices]")

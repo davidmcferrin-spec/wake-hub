@@ -36,6 +36,26 @@ def synaccess_realm(header: str) -> bool:
     return "synaccess" in header.lower() or "netbooter" in header.lower()
 
 
+def synaccess_http(headers: dict[str, str] | None, body: str, status_code: int = 200) -> bool:
+    """True when a port-80 reply looks like a netBooter, including a 401 challenge."""
+    safe = {str(key).lower(): str(value) for key, value in (headers or {}).items()}
+    title = ""
+    match = _TITLE.search(body or "")
+    if match:
+        title = match.group(1)
+    blob = " ".join(
+        (
+            safe.get("server", ""),
+            safe.get("www-authenticate", ""),
+            title,
+            body or "",
+        )
+    ).lower()
+    if "synaccess" in blob or "netbooter" in blob:
+        return True
+    return status_code == 401 and synaccess_realm(safe.get("www-authenticate", ""))
+
+
 def parse_status(body: str, names: dict[int, str] | None = None) -> PduStatus:
     text = _payload(body)
     if text.startswith("$A0,"):
@@ -97,7 +117,11 @@ def parse_result(body: str) -> None:
     raise UpstreamError(f"Synaccess returned an unknown result: {text!r}")
 
 
-_OUTLET_INPUT = re.compile(r"^(?:outlet[_-]?)?name[_-]?(\d+)$", re.IGNORECASE)
+_OUTLET_INPUT = re.compile(
+    r"^(?:outlet[_-]?)?(?:name|nm|custom|c|on)[_-]?(\d+)$",
+    re.IGNORECASE,
+)
+_TITLE = re.compile(r"<title>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 
 
 def parse_outlet_names(body: str) -> dict[int, str]:
@@ -202,7 +226,8 @@ class SynaccessClient:
     def read_outlet_names(self) -> dict[int, str]:
         # $A5 reports on/off bits, not the names typed into Outlet Setup.
         origin = self._base.split("/cmd.cgi", 1)[0]
-        for path in ("/api/outlets", "/", "/outletsetup.htm"):
+        # $A5/$A0 is on/off bits and bank current. Names live on the setup pages.
+        for path in ("/api/outlets", "/outletsetup.htm", "/outlets.htm", "/outlet.htm", "/setup.htm", "/"):
             try:
                 response = self._http.get(origin + path, timeout=2.0)
             except httpx.HTTPError:

@@ -7,6 +7,7 @@ import uvicorn
 from fastapi.testclient import TestClient
 
 from wakehub.api import create_app
+from wakehub.clients.synaccess import SynaccessClient
 from wakehub.config import Settings
 from wakehub.hub import Hub
 
@@ -30,12 +31,21 @@ def hub(tmp_path):
 
 @pytest.fixture(autouse=True)
 def pdu_names_offline(monkeypatch):
-    def offline(self):
+    def offline(self, *_args, **_kwargs):
         from wakehub.errors import UpstreamError
 
         raise UpstreamError("the PDU did not return outlet names")
 
+    original_status = SynaccessClient.status
+
+    def status(self, names=None):
+        # Unit tests pass their own HTTP client. Live adds must not wait on the LAN.
+        if not getattr(self, "_owns", True):
+            return original_status(self, names)
+        raise UpstreamError("the PDU did not return outlet names")
+
     monkeypatch.setattr("wakehub.clients.synaccess.SynaccessClient.read_outlet_names", offline)
+    monkeypatch.setattr("wakehub.clients.synaccess.SynaccessClient.status", status)
 
 
 @pytest.fixture

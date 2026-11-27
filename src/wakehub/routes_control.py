@@ -88,6 +88,10 @@ class OutletIn(BaseModel):
     confirm: bool = False
 
 
+class OutletPatch(BaseModel):
+    tags: list[str] | None = None
+
+
 class AmtIn(BaseModel):
     name: str
     host: str
@@ -99,6 +103,11 @@ class AmtIn(BaseModel):
     device_id: int | None = None
     credential_profile_id: int | None = None
     tags: list[str] | None = None
+
+
+class AmtPowerIn(BaseModel):
+    action: str
+    confirm: bool = False
 
 
 class AmtPatch(BaseModel):
@@ -374,6 +383,12 @@ def control_router() -> APIRouter:
     def outlet_power(pdu_id: int, outlet: int, body: OutletIn, request: Request) -> dict[str, Any]:
         return set_pdu_outlet(get_hub(), pdu_id, outlet, body.action, confirm=body.confirm, source=request_source(request))
 
+    @router.patch("/pdus/{pdu_id}/outlets/{outlet}", tags=["pdu"])
+    def patch_outlet(pdu_id: int, outlet: int, body: OutletPatch) -> dict[str, Any]:
+        from wakehub.endpoints import update_pdu_outlet
+
+        return update_pdu_outlet(get_hub(), pdu_id, outlet, body.model_dump(exclude_unset=True))
+
     @router.get("/amt", tags=["amt"])
     def amts() -> list[dict[str, Any]]:
         return list_amt(get_hub())
@@ -396,6 +411,10 @@ def control_router() -> APIRouter:
     @router.get("/amt/{amt_id}/power", tags=["amt"])
     def amt_power_state(amt_id: int) -> dict[str, Any]:
         return amt_state(get_hub(), amt_id)
+
+    @router.post("/amt/{amt_id}/power", tags=["amt"])
+    def change_amt_power(amt_id: int, body: AmtPowerIn, request: Request) -> dict[str, Any]:
+        return amt_power(get_hub(), amt_id, body.action, confirm=body.confirm, source=request_source(request))
 
     @router.get("/jetkvm", tags=["jetkvm"])
     def jetkvms() -> list[dict[str, Any]]:

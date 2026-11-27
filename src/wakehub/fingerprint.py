@@ -37,6 +37,8 @@ def suggest(
         add(100, "jetkvm", "high", "JetKVM status page or mDNS", ["jetkvm"])
     if "synaccess" in http:
         add(100, "synaccess", "high", "Synaccess netBooter response", ["pdu"])
+    elif _has(vendor, ("synaccess", "netbooter")):
+        add(85, "synaccess", "high", "Synaccess MAC address", ["pdu"])
     if "shelly" in http or any("shelly" in name for name in names):
         add(100, "shelly", "high", "Shelly Gen2 endpoint or _shelly._tcp", ["plug"])
     elif _has(vendor, ("shelly", "espressif")) and (80 in ports or 443 in ports):
@@ -69,6 +71,8 @@ def suggest(
         prefill["plug_kind"] = "kasa"
     if kind == "amt":
         prefill["username"] = "admin"
+    if kind == "synaccess":
+        prefill["port"] = 80
     return {
         "type": kind,
         "confidence": confidence,

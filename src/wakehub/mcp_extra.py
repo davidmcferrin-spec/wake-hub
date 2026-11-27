@@ -54,6 +54,14 @@ def register(server) -> None:
 
     @server.tool()
     @expose
+    def update_pdu_outlet(pdu_id: int, outlet: int, tags: list[str] | None = None) -> dict[str, Any]:
+        """Set the tags on one PDU outlet. Tags are matched without a leading # and are case-insensitive."""
+        from wakehub.endpoints import update_pdu_outlet as save_outlet
+
+        return save_outlet(get_hub(), pdu_id, outlet, {"tags": tags or []})
+
+    @server.tool()
+    @expose
     def set_pdu_outlet(pdu_id: int, outlet: int, action: str, confirm: bool = False) -> dict[str, Any]:
         """Turn a PDU outlet on or off, or reboot it. off and reboot require confirm=true."""
         return actions.set_pdu_outlet(get_hub(), pdu_id, outlet, action, confirm=confirm, source="mcp")
@@ -89,6 +97,12 @@ def register(server) -> None:
     def amt_power_state(amt_id: int) -> dict[str, Any]:
         """Read the AMT power state and which power changes the firmware advertises."""
         return actions.amt_state(get_hub(), amt_id)
+
+    @server.tool()
+    @expose
+    def amt_power(amt_id: int, action: str, confirm: bool = False) -> dict[str, Any]:
+        """Change AMT power. action is on, shutdown (graceful off), off_hard, reboot (reset), or cycle. shutdown, off, off_hard, reboot, and cycle require confirm=true. Works whether or not the endpoint is linked to a computer."""
+        return actions.amt_power(get_hub(), amt_id, action, confirm=confirm, source="mcp")
 
     @server.tool()
     @expose
