@@ -255,6 +255,64 @@ def register(server) -> None:
 
     @server.tool()
     @expose
+    def list_salvos() -> list[dict[str, Any]]:
+        """List saved salvos. A salvo is an ordered list of power steps. schedule is unused."""
+        from wakehub.salvos import list_salvos as collect
+
+        return collect(get_hub())
+
+    @server.tool()
+    @expose
+    def get_salvo(salvo_id: int) -> dict[str, Any]:
+        """Read one salvo, including its steps."""
+        from wakehub.salvos import get_salvo as read
+
+        return read(get_hub(), salvo_id)
+
+    @server.tool()
+    @expose
+    def add_salvo(name: str, steps: list[dict] | None = None, on_error: str = "stop") -> dict[str, Any]:
+        """Save a salvo. Each step targets one device, plug, or Roku, or a tag list that must all match. action is wake, on, off, cycle, or shutdown. delay_seconds waits before that step. on_error is stop or continue."""
+        from wakehub.salvos import add_salvo as create
+
+        return create(get_hub(), {"name": name, "steps": steps or [], "on_error": on_error})
+
+    @server.tool()
+    @expose
+    def update_salvo(salvo_id: int, name: str | None = None, steps: list[dict] | None = None, on_error: str | None = None) -> dict[str, Any]:
+        """Edit a salvo. Omit a field to leave it unchanged."""
+        from wakehub.salvos import update_salvo as edit
+
+        payload = {key: value for key, value in {"name": name, "steps": steps, "on_error": on_error}.items() if value is not None}
+        return edit(get_hub(), salvo_id, payload)
+
+    @server.tool()
+    @expose
+    def remove_salvo(salvo_id: int) -> dict[str, Any]:
+        """Remove a salvo. This does not change power state."""
+        from wakehub.salvos import remove_salvo as delete
+
+        delete(get_hub(), salvo_id)
+        return {"removed": salvo_id}
+
+    @server.tool()
+    @expose
+    def duplicate_salvo(salvo_id: int) -> dict[str, Any]:
+        """Copy a salvo to a new name. The copy is not scheduled."""
+        from wakehub.salvos import duplicate_salvo as copy
+
+        return copy(get_hub(), salvo_id)
+
+    @server.tool()
+    @expose
+    def run_salvo(salvo_id: int, confirm: bool = False, dry_run: bool = False) -> dict[str, Any]:
+        """Preview or run a salvo. dry_run lists the devices that would be hit and changes nothing. A real run needs confirm=true and logs each device to history."""
+        from wakehub.salvos import run_salvo as execute
+
+        return execute(get_hub(), salvo_id, confirm=confirm, dry_run=dry_run, source="mcp")
+
+    @server.tool()
+    @expose
     def ups_status(ups_id: int) -> dict[str, Any]:
         """Read UPS line/battery state, capacity, runtime, voltages, load and power from the CyberPower MIB."""
         return actions.ups_status(get_hub(), ups_id)

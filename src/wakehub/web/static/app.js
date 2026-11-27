@@ -11,6 +11,9 @@ const state = {
   deviceQuery: "",
   tagFilter: [],
   tags: [],
+  salvos: [],
+  salvoDraft: null,
+  salvoReplace: false,
 };
 
 const titles = {
@@ -304,7 +307,192 @@ function hardwareInventoryCard(entry) {
     </article>`;
 }
 
+function blankSalvoStep() {
+  return { target_kind: "tag", target_id: "", tags: "", action: "off", delay_seconds: 0 };
+}
+
+function salvoDraft() {
+  if (!state.salvoDraft) state.salvoDraft = { id: null, name: "", on_error: "stop", steps: [blankSalvoStep()] };
+  if (!state.salvoDraft.steps.length) state.salvoDraft.steps = [blankSalvoStep()];
+  return state.salvoDraft;
+}
+
+function captureSalvoDraft() {
+  const form = document.getElementById("salvo-form");
+  if (!form) return;
+  const steps = [...form.querySelectorAll(".salvo-step")].map((row) => ({
+    target_kind: row.querySelector(".salvo-target").value,
+    target_id: row.querySelector(".salvo-id") ? row.querySelector(".salvo-id").value : "",
+    tags: row.querySelector(".salvo-tags") ? row.querySelector(".salvo-tags").value : "",
+    action: row.querySelector(".salvo-action").value,
+    delay_seconds: row.querySelector(".salvo-delay").value,
+  }));
+  const previous = state.salvoDraft;
+  state.salvoDraft = {
+    id: previous && previous.id,
+    name: form.elements.name.value,
+    on_error: form.elements.on_error.value,
+    steps: steps.length ? steps : [blankSalvoStep()],
+  };
+}
+
+function salvoPayload(draft) {
+  return {
+    name: draft.name,
+    on_error: draft.on_error,
+    steps: draft.steps.map((step) => ({
+      target_kind: step.target_kind,
+      target_id: step.target_kind === "tag" || step.target_id === "" ? null : Number(step.target_id),
+      tags: String(step.tags || "").split(/[\s,]+/).map((item) => item.trim()).filter(Boolean),
+      action: step.action,
+      delay_seconds: Number(step.delay_seconds || 0),
+    })),
+  };
+}
+
+function salvoRecordOptions(kind, selected) {
+  const records = kind === "device" ? state.devices : kind === "plug" ? ((state.power && state.power.plugs) || []) : ((state.power && state.power.rokus) || []);
+  if (!records.length) return `<option value="">No ${kind} records</option>`;
+  return records.map((item) => `<option value="${item.id}" ${String(selected) === String(item.id) ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("");
+}
+
+function salvoStepHtml(step) {
+  const kind = step.target_kind || "tag";
+  const actions = ["wake", "on", "off", "cycle", "shutdown"].map((action) => `<option value="${action}" ${step.action === action ? "selected" : ""}>${action}</option>`).join("");
+  const kinds = [["tag", "Tags"], ["device", "Computer"], ["plug", "Plug"], ["roku", "Roku"]]
+    .map(([value, label]) => `<option value="${value}" ${kind === value ? "selected" : ""}>${label}</option>`).join("");
+  const target = kind === "tag"
+    ? `<input class="salvo-tags" value="${escapeHtml(step.tags || "")}" placeholder="#Lights #LivingRoom" aria-label="Tags"><input class="salvo-id" type="hidden" value="">`
+    : `<select class="salvo-id" aria-label="Record">${salvoRecordOptions(kind, step.target_id)}</select><input class="salvo-tags" type="hidden" value="">`;
+  return `<div class="salvo-step">
+    <select class="salvo-action" aria-label="Action">${actions}</select>
+    <select class="salvo-target" aria-label="Target">${kinds}</select>
+    ${target}
+    <input class="salvo-delay" type="number" min="0" max="3600" value="${escapeHtml(step.delay_seconds ?? 0)}" aria-label="Delay seconds">
+  </div>`;
+}
+
+function salvoPanel() {
+  const draft = salvoDraft();
+  const cards = (state.salvos || []).map((salvo) => `
+    <article class="card">
+      <h2>${escapeHtml(salvo.name)}</h2>
+      <p class="sub">${salvo.steps.length} step${salvo.steps.length === 1 ? "" : "s"} · ${salvo.on_error === "continue" ? "continue on error" : "stop on error"}</p>
+      <div class="row-actions">
+        <button type="button" class="primary" data-cap="run_salvo" data-fields="confirm,dry_run" data-id="${salvo.id}">Run</button>
+        <button type="button" class="ghost" data-cap="get_salvo" data-fields="" data-id="${salvo.id}">Edit</button>
+        <button type="button" class="ghost" data-cap="duplicate_salvo" data-fields="" data-id="${salvo.id}">Duplicate</button>
+        <button type="button" class="danger" data-cap="remove_salvo" data-fields="" data-id="${salvo.id}">Delete</button>
+      </div>
+    </article>`).join("");
+  return `<section class="panel" style="padding:1rem;margin-bottom:1rem">
+    <h2>Salvos</h2>
+    <p class="lede">A salvo is a named sequence, such as Home Away or All Lights Off. One confirmation covers the whole run, after a preview of every device it will hit.</p>
+    <form id="salvo-form" class="hardware-form">
+      <label>Name<input name="name" value="${escapeHtml(draft.name || "")}" required></label>
+      <label>If a step fails
+        <select name="on_error">
+          <option value="stop" ${draft.on_error !== "continue" ? "selected" : ""}>Stop</option>
+          <option value="continue" ${draft.on_error === "continue" ? "selected" : ""}>Continue</option>
+        </select>
+      </label>
+      <p class="sub">Each row is a step: action, one computer or plug or Roku or a set of tags that must all match, and seconds to wait before that step.</p>
+      ${draft.steps.map((step) => salvoStepHtml(step)).join("")}
+      <div class="row-actions">
+        <button type="button" class="ghost" id="add-salvo-step">Add step</button>
+        <button type="button" class="ghost" data-cap="list_salvos" data-fields="">Refresh salvos</button>
+        ${draft.id
+          ? `<button type="button" data-cap="update_salvo" data-fields="name,on_error,steps" data-id="${draft.id}">Update salvo</button>`
+          : `<button type="submit" data-cap="add_salvo" data-fields="name,on_error,steps">Save salvo</button>`}
+      </div>
+    </form>
+    <div class="grid">${cards || `<div class="empty">No salvos yet.</div>`}</div>
+  </section>`;
+}
+
+function wireSalvoForm() {
+  const addStep = $("add-salvo-step");
+  if (addStep) {
+    addStep.addEventListener("click", () => {
+      captureSalvoDraft();
+      salvoDraft().steps.push(blankSalvoStep());
+      state.salvoReplace = true;
+      render();
+    });
+  }
+  document.querySelectorAll(".salvo-target").forEach((select) => {
+    select.addEventListener("change", () => render());
+  });
+}
+
+window.saveSalvo = async function (id) {
+  captureSalvoDraft();
+  const payload = salvoPayload(salvoDraft());
+  if (id) await api("PATCH", `/api/v1/salvos/${id}`, payload);
+  else await api("POST", "/api/v1/salvos", payload);
+  state.salvoDraft = null;
+  state.salvoReplace = true;
+  showBanner("Saved");
+  await refreshDevices();
+  render();
+};
+
+window.editSalvo = async function (el) {
+  const salvo = await api("GET", `/api/v1/salvos/${el.dataset.id}`);
+  state.salvoDraft = {
+    id: salvo.id,
+    name: salvo.name,
+    on_error: salvo.on_error,
+    steps: (salvo.steps.length ? salvo.steps : [blankSalvoStep()]).map((step) => ({
+      target_kind: step.target_kind,
+      target_id: step.target_id || "",
+      tags: (step.tags || []).map((tag) => `#${tag}`).join(" "),
+      action: step.action,
+      delay_seconds: step.delay_seconds,
+    })),
+  };
+  state.salvoReplace = true;
+  render();
+};
+
+window.duplicateSalvo = async function (el) {
+  await api("POST", `/api/v1/salvos/${el.dataset.id}/duplicate`);
+  showBanner("Salvo copied");
+  await refreshDevices();
+  render();
+};
+
+window.deleteSalvo = async function (el) {
+  if (!window.confirm("Delete this salvo?")) return;
+  await api("DELETE", `/api/v1/salvos/${el.dataset.id}`);
+  if (state.salvoDraft && state.salvoDraft.id === Number(el.dataset.id)) state.salvoDraft = null;
+  showBanner("Salvo deleted");
+  await refreshDevices();
+  render();
+};
+
+window.runSalvo = async function (el) {
+  const id = el.dataset.id;
+  const preview = await api("POST", `/api/v1/salvos/${id}/run`, { dry_run: true, confirm: false });
+  const lines = [];
+  (preview.steps || []).forEach((step) => {
+    const wait = step.delay_seconds ? ` after ${step.delay_seconds}s` : "";
+    (step.targets || []).forEach((target) => lines.push(`${step.action} ${target.name}${wait}`));
+  });
+  if (!lines.length) {
+    showBanner(`${preview.name} does not match any devices.`, true);
+    return;
+  }
+  if (!window.confirm(`${preview.name} will:\n${lines.join("\n")}`)) return;
+  const result = await api("POST", `/api/v1/salvos/${id}/run`, { dry_run: false, confirm: true });
+  const targets = (result.steps || []).flatMap((step) => step.targets || []);
+  const failed = targets.filter((item) => !item.ok).length;
+  showBanner(result.stopped ? `${preview.name} stopped after an error.` : `${preview.name} ran ${targets.length}.`, failed > 0);
+};
+
 function renderDevices() {
+  if (!state.salvoReplace) captureSalvoDraft();
+  state.salvoReplace = false;
   if (state.focus && window.hardwareEditor && window.findHardware) {
     const record = window.findHardware(state.focus.kind, state.focus.id);
     $("view").innerHTML = record
@@ -351,6 +539,7 @@ function renderDevices() {
       <button type="button" class="primary" id="new-device">Add device</button>
       <button type="button" class="ghost" data-cap="list_status" data-fields="">Refresh status</button>
     </div>
+    ${salvoPanel()}
     <section class="grid">${cards}</section>
     ${state.metrics && state.metrics.length && typeof sparkline === "function" ? `<div class="card">${sparkline(state.metrics)}</div>` : ""}
     <div id="editor-slot">${state.editing ? editorHtml() : ""}</div>`;
@@ -364,6 +553,7 @@ function renderDevices() {
   }
   const search = $("device-search");
   if (search) search.addEventListener("input", () => suggestTags(search));
+  wireSalvoForm();
 }
 
 function suggestTags(input) {
@@ -468,6 +658,7 @@ async function refreshDevices() {
   } catch (_error) {
     state.tags = state.tags || [];
   }
+  state.salvos = await api("GET", "/api/v1/salvos");
   const status = await api("GET", "/api/v1/status");
   state.status = {};
   status.forEach((item) => { state.status[item.device_id] = item; });
@@ -690,6 +881,15 @@ async function onSubmit(event) {
     try {
       await refreshDevices();
       render();
+    } catch (error) {
+      showBanner(error.message, true, error.existing);
+    }
+    return;
+  }
+  if (form.id === "salvo-form") {
+    event.preventDefault();
+    try {
+      await window.saveSalvo(salvoDraft().id || null);
     } catch (error) {
       showBanner(error.message, true, error.existing);
     }

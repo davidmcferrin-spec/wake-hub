@@ -266,6 +266,13 @@ button.tag.active {
   max-width: 42rem;
 }
 
+.salvo-step {
+  display: grid;
+  grid-template-columns: 7.5rem 8rem minmax(10rem, 1fr) 6rem;
+  gap: 0.45rem;
+  align-items: end;
+}
+
 .pair {
   display: grid;
   grid-template-columns: 1fr 1fr;

@@ -185,6 +185,16 @@ CREATE TABLE IF NOT EXISTS rokus (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS salvos (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    steps TEXT NOT NULL DEFAULT '[]',
+    on_error TEXT NOT NULL DEFAULT 'stop',
+    schedule TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 

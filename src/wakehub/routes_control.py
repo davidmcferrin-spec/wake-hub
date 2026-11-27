@@ -51,6 +51,7 @@ from wakehub.power import (
     ups_action,
     ups_status,
 )
+from wakehub.salvos import add_salvo, duplicate_salvo, get_salvo, list_salvos, remove_salvo, run_salvo, update_salvo
 from wakehub.tags import list_tags
 from wakehub.scan import add_from_scan, get_scan, list_scans, start_scan
 from fastapi import Request
@@ -249,6 +250,31 @@ class TagActionIn(BaseModel):
     tags: list[str]
     action: str
     confirm: bool = False
+
+
+class SalvoStepIn(BaseModel):
+    target_kind: str
+    target_id: int | None = None
+    tags: list[str] = []
+    action: str
+    delay_seconds: float = 0
+
+
+class SalvoIn(BaseModel):
+    name: str
+    steps: list[SalvoStepIn] = []
+    on_error: str = "stop"
+
+
+class SalvoPatch(BaseModel):
+    name: str | None = None
+    steps: list[SalvoStepIn] | None = None
+    on_error: str | None = None
+
+
+class SalvoRunIn(BaseModel):
+    confirm: bool = False
+    dry_run: bool = False
 
 
 class ScanIn(BaseModel):
@@ -494,6 +520,37 @@ def control_router() -> APIRouter:
     @router.post("/tags/action", tags=["tags"])
     def tags_action(body: TagActionIn, request: Request) -> dict[str, Any]:
         return tag_action(get_hub(), body.tags, body.action, confirm=body.confirm, source=request_source(request))
+
+    @router.get("/salvos", tags=["salvos"])
+    def salvos() -> list[dict[str, Any]]:
+        return list_salvos(get_hub())
+
+    @router.post("/salvos", tags=["salvos"], status_code=201)
+    def create_salvo(body: SalvoIn) -> dict[str, Any]:
+        return add_salvo(get_hub(), body.model_dump())
+
+    @router.get("/salvos/{salvo_id}", tags=["salvos"])
+    def one_salvo(salvo_id: int) -> dict[str, Any]:
+        return get_salvo(get_hub(), salvo_id)
+
+    @router.patch("/salvos/{salvo_id}", tags=["salvos"])
+    def patch_salvo(salvo_id: int, body: SalvoPatch) -> dict[str, Any]:
+        return update_salvo(get_hub(), salvo_id, body.model_dump(exclude_unset=True))
+
+    @router.delete("/salvos/{salvo_id}", tags=["salvos"], status_code=204)
+    def delete_salvo(salvo_id: int):
+        remove_salvo(get_hub(), salvo_id)
+        from fastapi import Response
+
+        return Response(status_code=204)
+
+    @router.post("/salvos/{salvo_id}/duplicate", tags=["salvos"], status_code=201)
+    def copy_salvo(salvo_id: int) -> dict[str, Any]:
+        return duplicate_salvo(get_hub(), salvo_id)
+
+    @router.post("/salvos/{salvo_id}/run", tags=["salvos"])
+    def run_one_salvo(salvo_id: int, body: SalvoRunIn, request: Request) -> dict[str, Any]:
+        return run_salvo(get_hub(), salvo_id, confirm=body.confirm, dry_run=body.dry_run, source=request_source(request))
 
     @router.get("/interfaces", tags=["scan"])
     def interfaces() -> list[dict[str, Any]]:
