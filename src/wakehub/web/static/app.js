@@ -89,7 +89,7 @@ function powerBlock(device) {
   const unit = history.some((point) => point.watts != null) ? "W" : "A";
   const series = history.slice().reverse().map((point) => ({ value: point.watts != null ? point.watts : point.current_a })).filter((row) => row.value != null);
   const chart = series.length && typeof sparkline === "function" ? `<p class="sub">Recent ${unit}</p>${sparkline(series)}` : "";
-  return `<p class="sub">${bits.join(" · ")} from ${escapeHtml(source)}</p>${chart}`;
+  return `<p class="sub">${escapeHtml(bits.join(" · "))} from ${escapeHtml(source)}</p>${chart}`;
 }
 
 function deviceLinks(device) {
@@ -163,7 +163,7 @@ function deviceCard(device) {
       </header>
       <p class="meta">${escapeHtml(device.host || "no host")} · ${escapeHtml(device.mac || "no MAC")}</p>
       ${powerBlock(device)}
-      <p class="sub">Broadcast ${escapeHtml(device.broadcast)}:${device.wol_port}. Wake-on-LAN, and any PDU outlet, plug, AMT, JetKVM or UPS linked below, are controlled from this computer.</p>
+      <p class="sub">Broadcast ${escapeHtml(device.broadcast)}:${escapeHtml(device.wol_port)}. Wake-on-LAN, and any PDU outlet, plug, AMT, JetKVM or UPS linked below, are controlled from this computer.</p>
       ${deviceLinks(device)}
       ${tagChips(device.tags)}
       <div class="row-actions">
@@ -377,7 +377,7 @@ function salvoPayload(draft) {
 function salvoRecordOptions(kind, selected) {
   const records = kind === "device" ? state.devices : kind === "plug" ? ((state.power && state.power.plugs) || []) : ((state.power && state.power.rokus) || []);
   if (!records.length) return `<option value="">No ${kind} records</option>`;
-  return records.map((item) => `<option value="${item.id}" ${String(selected) === String(item.id) ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("");
+  return records.map((item) => `<option value="${escapeHtml(item.id)}" ${String(selected) === String(item.id) ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("");
 }
 
 function salvoStepHtml(step) {
@@ -948,7 +948,8 @@ function escapeHtml(value) {
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 async function boot() {

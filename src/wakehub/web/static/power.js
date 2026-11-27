@@ -58,7 +58,7 @@ function hardwareFields(kind, record) {
     ? `<input name="${name}" type="password" value="" placeholder="unchanged" autocomplete="new-password">`
     : `<input name="${name}" type="password" placeholder="Password" autocomplete="new-password">`);
   const choice = (name, options, selected) => {
-    const items = options.map(([value, label]) => `<option value="${escapeHtml(value)}" ${String(selected ?? "") === String(value) ? "selected" : ""}>${label}</option>`).join("");
+    const items = options.map(([value, label]) => `<option value="${escapeHtml(value)}" ${String(selected ?? "") === String(value) ? "selected" : ""}>${escapeHtml(label)}</option>`).join("");
     return `<select name="${name}">${items}</select>`;
   };
   const name = `<label>Name<input name="name" required value="${shown("name")}"></label>`;
@@ -213,7 +213,7 @@ function renderScan() {
       return `
       <article class="card">
         <header><h2>${escapeHtml(host.ip)}</h2><span class="pill">${escapeHtml(suggestion.confidence || "")}</span></header>
-        <p class="meta">${escapeHtml(host.vendor || "unknown vendor")} · ${escapeHtml(host.mac || "no MAC")} · ${escapeHtml(known)}</p>
+        <p class="meta">${escapeHtml(host.hostname || "")} ${escapeHtml(host.vendor || "unknown vendor")} · ${escapeHtml(host.mac || "no MAC")} · ${escapeHtml(known)}</p>
         <p class="sub">${escapeHtml(suggestion.reason || "")}</p>
         <div class="row-actions">${links}${add}</div>
       </article>`;
@@ -273,7 +273,7 @@ function renderPower() {
         <h2>${escapeHtml(item.name)}</h2>
         <button type="button" class="danger delete" data-cap="remove_amt" data-fields="" data-id="${item.id}">Delete</button>
       </header>
-      <p class="meta">${escapeHtml(item.host)}:${item.port}</p>
+      <p class="meta">${escapeHtml(item.host)}:${escapeHtml(item.port)}</p>
       ${tagChips(item.tags)}
       <div class="row-actions">
         <button type="button" data-cap="amt_power_state" data-fields="" data-id="${item.id}">Power state</button>
@@ -346,7 +346,7 @@ function renderPower() {
         <h2>${escapeHtml(item.name)}</h2>
         <button type="button" class="danger delete" data-cap="remove_roku" data-fields="" data-id="${item.id}">Delete</button>
       </header>
-      <p class="meta">${escapeHtml(item.host)}:${item.port}</p>
+      <p class="meta">${escapeHtml(item.host)}:${escapeHtml(item.port)}</p>
       ${tagChips(item.tags)}
       <div class="row-actions">
         <button type="button" data-cap="roku_status" data-fields="" data-id="${item.id}">Status</button>
@@ -447,7 +447,7 @@ function renderPower() {
 }
 
 function sparkline(rows) {
-  const values = rows.map((row) => row.value).reverse();
+  const values = rows.map((row) => Number(row.value)).filter((value) => Number.isFinite(value)).reverse();
   if (!values.length) return "";
   const min = Math.min(...values);
   const max = Math.max(...values);
@@ -509,7 +509,7 @@ window.handlePowerCap = async function handlePowerCap(button) {
             <button type="button" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${id}" data-outlet="${outlet.number}" data-action="on">On</button>
             <button type="button" class="danger" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${id}" data-outlet="${outlet.number}" data-action="off">Off</button>
             <button type="button" class="danger" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${id}" data-outlet="${outlet.number}" data-action="reboot">Reboot</button>
-          </div>`).join("") + `<p class="sub">Bank current ${data.bank_amps.join(" A, ")} A. Not per outlet.</p>`;
+          </div>`).join("") + `<p class="sub">Bank current ${escapeHtml((data.bank_amps || []).join(" A, "))} A. Not per outlet.</p>`;
       }
       return true;
     } else if (cap === "set_pdu_outlet") {

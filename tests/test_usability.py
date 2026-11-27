@@ -197,15 +197,19 @@ def test_shared_login_delete_names_users_and_a_missing_profile_uses_the_device_p
     assert password == "local-secret"
 
 
-def test_changing_or_clearing_the_ui_password_ends_sessions(client, hub):
+def test_changing_the_ui_password_keeps_this_browser_and_drops_the_others(client, hub):
     client.patch("/api/v1/settings", json={"ui_password": "correct horse"})
     client.headers.pop("Authorization")
     assert client.post("/api/v1/ui/login", json={"password": "correct horse"}).status_code == 200
+    other = client.cookies.get("wakehub_ui")
     assert client.get("/api/v1/ui/session").status_code == 200
     client.headers["Authorization"] = f"Bearer {hub.token}"
     changed = client.patch("/api/v1/settings", json={"ui_password": "new horse"})
     assert changed.status_code == 200, changed.text
     client.headers.pop("Authorization")
+    assert client.get("/api/v1/ui/session").status_code == 200
+    client.cookies.clear()
+    client.cookies.set("wakehub_ui", other)
     assert client.get("/api/v1/ui/session").status_code == 401
     assert client.post("/api/v1/ui/login", json={"password": "new horse"}).status_code == 200
     client.headers["Authorization"] = f"Bearer {hub.token}"
@@ -213,3 +217,52 @@ def test_changing_or_clearing_the_ui_password_ends_sessions(client, hub):
     assert cleared.json()["ui_password_set"] is False
     client.headers.pop("Authorization")
     assert client.get("/api/v1/ui/session").status_code == 401
+
+
+def test_one_bad_mdns_packet_does_not_end_listening(monkeypatch):
+    from wakehub.scan import _mdns_names
+
+    packets = [b"bad", b"good"]
+
+    class Sock:
+        def setsockopt(self, *args):
+            return None
+
+        def setblocking(self, flag):
+            return None
+
+        def sendto(self, data, addr):
+            return None
+
+        def recvfrom(self, size):
+            item = packets.pop(0)
+            if item == b"bad":
+                raise ValueError("bad packet")
+            return item, ("10.2.0.5", 5353)
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr("wakehub.scan.socket.socket", lambda *args, **kwargs: Sock())
+    ready = {"n": 0}
+
+    def select(readers, writers, errors, timeout):
+        ready["n"] += 1
+        if ready["n"] > 2:
+            return [], [], []
+        return readers, [], []
+
+    monkeypatch.setattr("wakehub.scan.select.select", select)
+    clock = {"t": 1000.0}
+
+    def monotonic():
+        clock["t"] += 0.25
+        return clock["t"]
+
+    monkeypatch.setattr("wakehub.scan.time.monotonic", monotonic)
+
+    def remember(by_ip, packet, sender):
+        by_ip.setdefault(sender, []).append("shelly")
+
+    monkeypatch.setattr("wakehub.scan._remember_mdns", remember)
+    assert _mdns_names().get("10.2.0.5") == ["shelly"]

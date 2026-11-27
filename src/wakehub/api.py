@@ -423,8 +423,15 @@ def _api_router() -> APIRouter:
         return public_settings(get_hub())
 
     @router.patch("/settings", tags=["settings"])
-    def patch_settings(body: SettingsIn) -> dict[str, Any]:
-        return update_settings(get_hub(), body.model_dump(exclude_unset=True))
+    def patch_settings(body: SettingsIn, request: Request, response: Response) -> dict[str, Any]:
+        hub = get_hub()
+        payload = body.model_dump(exclude_unset=True)
+        signed_in = ui_sessions.valid(hub, request.cookies.get(ui_sessions.COOKIE, ""))
+        result = update_settings(hub, payload)
+        if signed_in and payload.get("ui_password") and not payload.get("clear_ui_password"):
+            # This browser stays signed in. Every other session was already cleared.
+            ui_sessions.issue(hub, response)
+        return result
 
     @router.get("/access-token", tags=["settings"])
     def access_token() -> dict[str, str]:

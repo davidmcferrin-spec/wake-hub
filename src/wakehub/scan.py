@@ -583,11 +583,15 @@ def _mdns_names() -> dict[str, list[str]]:
             sock.sendto(query, ("224.0.0.251", 5353))
         deadline = time.monotonic() + 0.6
         while time.monotonic() < deadline:
-            ready, _, _ = select.select([sock], [], [], 0.2)
-            if not ready:
+            try:
+                ready, _, _ = select.select([sock], [], [], 0.2)
+                if not ready:
+                    continue
+                packet, addr = sock.recvfrom(2048)
+                _remember_mdns(by_ip, packet, addr[0])
+            except Exception:
+                # One bad reply must not close the listen window.
                 continue
-            packet, addr = sock.recvfrom(2048)
-            _remember_mdns(by_ip, packet, addr[0])
     except Exception:
         # A bad packet or a closed multicast socket must not fail the whole scan.
         return by_ip
