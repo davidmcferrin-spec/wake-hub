@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Wake Hub</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <div id="setup" class="gate hidden">
+    <form id="setup-form" class="gate-card">
+      <p class="eyebrow">Wake Hub</p>
+      <h1>First-run setup</h1>
+      <p class="lede">Set a UI password. The API token is in the container log and in /config/token. This page does not reveal it.</p>
+      <label for="setup-token">API token</label>
+      <input id="setup-token" name="api_token" type="password" autocomplete="off" required>
+      <label for="setup-password">UI password</label>
+      <input id="setup-password" name="password" type="password" autocomplete="new-password" minlength="8" required>
+      <button type="submit" data-cap="ui_setup" data-fields="api_token,password">Save password</button>
+      <p id="setup-error" class="error" role="alert"></p>
+    </form>
+  </div>
+
+  <div id="login" class="gate hidden">
+    <form id="login-form" class="gate-card">
+      <p class="eyebrow">Wake Hub</p>
+      <h1>Sign in</h1>
+      <p class="lede">The UI password is required. The API token stays on the settings page after you sign in.</p>
+      <label for="ui-password">Password</label>
+      <input id="ui-password" name="password" type="password" autocomplete="current-password" minlength="8" required>
+      <button type="submit" data-cap="ui_login" data-fields="password">Sign in</button>
+      <p id="login-error" class="error" role="alert"></p>
+    </form>
+  </div>
+
+  <div id="app" class="shell hidden" data-cap="get_ui_session" data-fields="">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-mark">WH</span>
+        <div>
+          <strong>Wake Hub</strong>
+          <span>LAN power</span>
+        </div>
+      </div>
+      <nav>
+        <button type="button" data-page="devices" data-cap="list_devices">Devices</button>
+        <button type="button" data-page="scan" data-cap="list_scans" data-fields="">Scan</button>
+        <button type="button" data-page="power" data-cap="list_pdus">Power</button>
+        <button type="button" data-page="history" data-cap="list_actions">History</button>
+        <button type="button" data-page="settings" data-cap="get_settings">Settings</button>
+      </nav>
+    </aside>
+    <div class="workspace">
+      <header class="topbar">
+        <div>
+          <p id="page-kicker" class="eyebrow">Inventory</p>
+          <h1 id="page-title">Devices</h1>
+        </div>
+        <p id="banner" class="banner hidden" role="status"></p>
+      </header>
+      <main id="view"></main>
+    </div>
+  </div>
+  <script src="/static/app.js"></script>
+  <script src="/static/power.js"></script>
+</body>
+</html>

@@ -1,0 +1,38 @@
+[project]
+name = "wake-hub"
+version = "1.0.0"
+description = "Self-hosted LAN power control: Wake-on-LAN, PDU, AMT, JetKVM, plugs and UPS"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.32",
+  "mcp>=2.0,<3",
+  "httpx>=0.27",
+  "cryptography>=43",
+  "pydantic>=2.9",
+  "pysnmp>=7.1",
+  "aiortc>=1.9",
+  "websockets>=13",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx2>=2"]
+
+[project.scripts]
+wake-hub = "wakehub.main:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+wakehub = ["web/static/*", "data/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --tb=line"

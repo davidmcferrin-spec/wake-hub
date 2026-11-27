@@ -1,0 +1,9 @@
+The file src/wakehub/data/oui.tsv is a prefix-to-vendor extract of the public
+IEEE Registration Authority OUI listing (https://standards-oui.ieee.org/oui/oui.csv).
+It is data published by the IEEE, not code, and it is included so MAC addresses
+can be labeled without a network call. Organization names remain the property
+of their registrants.
+
+No device-control source code from MeshCommander, python-kasa, JetKVM, Shelly,
+Synaccess, or CyberPower was copied into this repository. Those protocols are
+implemented from their public interface descriptions.

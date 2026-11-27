@@ -1,0 +1,18 @@
+# Host networking is required so Wake-on-LAN broadcasts and ARP discovery reach the LAN.
+services:
+  wake-hub:
+    build: .
+    image: ghcr.io/davidmcferrin-spec/wake-hub:latest
+    container_name: wake-hub
+    network_mode: host
+    cap_add:
+      - NET_RAW
+    environment:
+      PUID: "99"
+      PGID: "100"
+      PORT: "8765"
+      WAKEHUB_CORS: ""
+    volumes:
+      - /mnt/user/appdata/wake-hub/config:/config
+      - /mnt/user/appdata/wake-hub/data:/data
+    restart: unless-stopped

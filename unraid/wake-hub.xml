@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>Wake Hub</Name>
+  <Repository>ghcr.io/davidmcferrin-spec/wake-hub:latest</Repository>
+  <Registry>https://github.com/davidmcferrin-spec/wake-hub</Registry>
+  <Network>host</Network>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/davidmcferrin-spec/wake-hub/issues</Support>
+  <ReadMe>https://raw.githubusercontent.com/davidmcferrin-spec/wake-hub/main/README.md</ReadMe>
+  <Overview>Self-hosted LAN power control: Wake-on-LAN, Synaccess PDU, Intel AMT, JetKVM, Shelly, Kasa and CyberPower UPS, with a web UI, REST API and MCP server on one port. Host networking is required so magic packets and ARP scans reach the LAN.</Overview>
+  <Category>Network:Tools</Category>
+  <WebUI>http://[IP]:[PORT:8765]/</WebUI>
+  <ExtraParams>--cap-add=NET_RAW</ExtraParams>
+  <Config Name="Config" Target="/config" Default="/mnt/user/appdata/wake-hub/config" Mode="rw" Type="Path" Display="always" Required="true" Description="API token and encryption key"/>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/wake-hub/data" Mode="rw" Type="Path" Display="always" Required="true" Description="SQLite database"/>
+  <Config Name="PUID" Target="PUID" Default="99" Mode="" Type="Variable" Display="always" Required="true" Description="User that owns the appdata files"/>
+  <Config Name="PGID" Target="PGID" Default="100" Mode="" Type="Variable" Display="always" Required="true" Description="Group that owns the appdata files"/>
+  <Config Name="Web Port" Target="PORT" Default="8765" Mode="" Type="Variable" Display="always" Required="true" Description="Port for the web UI, REST API and MCP. Host networking means this is a host port."/>
+  <Config Name="Secret key" Target="WAKEHUB_SECRET_KEY" Default="" Mode="" Type="Variable" Display="always" Required="false" Mask="true" Description="Optional encryption key. Leave empty to generate /config/secret.key"/>
+  <Config Name="CORS origins" Target="WAKEHUB_CORS" Default="" Mode="" Type="Variable" Display="always" Required="false" Description="Comma-separated browser origins allowed to call the API. Empty blocks cross-origin calls. * allows any origin."/>
+  <Requires>Use host networking. Bridge mode cannot deliver directed broadcasts or ARP.</Requires>
+</Container>
