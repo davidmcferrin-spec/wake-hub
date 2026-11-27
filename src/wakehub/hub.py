@@ -7,6 +7,7 @@ import os
 import secrets
 import threading
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
 
@@ -23,7 +24,8 @@ _hub: Hub | None = None
 class Hub:
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
+        self._in_transaction = 0
         self._background_stop = threading.Event()
         self._workers: list[threading.Thread] = []
         self._closed = False
@@ -174,7 +176,8 @@ class Hub:
             if self._skip_locked():
                 return 0
             cursor = self.db.execute(sql, params)
-            self.db.commit()
+            if self._in_transaction == 0:
+                self.db.commit()
             return int(cursor.lastrowid or 0)
 
     def write_many(self, statements: list[tuple[str, tuple[Any, ...]]]) -> None:
@@ -183,7 +186,24 @@ class Hub:
                 return
             for sql, params in statements:
                 self.db.execute(sql, params)
-            self.db.commit()
+            if self._in_transaction == 0:
+                self.db.commit()
+
+    @contextmanager
+    def transaction(self):
+        """Hold every write until the block finishes, and undo them all if it raises."""
+        with self.lock:
+            self._in_transaction += 1
+            try:
+                yield
+                if self._in_transaction == 1:
+                    self.db.commit()
+            except Exception:
+                if self._in_transaction == 1:
+                    self.db.rollback()
+                raise
+            finally:
+                self._in_transaction -= 1
 
 
 def set_hub(hub: Hub) -> None:

@@ -248,6 +248,46 @@ def test_mcp_and_salvo_honor_method_order_and_override(client, hub, monkeypatch)
     assert amt["id"] and plug["id"]
 
 
+def test_a_failed_save_does_not_keep_a_partial_method_change(client, hub):
+    from wakehub.crypto import decrypt
+
+    device = client.post("/api/v1/devices", json={"name": "UNRAID", "mac": "02:00:00:00:00:61", "host": "192.168.0.61"}).json()
+    amt = client.post(
+        "/api/v1/amt",
+        json={"name": "UNRAID vPRO", "host": "192.168.0.62", "password": "secret-amt", "device_id": device["id"]},
+    ).json()
+    other = client.post("/api/v1/amt", json={"name": "Taken", "host": "10.9.9.50", "password": "secret-amt"}).json()
+    taken = client.post("/api/v1/devices", json={"name": "Taken PC", "mac": "02:00:00:00:00:63", "host": "192.168.0.70"}).json()
+    before = decrypt(hub.cipher, hub.query_one("SELECT password_enc FROM amt_endpoints WHERE id = ?", (amt["id"],))["password_enc"])
+    duplicate = client.patch(
+        f"/api/v1/devices/{device['id']}",
+        json={
+            "methods": [
+                {"kind": "amt", "host": "10.8.8.8", "password": "created-secret", "port": 16992},
+                {"kind": "amt", "amt_id": amt["id"], "host": other["host"], "password": "changed"},
+                {"kind": "wol"},
+            ]
+        },
+    )
+    assert duplicate.status_code == 409, duplicate.text
+    listed = client.get("/api/v1/amt").json()
+    assert not any(item["host"] == "10.8.8.8" for item in listed)
+    kept = next(item for item in listed if item["id"] == amt["id"])
+    assert kept["host"] == "192.168.0.62"
+    assert decrypt(hub.cipher, hub.query_one("SELECT password_enc FROM amt_endpoints WHERE id = ?", (amt["id"],))["password_enc"]) == before
+    conflict = client.patch(
+        f"/api/v1/devices/{device['id']}",
+        json={
+            "host": taken["host"],
+            "methods": [{"kind": "amt", "amt_id": amt["id"], "host": "10.7.7.7", "password": "nope"}, {"kind": "wol"}],
+        },
+    )
+    assert conflict.status_code == 409, conflict.text
+    after = next(item for item in client.get("/api/v1/amt").json() if item["id"] == amt["id"])
+    assert after["host"] == "192.168.0.62"
+    assert client.get(f"/api/v1/devices/{device['id']}").json()["host"] == "192.168.0.61"
+
+
 def test_scan_offers_add_amt_to_the_matching_device(hub):
     hub.write(
         "INSERT INTO devices (name, mac, host, broadcast, wol_port, notes, tags, enabled, reach_mode, reach_timeout, reach_timeout_set, wake_strategy, power_method, methods, created_at, updated_at) VALUES ('UNRAID', '02:00:00:00:00:97', '192.168.0.97', '255.255.255.255', 9, '', '[]', 1, 'icmp', 30, 0, 'wol_only', 'auto', ?, 't', 't')",

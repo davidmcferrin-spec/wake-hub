@@ -145,6 +145,7 @@ function methodForAction(device, action) {
     off: ["plug", "pdu", "amt", "ups", "jetkvm", "roku"],
     reboot: ["amt", "plug", "pdu", "ups", "jetkvm"],
     cycle: ["plug", "pdu", "amt", "ups", "jetkvm"],
+    shutdown: ["amt", "ups", "jetkvm"],
   }[action] || [];
   const capable = ((device && device.methods) || [{ kind: "wol" }]).filter((item) => can.includes(item.kind));
   if (action === "off" || action === "reboot") {
@@ -152,6 +153,11 @@ function methodForAction(device, action) {
     if (gentle) return gentle;
   }
   return capable[0] || null;
+}
+
+function actionButton(device, action, verb, tone) {
+  if (!methodForAction(device, action)) return "";
+  return `<button type="button" class="${tone}" data-cap="power_action" data-fields="action,confirm,method" data-action="${action}" data-id="${device.id}">${escapeHtml(via(device, action, verb))}</button>`;
 }
 
 function via(device, action, verb) {
@@ -182,7 +188,7 @@ function recordCard(spec) {
         ${spec.primary || ""}
         <details class="more">
           <summary class="ghost">More</summary>
-          ${spec.more || ""}
+          <div class="menu">${spec.more || ""}</div>
         </details>
       </div>
     </article>`;
@@ -200,15 +206,13 @@ function deviceCard(device) {
     meta: `${device.host || "no host"} · ${device.mac || "no MAC"}`,
     title: `Broadcast ${device.broadcast}:${device.wol_port}`,
     body: `${powerBlock(device)}${tagChips(device.tags)}`,
-    primary: `
-      <button type="button" class="primary" data-cap="power_action" data-fields="action,confirm,method" data-action="on" data-id="${device.id}">${escapeHtml(via(device, "on", "Wake"))}</button>
-      <button type="button" class="danger" data-cap="power_action" data-fields="action,confirm,method" data-action="off" data-id="${device.id}">${escapeHtml(via(device, "off", "Off"))}</button>
-      <button type="button" class="danger" data-cap="power_action" data-fields="action,confirm,method" data-action="reboot" data-id="${device.id}">${escapeHtml(via(device, "reboot", "Reset"))}</button>`,
+    primary: `${actionButton(device, "on", "Wake", "primary")}${actionButton(device, "off", "Off", "danger")}${actionButton(device, "reboot", "Reset", "danger")}`,
     more: `
       <label>Use <select class="action-method" aria-label="Method for the next action"><option value="auto">Auto</option>${choices}</select></label>
       <button type="button" class="ghost" data-open-kind="device" data-id="${device.id}">Open</button>
       <button type="button" class="ghost" data-cap="get_device" data-fields="" data-id="${device.id}" aria-label="Edit ${escapeHtml(device.name)}">Edit</button>
-      <button type="button" class="danger" data-cap="power_action" data-fields="action,confirm,method" data-action="cycle" data-id="${device.id}">${escapeHtml(via(device, "cycle", "Cycle"))}</button>
+      ${actionButton(device, "cycle", "Cycle", "danger")}
+      ${actionButton(device, "shutdown", "Shutdown", "danger")}
       <button type="button" class="danger delete" data-cap="remove_device" data-fields="" data-id="${device.id}">Delete</button>`,
   });
 }
@@ -406,10 +410,10 @@ function hardwareInventoryCard(entry) {
     badge: `<span class="pill">${escapeHtml(entry.label)}</span>`,
     meta: `${item.host || "no host"}${port}`,
     body: `${tagChips(item.tags)}${window.hardwareControls ? window.hardwareControls(entry.kind, item, false) : ""}`,
-    primary: `
+    more: `
       <button type="button" class="ghost" data-open-kind="${entry.kind}" data-id="${item.id}">Open</button>
-      <button type="button" class="ghost" data-edit-kind="${entry.kind}" data-id="${item.id}" aria-label="Edit ${escapeHtml(item.name)}">Edit</button>`,
-    more: `<button type="button" class="danger delete" data-cap="${removeCap(entry.kind)}" data-fields="" data-id="${item.id}">Delete</button>`,
+      <button type="button" class="ghost" data-edit-kind="${entry.kind}" data-id="${item.id}" aria-label="Edit ${escapeHtml(item.name)}">Edit</button>
+      <button type="button" class="danger delete" data-cap="${removeCap(entry.kind)}" data-fields="" data-id="${item.id}">Delete</button>`,
   });
 }
 
@@ -716,19 +720,25 @@ function renderDevices() {
           <header class="card-head"><h2>${escapeHtml(device.name)}</h2>${pill(device)}</header>
           <p class="meta">${escapeHtml(device.host || "no host")} · ${escapeHtml(device.mac || "no MAC")}</p>
           ${tagChips(device.tags)}
+          <div class="row-actions actions">
+            ${actionButton(device, "on", "Wake", "primary")}
+            ${actionButton(device, "off", "Off", "danger")}
+            ${actionButton(device, "reboot", "Reset", "danger")}
+            ${actionButton(device, "cycle", "Cycle", "danger")}
+            ${actionButton(device, "shutdown", "Shutdown", "danger")}
+          </div>
           <h3>Methods</h3>
           <ol>${methods}</ol>
           <h3>Linked outlets</h3>
           ${deviceLinks(device) || `<p class="sub">No outlet is linked.</p>`}
           <h3>Power history</h3>
           <div id="power-history"><p class="sub">Loading samples.</p></div>
-          <button type="button" class="sr-only" data-cap="wake_device" data-fields="method,timeout" data-id="${device.id}">Send magic packet</button>
-          <button type="button" class="ghost" data-cap="device_status" data-fields="" data-id="${device.id}">Status</button>
-          <button type="button" class="ghost" data-cap="device_metrics" data-fields="limit" data-id="${device.id}">Metrics</button>
-          <button type="button" class="ghost" data-cap="set_device_enabled" data-fields="enabled" data-id="${device.id}" data-enabled="${device.enabled ? "0" : "1"}">${device.enabled ? "Disable" : "Enable"}</button>
-          <button type="button" class="ghost" data-cap="power_action" data-fields="action,confirm,method" data-action="on" data-id="${device.id}">On</button>
-          <button type="button" class="danger" data-cap="power_action" data-fields="action,confirm,method" data-action="cycle" data-id="${device.id}">Cycle</button>
-          <button type="button" class="danger" data-cap="power_action" data-fields="action,confirm,method" data-action="shutdown" data-id="${device.id}">Shutdown</button>
+          <div class="row-actions">
+            <button type="button" class="sr-only" data-cap="wake_device" data-fields="method,timeout" data-id="${device.id}">Send magic packet</button>
+            <button type="button" class="ghost" data-cap="device_status" data-fields="" data-id="${device.id}">Status</button>
+            <button type="button" class="ghost" data-cap="device_metrics" data-fields="limit" data-id="${device.id}">Metrics</button>
+            <button type="button" class="ghost" data-cap="set_device_enabled" data-fields="enabled" data-id="${device.id}" data-enabled="${device.enabled ? "0" : "1"}">${device.enabled ? "Disable" : "Enable"}</button>
+          </div>
         </article>`;
       api("GET", `/api/v1/devices/${device.id}/metrics?limit=40`).then((rows) => {
         const slot = $("power-history");
@@ -953,7 +963,75 @@ function writeRoute(page, slug) {
   if (location.hash !== next) history.replaceState(null, "", next);
 }
 
+function captureTransient() {
+  const menus = [...document.querySelectorAll("article.card details.more[open]")].map((node) => {
+    const card = node.closest("article.card");
+    const marked = card && card.querySelector("[data-id]");
+    return card ? `${card.dataset.kind}:${marked ? marked.dataset.id : ""}` : "";
+  }).filter(Boolean);
+  const methods = [...document.querySelectorAll("details.method-row[open]")].map((node) => `${node.dataset.kind}:${node.dataset.ref || ""}`);
+  const active = document.activeElement;
+  let focus = null;
+  if (active && active !== document.body && active.closest && active.closest("#view, #page-actions")) {
+    focus = {
+      id: active.id || "",
+      name: active.getAttribute("name") || "",
+      cap: (active.dataset && active.dataset.cap) || "",
+      dataId: (active.dataset && active.dataset.id) || "",
+      summary: active.tagName === "SUMMARY",
+      start: typeof active.selectionStart === "number" ? active.selectionStart : null,
+      end: typeof active.selectionEnd === "number" ? active.selectionEnd : null,
+    };
+  }
+  return { menus, methods, focus };
+}
+
+function cardByKey(key) {
+  const split = key.indexOf(":");
+  const kind = key.slice(0, split);
+  const id = key.slice(split + 1);
+  return [...document.querySelectorAll("article.card")].find((card) => {
+    if (card.dataset.kind !== kind) return false;
+    const marked = card.querySelector("[data-id]");
+    return marked && marked.dataset.id === id;
+  });
+}
+
+function restoreTransient(saved) {
+  if (!saved) return;
+  saved.menus.forEach((key) => {
+    const card = cardByKey(key);
+    const menu = card && card.querySelector("details.more");
+    if (menu) menu.open = true;
+  });
+  saved.methods.forEach((key) => {
+    const split = key.indexOf(":");
+    const kind = key.slice(0, split);
+    const ref = key.slice(split + 1);
+    const row = [...document.querySelectorAll("details.method-row")].find((node) => node.dataset.kind === kind && (node.dataset.ref || "") === ref);
+    if (row) row.open = true;
+  });
+  const focus = saved.focus;
+  if (!focus) return;
+  let target = focus.id ? document.getElementById(focus.id) : null;
+  if (!target && focus.summary && focus.dataId) {
+    const card = [...document.querySelectorAll("article.card")].find((node) => {
+      const marked = node.querySelector("[data-id]");
+      return marked && marked.dataset.id === focus.dataId;
+    });
+    target = card && card.querySelector("details.more summary");
+  }
+  if (!target && focus.cap && focus.dataId) target = document.querySelector(`[data-cap="${focus.cap}"][data-id="${focus.dataId}"]`);
+  if (!target && focus.name && /^[A-Za-z0-9_-]+$/.test(focus.name)) target = document.querySelector(`#view [name="${focus.name}"]`);
+  if (!target || !target.focus) return;
+  target.focus();
+  if (focus.start != null && target.setSelectionRange) {
+    try { target.setSelectionRange(focus.start, focus.end); } catch (_error) { /* some inputs have no caret */ }
+  }
+}
+
 function render() {
+  const transient = captureTransient();
   const [kicker, title] = titles[state.page] || ["Wake Hub", "Wake Hub"];
   $("page-kicker").textContent = kicker;
   $("page-title").textContent = title;
@@ -986,6 +1064,7 @@ function render() {
       $("page-title").textContent = record.name;
     }
   }
+  restoreTransient(transient);
 }
 
 async function refreshDevices() {
@@ -1542,6 +1621,11 @@ window.addEventListener("hashchange", () => {
 });
 
 document.body.addEventListener("click", (event) => {
+  const menuButton = event.target.closest && event.target.closest("details.more button, details.more a");
+  if (menuButton) {
+    const details = menuButton.closest("details.more");
+    if (details) details.open = false;
+  }
   const completion = event.target.closest("[data-complete-tag]");
   if (completion) {
     const input = $("device-search");
@@ -1615,10 +1699,20 @@ document.body.addEventListener("click", (event) => {
   if (event.target.id === "add-method") {
     const kind = $("new-method-kind").value;
     const list = $("method-list");
+    const holder = document.createElement("div");
+    holder.innerHTML = methodRow({ kind }, true);
+    const node = holder.firstElementChild;
+    const rows = [...list.querySelectorAll(":scope > details.method-row")];
+    const wol = rows.find((row) => row.dataset.kind === "wol");
     const actions = list.querySelector(":scope > .row-actions");
-    const html = methodRow({ kind }, true);
-    if (actions) actions.insertAdjacentHTML("beforebegin", html);
-    else list.insertAdjacentHTML("beforeend", html);
+    if ((kind === "amt" || kind === "jetkvm") && wol) list.insertBefore(node, wol);
+    else if (kind === "wol") {
+      const after = rows.find((row) => ["plug", "pdu", "ups", "roku"].includes(row.dataset.kind));
+      if (after) list.insertBefore(node, after);
+      else if (actions) list.insertBefore(node, actions);
+      else list.append(node);
+    } else if (actions) list.insertBefore(node, actions);
+    else list.append(node);
     return;
   }
   if (event.target.id === "roku-help") {

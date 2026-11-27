@@ -315,9 +315,9 @@ button.sr-only {
 
 .card-head .check { margin: 0; align-self: baseline; }
 
-.card[data-kind="device"] .actions { flex-wrap: nowrap; }
+.card .actions { flex-wrap: wrap; }
 
-.card[data-kind="device"] .actions > button { padding: 0 0.55rem; font-size: 0.85rem; white-space: nowrap; }
+.card .actions > button { max-width: 100%; }
 
 .tablist label.add-type { white-space: nowrap; flex: 0 0 auto; }
 
@@ -340,7 +340,26 @@ button.sr-only {
 
 details.more { position: relative; }
 
-details.more[open] { display: flex; flex-direction: column; gap: var(--s2); align-items: stretch; }
+details.more .menu {
+  position: absolute;
+  z-index: 5;
+  right: 0;
+  top: calc(100% + 0.35rem);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--s2);
+  min-width: 12rem;
+  max-width: min(18rem, 100vw);
+  padding: var(--s2);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+
+details.more .menu button,
+details.more .menu label { justify-content: flex-start; }
 
 .outlet-line { display: grid; grid-template-columns: minmax(6rem, 1fr) auto auto auto; gap: var(--s2); align-items: center; }
 

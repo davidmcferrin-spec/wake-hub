@@ -64,7 +64,9 @@ def test_every_hardware_type_shows_its_controls(live_server, hub):
         expect(page, "Kasa Plug", ["On", "Off"])
         expect(page, "Hall UPS", ["Status", "Bank on", "Bank off"])
         expect(page, "Den Roku", ["On", "Off", "Toggle", "Status"])
-        _card(page, "Bare AMT").locator("button", has_text="Open").click()
+        bare = _card(page, "Bare AMT")
+        bare.locator("summary", has_text="More").click()
+        bare.locator("button", has_text="Open").click()
         page.wait_for_selector("#back-inventory")
         for label in ["Power on", "Off", "Reset", "Off hard", "Power cycle", "Read status"]:
             assert page.locator("button", has_text=label).count() >= 1

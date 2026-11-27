@@ -418,10 +418,9 @@ function renderPower() {
     name: pdu.name,
     meta: pdu.host,
     body: tagChips(pdu.tags),
-    primary: `
-      <button type="button" class="ghost" data-cap="update_pdu" data-fields="credential_profile_id,host,insecure_tls,name,outlet_names,password,port,tags,use_tls,username" data-id="${pdu.id}">Edit</button>
-      <button type="button" class="ghost" data-cap="refresh_pdu_outlet_names" data-fields="" data-id="${pdu.id}">Refresh names from device</button>`,
+    primary: `<button type="button" class="ghost" data-cap="refresh_pdu_outlet_names" data-fields="" data-id="${pdu.id}">Refresh names from device</button>`,
     more: `
+      <button type="button" class="ghost" data-cap="update_pdu" data-fields="credential_profile_id,host,insecure_tls,name,outlet_names,password,port,tags,use_tls,username" data-id="${pdu.id}">Edit</button>
       <button type="button" class="ghost" data-cap="list_pdu_outlets" data-fields="" data-id="${pdu.id}" hidden>Show outlets</button>
       <button type="button" class="danger delete" data-cap="remove_pdu" data-fields="" data-id="${pdu.id}">Delete</button>`,
   })).join("");
@@ -431,8 +430,9 @@ function renderPower() {
     name: item.name,
     meta: `${item.host}:${item.port}`,
     body: tagChips(item.tags),
-    primary: `<button type="button" class="ghost" data-cap="update_amt" data-fields="credential_profile_id,device_id,host,insecure_tls,name,password,port,tags,use_tls,username" data-id="${item.id}">Edit</button>`,
-    more: `<button type="button" class="danger delete" data-cap="remove_amt" data-fields="" data-id="${item.id}">Delete</button>`,
+    more: `
+      <button type="button" class="ghost" data-cap="update_amt" data-fields="credential_profile_id,device_id,host,insecure_tls,name,password,port,tags,use_tls,username" data-id="${item.id}">Edit</button>
+      <button type="button" class="danger delete" data-cap="remove_amt" data-fields="" data-id="${item.id}">Delete</button>`,
   })).join("");
   const jetCards = state.power.jetkvms.map((item) => window.recordCard({
     kind: "jetkvm",
@@ -440,8 +440,9 @@ function renderPower() {
     name: item.name,
     meta: item.host,
     body: tagChips(item.tags),
-    primary: `<button type="button" class="ghost" data-cap="update_jetkvm" data-fields="credential_profile_id,device_id,extension,host,insecure_tls,name,password,poll_metrics,port,tags,use_tls,username" data-id="${item.id}">Edit</button>`,
-    more: `<button type="button" class="danger delete" data-cap="remove_jetkvm" data-fields="" data-id="${item.id}">Delete</button>`,
+    more: `
+      <button type="button" class="ghost" data-cap="update_jetkvm" data-fields="credential_profile_id,device_id,extension,host,insecure_tls,name,password,poll_metrics,port,tags,use_tls,username" data-id="${item.id}">Edit</button>
+      <button type="button" class="danger delete" data-cap="remove_jetkvm" data-fields="" data-id="${item.id}">Delete</button>`,
   })).join("");
   const plugCard = (item) => window.recordCard({
     kind: "plug",
@@ -449,8 +450,9 @@ function renderPower() {
     name: item.name,
     meta: `${item.kind} · ${item.host}`,
     body: tagChips(item.tags),
-    primary: `<button type="button" class="ghost" data-cap="update_plug" data-fields="credential_profile_id,device_id,host,insecure_tls,kind,name,password,port,protocol,switch_id,tags,username" data-id="${item.id}">Edit</button>`,
-    more: `<button type="button" class="danger delete" data-cap="remove_plug" data-fields="" data-id="${item.id}">Delete</button>`,
+    more: `
+      <button type="button" class="ghost" data-cap="update_plug" data-fields="credential_profile_id,device_id,host,insecure_tls,kind,name,password,port,protocol,switch_id,tags,username" data-id="${item.id}">Edit</button>
+      <button type="button" class="danger delete" data-cap="remove_plug" data-fields="" data-id="${item.id}">Delete</button>`,
   });
   const shellyPlugs = state.power.plugs.filter((item) => item.kind !== "kasa");
   const kasaPlugs = state.power.plugs.filter((item) => item.kind === "kasa");
@@ -460,8 +462,9 @@ function renderPower() {
     name: item.name,
     meta: `SNMP ${item.snmp_version} · ${item.host}`,
     body: tagChips(item.tags),
-    primary: `<button type="button" class="ghost" data-cap="update_ups" data-fields="community,credential_profile_id,device_id,host,name,port,snmp_version,tags,v3_auth,v3_auth_proto,v3_priv,v3_priv_proto,v3_user" data-id="${item.id}">Edit</button>`,
-    more: `<button type="button" class="danger delete" data-cap="remove_ups" data-fields="" data-id="${item.id}">Delete</button>`,
+    more: `
+      <button type="button" class="ghost" data-cap="update_ups" data-fields="community,credential_profile_id,device_id,host,name,port,snmp_version,tags,v3_auth,v3_auth_proto,v3_priv,v3_priv_proto,v3_user" data-id="${item.id}">Edit</button>
+      <button type="button" class="danger delete" data-cap="remove_ups" data-fields="" data-id="${item.id}">Delete</button>`,
   })).join("");
   const rokuCards = (state.power.rokus || []).map((item) => window.recordCard({
     kind: "roku",
@@ -469,8 +472,9 @@ function renderPower() {
     name: item.name,
     meta: `${item.host}:${item.port}`,
     body: tagChips(item.tags),
-    primary: `<button type="button" class="ghost" data-cap="update_roku" data-fields="device_id,host,name,port,tags" data-id="${item.id}">Edit</button>`,
-    more: `<button type="button" class="danger delete" data-cap="remove_roku" data-fields="" data-id="${item.id}">Delete</button>`,
+    more: `
+      <button type="button" class="ghost" data-cap="update_roku" data-fields="device_id,host,name,port,tags" data-id="${item.id}">Edit</button>
+      <button type="button" class="danger delete" data-cap="remove_roku" data-fields="" data-id="${item.id}">Delete</button>`,
   })).join("");
   const counts = {
     pdu: state.power.pdus.length,

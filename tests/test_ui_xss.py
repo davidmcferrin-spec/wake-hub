@@ -44,8 +44,20 @@ def test_names_from_the_user_are_not_html(live_server, hub):
         assert page.evaluate("() => window.__xss") is None
         assert page.locator("img[src='x']").count() == 0
         page.click("aside button[data-page=devices]")
+        page.wait_for_selector("#device-search")
+        page.wait_for_function(
+            """() => {
+              const node = document.querySelector("#device-search");
+              if (!node) return false;
+              const box = node.getBoundingClientRect();
+              const mark = [box.x, box.y, box.width].join(",");
+              const previous = node.getAttribute("data-settled");
+              node.setAttribute("data-settled", mark);
+              return previous === mark && box.width > 0;
+            }"""
+        )
         page.locator("article summary", has_text="More").click()
-        page.wait_for_selector("button[data-cap=get_device]")
+        page.locator("button[data-cap=get_device]").wait_for(state="visible")
         page.click("button[data-cap=get_device]")
         page.wait_for_selector("#device-form")
         assert page.evaluate("() => window.__xss") is None

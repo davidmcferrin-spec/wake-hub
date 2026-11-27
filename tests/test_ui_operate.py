@@ -79,7 +79,7 @@ def test_devices_operate_and_hardware_is_setup_only(live_server, hub):
         page.click("button[data-cap=ui_login]")
         page.wait_for_selector("#device-search")
         checks = {
-            "Office PC": (["Wake", "Off", "Reset"], ".pill"),
+            "Office PC": (["Wake", "Off"], ".pill"),
             "Den Roku": (["On", "Off", "Toggle"], "[data-live-status]"),
             "Lamp Plug": (["On", "Off"], "[data-live-status]"),
             "Bare AMT": (["Power on", "Off", "Reset"], "[data-live-status]"),

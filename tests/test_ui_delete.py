@@ -54,7 +54,9 @@ def test_delete_button_names_the_device_and_the_salvos(live_server, hub):
             page.click("#delete-selected")
         assert "Delete Lamp?" in messages[1]
         assert page.locator("article", has_text="Lamp").count() == 1
-        page.locator("article", has_text="Lamp").locator("button", has_text="Open").click()
+        lamp = page.locator("article", has_text="Lamp")
+        lamp.locator("summary", has_text="More").click()
+        lamp.locator("button", has_text="Open").click()
         page.wait_for_selector("#back-inventory")
         assert page.locator("button.delete", has_text="Delete Lamp").count() >= 1
         browser.close()

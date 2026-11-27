@@ -478,44 +478,46 @@ def update_device(hub: Hub, device_id: int, payload: dict[str, Any]) -> dict[str
         fields["wake_strategy"] = payload["wake_strategy"]
     if "power_method" in payload and payload["power_method"] is not None:
         fields["power_method"] = _power_method(payload["power_method"])
-    if "methods" in payload and payload["methods"] is not None:
-        previous = json.loads(row["methods"] or "[]")
-        synced = sync_device_methods(hub, device_id, fields["name"], payload["methods"], previous)
-        fields["methods"] = json.dumps(normalize_methods(synced))
+    # Reject a conflicting device before any hardware row is written. The writes then share one transaction.
     assert_available(hub, "device", fields["host"], fields["mac"], exclude_id=device_id)
     try:
-        hub.write(
-            """
-            UPDATE devices SET
-                name=?, mac=?, host=?, broadcast=?, wol_port=?, secureon_enc=?, notes=?, tags=?,
-                enabled=?, reach_mode=?, reach_port=?, reach_timeout=?, reach_timeout_set=?, wake_strategy=?, power_method=?, methods=?,
-                updated_at=?
-            WHERE id=?
-            """,
-            (
-                fields["name"],
-                fields["mac"],
-                fields["host"],
-                fields["broadcast"],
-                fields["wol_port"],
-                fields["secureon_enc"],
-                fields["notes"],
-                fields["tags"],
-                fields["enabled"],
-                fields["reach_mode"],
-                fields["reach_port"],
-                fields["reach_timeout"],
-                fields["reach_timeout_set"],
-                fields["wake_strategy"],
-                fields["power_method"],
-                fields["methods"],
-                utcnow(),
-                device_id,
-            ),
-        )
+        with hub.transaction():
+            if "methods" in payload and payload["methods"] is not None:
+                previous = json.loads(row["methods"] or "[]")
+                synced = sync_device_methods(hub, device_id, fields["name"], payload["methods"], previous)
+                fields["methods"] = json.dumps(normalize_methods(synced))
+            hub.write(
+                """
+                UPDATE devices SET
+                    name=?, mac=?, host=?, broadcast=?, wol_port=?, secureon_enc=?, notes=?, tags=?,
+                    enabled=?, reach_mode=?, reach_port=?, reach_timeout=?, reach_timeout_set=?, wake_strategy=?, power_method=?, methods=?,
+                    updated_at=?
+                WHERE id=?
+                """,
+                (
+                    fields["name"],
+                    fields["mac"],
+                    fields["host"],
+                    fields["broadcast"],
+                    fields["wol_port"],
+                    fields["secureon_enc"],
+                    fields["notes"],
+                    fields["tags"],
+                    fields["enabled"],
+                    fields["reach_mode"],
+                    fields["reach_port"],
+                    fields["reach_timeout"],
+                    fields["reach_timeout_set"],
+                    fields["wake_strategy"],
+                    fields["power_method"],
+                    fields["methods"],
+                    utcnow(),
+                    device_id,
+                ),
+            )
+            bind_identity(hub, "device", device_id, fields["host"], fields["mac"])
     except sqlite3.IntegrityError as exc:
         raise Conflict(f"a device named {fields['name']} already exists") from exc
-    bind_identity(hub, "device", device_id, fields["host"], fields["mac"])
     return get_device(hub, device_id)
 
 
