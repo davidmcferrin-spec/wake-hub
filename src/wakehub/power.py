@@ -45,7 +45,7 @@ def dispatch_device(
     require_confirm(action, confirm)
     row = _get_row(hub, device_id)
     _require_enabled(hub, row, source, action)
-    chosen = _select_method(json.loads(row["methods"]), method, action)
+    chosen = _select_method(json.loads(row["methods"]), method, action, device_name=row["name"])
     if chosen["kind"] == "wol":
         if action != "on":
             raise WakeHubError("Wake-on-LAN only supports action on")
@@ -117,7 +117,26 @@ _ACTION_KINDS = {
 _POWER_CUT = {"plug", "pdu", "ups"}
 
 
-def _select_method(methods: list[dict[str, Any]], requested: str, action: str) -> dict[str, Any]:
+_METHOD_LABEL = {
+    "wol": "Wake-on-LAN",
+    "amt": "AMT",
+    "pdu": "PDU outlet",
+    "plug": "plug",
+    "jetkvm": "JetKVM",
+    "ups": "UPS",
+    "roku": "Roku",
+}
+
+_ACTION_PHRASE = {
+    "on": "wake",
+    "off": "turn off",
+    "reboot": "reset",
+    "cycle": "power cycle",
+    "shutdown": "shut down",
+}
+
+
+def _select_method(methods: list[dict[str, Any]], requested: str, action: str, *, device_name: str = "this device") -> dict[str, Any]:
     capable = [item for item in methods if item.get("kind") in _ACTION_KINDS.get(action, set())]
     if requested in {None, "", "auto"}:
         if not capable:
@@ -128,8 +147,12 @@ def _select_method(methods: list[dict[str, Any]], requested: str, action: str) -
                 return gentle[0]
         return capable[0]
     found = next((item for item in methods if item.get("kind") == requested), None)
-    if found is None or found.get("kind") not in _ACTION_KINDS.get(action, set()):
+    if found is None:
         raise WakeHubError(f"device has no {requested} power method")
+    if found.get("kind") not in _ACTION_KINDS.get(action, set()):
+        label = _METHOD_LABEL.get(requested, requested)
+        phrase = _ACTION_PHRASE.get(action, action)
+        raise WakeHubError(f"{label} can't {phrase} {device_name}")
     return found
 
 

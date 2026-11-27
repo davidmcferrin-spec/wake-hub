@@ -68,6 +68,8 @@ h1 {
 
 .salvo-layout { padding: var(--s4); }
 
+.salvo-layout > .lede { margin-top: 0; }
+
 .gate {
   min-height: 100vh;
   display: grid;
@@ -372,7 +374,7 @@ button.sr-only {
 }
 
 .more .menu button,
-.more .menu label { justify-content: flex-start; }
+.more .menu label { justify-content: flex-start; margin: 0; }
 
 .outlet-line { display: grid; grid-template-columns: minmax(6rem, 1fr) auto auto auto; gap: var(--s2); align-items: center; }
 

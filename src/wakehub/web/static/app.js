@@ -140,15 +140,27 @@ function methodName(kind) {
   return { wol: "Wake-on-LAN", amt: "AMT", pdu: "PDU outlet", plug: "plug", jetkvm: "JetKVM", ups: "UPS", roku: "Roku" }[kind] || kind;
 }
 
+const ACTION_KINDS = {
+  on: ["wol", "plug", "pdu", "amt", "ups", "jetkvm", "roku"],
+  off: ["plug", "pdu", "amt", "ups", "jetkvm", "roku"],
+  reboot: ["amt", "plug", "pdu", "ups", "jetkvm"],
+  cycle: ["plug", "pdu", "amt", "ups", "jetkvm"],
+  shutdown: ["amt", "ups", "jetkvm"],
+};
+
+function methodsForAction(device, action) {
+  const can = ACTION_KINDS[action] || [];
+  const seen = [];
+  ((device && device.methods) || [{ kind: "wol" }]).forEach((item) => {
+    const kind = item && item.kind;
+    if (!kind || seen.includes(kind) || !can.includes(kind)) return;
+    seen.push(kind);
+  });
+  return seen;
+}
+
 function methodForAction(device, action) {
-  const can = {
-    on: ["wol", "plug", "pdu", "amt", "ups", "jetkvm", "roku"],
-    off: ["plug", "pdu", "amt", "ups", "jetkvm", "roku"],
-    reboot: ["amt", "plug", "pdu", "ups", "jetkvm"],
-    cycle: ["plug", "pdu", "amt", "ups", "jetkvm"],
-    shutdown: ["amt", "ups", "jetkvm"],
-  }[action] || [];
-  const capable = ((device && device.methods) || [{ kind: "wol" }]).filter((item) => can.includes(item.kind));
+  const capable = ((device && device.methods) || [{ kind: "wol" }]).filter((item) => methodsForAction(device, action).includes(item.kind));
   if (action === "off" || action === "reboot") {
     const gentle = capable.find((item) => !["plug", "pdu", "ups"].includes(item.kind));
     if (gentle) return gentle;
@@ -156,21 +168,10 @@ function methodForAction(device, action) {
   return capable[0] || null;
 }
 
-function useMenuMethods(device) {
-  const capable = {
-    off: ["plug", "pdu", "amt", "ups", "jetkvm", "roku"],
-    reboot: ["amt", "plug", "pdu", "ups", "jetkvm"],
-    cycle: ["plug", "pdu", "amt", "ups", "jetkvm"],
-    shutdown: ["amt", "ups", "jetkvm"],
-  };
-  const seen = [];
-  ((device && device.methods) || []).forEach((item) => {
-    const kind = item.kind;
-    if (!kind || kind === "wol" || seen.includes(kind)) return;
-    const fits = Object.values(capable).some((kinds) => kinds.includes(kind));
-    if (fits) seen.push(kind);
-  });
-  return seen;
+function methodSelect(device, action, label) {
+  if (!methodForAction(device, action)) return "";
+  const choices = methodsForAction(device, action).map((kind) => `<option value="${escapeHtml(kind)}">${escapeHtml(methodName(kind))}</option>`).join("");
+  return `<label>${escapeHtml(label)} <select class="action-method" data-action="${action}" aria-label="${escapeHtml(label)} method"><option value="auto">Auto</option>${choices}</select></label>`;
 }
 
 function actionButton(device, action, verb, tone) {
@@ -215,7 +216,6 @@ function recordCard(spec) {
 window.recordCard = recordCard;
 
 function deviceCard(device) {
-  const choices = useMenuMethods(device).map((kind) => `<option value="${escapeHtml(kind)}">${escapeHtml(methodName(kind))}</option>`).join("");
   return recordCard({
     kind: "device",
     id: device.id,
@@ -226,7 +226,11 @@ function deviceCard(device) {
     body: `${powerBlock(device)}${tagChips(device.tags)}`,
     primary: `${actionButton(device, "on", "Wake", "primary")}${actionButton(device, "off", "Off", "danger")}${actionButton(device, "reboot", "Reset", "danger")}`,
     more: `
-      <label>Use <select class="action-method" aria-label="Method for the next action"><option value="auto">Auto</option>${choices}</select></label>
+      ${methodSelect(device, "on", "Wake")}
+      ${methodSelect(device, "off", "Off")}
+      ${methodSelect(device, "reboot", "Reset")}
+      ${methodSelect(device, "cycle", "Cycle")}
+      ${methodSelect(device, "shutdown", "Shutdown")}
       <button type="button" class="ghost" data-open-kind="device" data-id="${device.id}">Open</button>
       <button type="button" class="ghost" data-cap="get_device" data-fields="" data-id="${device.id}" aria-label="Edit ${escapeHtml(device.name)}">Edit</button>
       ${actionButton(device, "cycle", "Cycle", "danger")}

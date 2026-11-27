@@ -983,20 +983,42 @@ window.CONTROL_HANDLERS = {
   list_metrics(el) { return window.handlePowerCap(el); },
 };
 
+function powerNote(action, kind) {
+  if (action === "off") {
+    if (kind === "amt") return "hard power off";
+    if (kind === "plug" || kind === "pdu" || kind === "ups") return "cuts power";
+    if (kind === "jetkvm") return "holds the power button";
+    return "power off";
+  }
+  if (action === "shutdown") {
+    if (kind === "jetkvm") return "presses the power button";
+    return "graceful";
+  }
+  return "";
+}
+
 function powerConfirm(device, action, method) {
-  const verb = { off: "Shut down", shutdown: "Shut down", reboot: "Reset", cycle: "Power cycle" }[action] || action;
+  const verb = { off: "Turn off", shutdown: "Shut down", reboot: "Reset", cycle: "Power cycle" }[action] || action;
   const name = device && device.name ? device.name : "this device";
   const chosen = method && method !== "auto" ? method : ((typeof methodForAction === "function" && methodForAction(device, action)) || {}).kind;
   const via = chosen ? ` via ${chosen === "wol" ? "WOL" : (typeof methodName === "function" ? methodName(chosen) : chosen)}` : "";
-  return `${verb} ${name}${via}?`;
+  const note = powerNote(action, chosen);
+  return note ? `${verb} ${name}${via} (${note})?` : `${verb} ${name}${via}?`;
+}
+
+function chosenMethod(article, device, action) {
+  const pick = article && article.querySelector(`.action-method[data-action="${action}"]`);
+  const method = (pick && pick.value) || "auto";
+  const allowed = typeof methodsForAction === "function" ? methodsForAction(device, action) : null;
+  if (method !== "auto" && allowed && !allowed.includes(method)) return "auto";
+  return method;
 }
 
 async function sendPower(el) {
   const id = Number(el.dataset.id);
   const action = el.dataset.action || "on";
   const device = (state.devices || []).find((item) => item.id === id);
-  const pick = el.closest("article") && el.closest("article").querySelector(".action-method");
-  const method = (pick && pick.value) || "auto";
+  const method = chosenMethod(el.closest("article"), device, action);
   const destructive = action !== "on";
   if (destructive && !window.confirm(powerConfirm(device, action, method))) return;
   const result = await api("POST", `/api/v1/devices/${id}/power`, { action, method, confirm: destructive });

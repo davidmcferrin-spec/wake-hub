@@ -636,7 +636,7 @@ def wake_device(
     if requested != "wol":
         from wakehub.power import _select_method, dispatch_device
 
-        chosen = _select_method(json.loads(row["methods"] or "[]"), requested, "on")
+        chosen = _select_method(json.loads(row["methods"] or "[]"), requested, "on", device_name=row["name"])
         if chosen["kind"] != "wol":
             return dispatch_device(hub, device_id, action="on", method=chosen["kind"], confirm=False, source=source)
     return send_wake_packet(hub, device_id, source=source, timeout=timeout)
