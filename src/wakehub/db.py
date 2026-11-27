@@ -196,5 +196,11 @@ def connect(path: Path) -> sqlite3.Connection:
     _ensure_column(conn, "jetkvm_endpoints", "username", "TEXT NOT NULL DEFAULT ''")
     for table in ("pdus", "amt_endpoints", "jetkvm_endpoints", "plugs", "ups_cards"):
         _ensure_column(conn, table, "credential_profile_id", "INTEGER")
+        _ensure_column(conn, table, "host_key", "TEXT")
+    _ensure_column(conn, "devices", "host_key", "TEXT")
+    _ensure_column(conn, "devices", "mac_key", "TEXT")
+    from wakehub.identity import migrate_identity
+
+    migrate_identity(conn)
     conn.commit()
     return conn

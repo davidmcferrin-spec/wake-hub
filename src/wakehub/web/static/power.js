@@ -33,15 +33,20 @@ function renderScan() {
   });
   const sections = Object.keys(groups).sort().map((key) => {
     const cards = groups[key].map(({ host, suggestion }) => {
-      const known = host.known ? `Already in inventory as ${host.known.name}` : "New";
+      const matches = host.matches || (host.known ? [host.known] : []);
       const addKind = (suggestion.prefill && suggestion.prefill.kind) || "device";
-      const add = host.known ? "" : `<button type="button" data-cap="add_from_scan" data-fields="community,kind,name,password,plug_kind,username" data-scan="${state.scan.id}" data-host="${host.id}" data-kind="${escapeHtml(addKind)}" data-plug-kind="${escapeHtml((suggestion.prefill && suggestion.prefill.plug_kind) || "")}">Add</button>`;
+      const blocked = matches.filter((item) => item.kind === addKind);
+      const known = matches.length
+        ? matches.map((item) => `Already a ${item.kind}: ${item.name}`).join("; ")
+        : "New";
+      const links = matches.map((item) => `<button type="button" class="ghost" data-open-kind="${escapeHtml(item.kind)}" data-id="${item.id}">Open ${escapeHtml(item.name)}</button>`).join("");
+      const add = blocked.length ? "" : `<button type="button" data-cap="add_from_scan" data-fields="community,kind,name,password,plug_kind,username" data-scan="${state.scan.id}" data-host="${host.id}" data-kind="${escapeHtml(addKind)}" data-plug-kind="${escapeHtml((suggestion.prefill && suggestion.prefill.plug_kind) || "")}">Add</button>`;
       return `
       <article class="card">
         <header><h2>${escapeHtml(host.ip)}</h2><span class="pill">${escapeHtml(suggestion.confidence || "")}</span></header>
         <p class="meta">${escapeHtml(host.vendor || "unknown vendor")} · ${escapeHtml(host.mac || "no MAC")} · ${escapeHtml(known)}</p>
         <p class="sub">${escapeHtml(suggestion.reason || "")}</p>
-        <div class="row-actions">${add}</div>
+        <div class="row-actions">${links}${add}</div>
       </article>`;
     }).join("");
     return `<section><h2>${escapeHtml(key)}</h2><div class="grid">${cards}</div></section>`;
@@ -387,7 +392,7 @@ window.handlePowerCap = async function handlePowerCap(button) {
     if (state.page === "power") renderPower();
     if (state.page === "scan") renderScan();
   } catch (error) {
-    showBanner(error.message, true);
+    showBanner(error.message, true, error.existing);
   }
   return true;
 };
@@ -420,7 +425,7 @@ document.body.addEventListener("submit", async (event) => {
       renderPower();
       showBanner("Saved");
     } catch (error) {
-      showBanner(error.message, true);
+      showBanner(error.message, true, error.existing);
     }
     return;
   }
@@ -463,7 +468,7 @@ document.body.addEventListener("submit", async (event) => {
       renderScan();
     }
   } catch (error) {
-    showBanner(error.message, true);
+    showBanner(error.message, true, error.existing);
   }
 });
 

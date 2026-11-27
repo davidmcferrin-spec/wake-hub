@@ -130,12 +130,29 @@ def get_scan(hub: Hub, scan_id: int) -> dict[str, Any]:
         raise NotFound(f"scan {scan_id} was not found")
     hosts = hub.query("SELECT * FROM scan_hosts WHERE scan_id = ? ORDER BY ip", (scan_id,))
     result = _public_scan(row)
+    from wakehub.identity import host_key as normalize_host
+    from wakehub.identity import mac_key as normalize_mac_key
+
     known = _inventory_index(hub)
     result["hosts"] = []
     for host in hosts:
         detail = json.loads(host["detail"])
         ip = host["ip"]
-        mac = (host["mac"] or "").upper()
+        mac = host["mac"] or ""
+        matches: list[dict[str, Any]] = []
+        seen: set[tuple[str, int]] = set()
+        keys = [normalize_host(ip)]
+        if mac:
+            try:
+                keys.append(normalize_mac_key(mac))
+            except WakeHubError:
+                pass
+        for key in keys:
+            for item in known.get(key) or []:
+                marker = (item["kind"], item["id"])
+                if marker not in seen:
+                    seen.add(marker)
+                    matches.append(item)
         result["hosts"].append(
             {
                 "id": host["id"],
@@ -145,7 +162,8 @@ def get_scan(hub: Hub, scan_id: int) -> dict[str, Any]:
                 "vendor": host["vendor"],
                 "kinds": json.loads(host["kinds"]),
                 "detail": detail,
-                "known": known.get(ip) or (known.get(mac) if mac else None),
+                "matches": matches,
+                "known": matches[0] if matches else None,
             }
         )
     return result
@@ -355,17 +373,28 @@ def _snmp_cyberpower(ip: str) -> bool:
     return "1.3.6.1.4.1.3808" in text
 
 
-def _inventory_index(hub: Hub) -> dict[str, dict[str, Any]]:
-    index: dict[str, dict[str, Any]] = {}
+def _inventory_index(hub: Hub) -> dict[str, list[dict[str, Any]]]:
+    from wakehub.identity import host_key as normalize_host
+    from wakehub.identity import mac_key as normalize_mac_key
+
+    index: dict[str, list[dict[str, Any]]] = {}
 
     def remember(key: str | None, kind: str, item_id: int, name: str) -> None:
-        if key:
-            index.setdefault(str(key), {"kind": kind, "id": item_id, "name": name})
+        if not key:
+            return
+        bucket = index.setdefault(key, [])
+        if not any(item["kind"] == kind and item["id"] == item_id for item in bucket):
+            bucket.append({"kind": kind, "id": item_id, "name": name})
 
-    for row in hub.query("SELECT id, name, host, mac FROM devices"):
-        remember(row["host"], "device", row["id"], row["name"])
-        if row["mac"]:
-            index.setdefault(row["mac"].upper(), {"kind": "device", "id": row["id"], "name": row["name"]})
+    for row in hub.query("SELECT id, name, host, mac, host_key, mac_key FROM devices"):
+        remember(row["host_key"] or normalize_host(row["host"]), "device", row["id"], row["name"])
+        mac = row["mac_key"]
+        if not mac and row["mac"]:
+            try:
+                mac = normalize_mac_key(row["mac"])
+            except WakeHubError:
+                mac = None
+        remember(mac, "device", row["id"], row["name"])
     for table, kind in (
         ("pdus", "pdu"),
         ("amt_endpoints", "amt"),
@@ -373,8 +402,8 @@ def _inventory_index(hub: Hub) -> dict[str, dict[str, Any]]:
         ("plugs", "plug"),
         ("ups_cards", "ups"),
     ):
-        for row in hub.query(f"SELECT id, name, host FROM {table}"):
-            index.setdefault(row["host"], {"kind": kind, "id": row["id"], "name": row["name"]})
+        for row in hub.query(f"SELECT id, name, host, host_key FROM {table}"):
+            remember(row["host_key"] or normalize_host(row["host"]), kind, row["id"], row["name"])
     return index
 
 

@@ -14,6 +14,7 @@ from wakehub.clients.ups import PysnmpTransport, UpsClient
 from wakehub.credentials import remember_profile
 from wakehub.crypto import decrypt, encrypt
 from wakehub.errors import NotFound, WakeHubError
+from wakehub.identity import assert_available, bind_identity
 from wakehub.hub import Hub
 from wakehub.inventory import host_for_url, utcnow, validate_host
 
@@ -195,6 +196,7 @@ def add_pdu(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
             "outlet_names": json.dumps(payload.get("outlet_names") or {}),
         }
     )
+    assert_available(hub, "pdu", fields["host"])
     item_id = hub.write(
         """
         INSERT INTO pdus (name, host, port, use_tls, insecure_tls, username, password_enc, outlet_names, created_at, updated_at)
@@ -202,6 +204,7 @@ def add_pdu(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
         """,
         tuple(fields[key] for key in ("name", "host", "port", "use_tls", "insecure_tls", "username", "password_enc", "outlet_names", "created_at", "updated_at")),
     )
+    bind_identity(hub, "pdu", item_id, fields["host"])
     remember_profile(hub, "pdus", item_id, payload)
     return public_pdu(_row(hub, "pdu", item_id))
 
@@ -212,6 +215,8 @@ def update_pdu(hub: Hub, pdu_id: int, payload: dict[str, Any]) -> dict[str, Any]
     if "password" in payload:
         password = _secret(hub, payload.get("password"))
     names = payload.get("outlet_names")
+    host = _updated_host(payload, current)
+    assert_available(hub, "pdu", host, exclude_id=pdu_id)
     hub.write(
         """
         UPDATE pdus SET name=?, host=?, port=?, use_tls=?, insecure_tls=?, username=?, password_enc=?, outlet_names=?, updated_at=?
@@ -219,7 +224,7 @@ def update_pdu(hub: Hub, pdu_id: int, payload: dict[str, Any]) -> dict[str, Any]
         """,
         (
             payload.get("name") or current["name"],
-            _updated_host(payload, current),
+            host,
             int(payload.get("port") if payload.get("port") is not None else current["port"]),
             int(payload["use_tls"]) if "use_tls" in payload else current["use_tls"],
             int(payload["insecure_tls"]) if "insecure_tls" in payload else current["insecure_tls"],
@@ -230,6 +235,7 @@ def update_pdu(hub: Hub, pdu_id: int, payload: dict[str, Any]) -> dict[str, Any]
             pdu_id,
         ),
     )
+    bind_identity(hub, "pdu", pdu_id, host)
     remember_profile(hub, "pdus", pdu_id, payload)
     return public_pdu(_row(hub, "pdu", pdu_id))
 
@@ -283,6 +289,7 @@ def add_amt(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
             "device_id": payload.get("device_id"),
         }
     )
+    assert_available(hub, "amt", fields["host"])
     item_id = hub.write(
         """
         INSERT INTO amt_endpoints (
@@ -303,6 +310,7 @@ def add_amt(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
         ),
     )
     _link(hub, fields["device_id"], {"kind": "amt", "amt_id": item_id})
+    bind_identity(hub, "amt", item_id, fields["host"])
     remember_profile(hub, "amt_endpoints", item_id, payload)
     return public_amt(_row(hub, "amt", item_id))
 
@@ -312,6 +320,8 @@ def update_amt(hub: Hub, amt_id: int, payload: dict[str, Any]) -> dict[str, Any]
     password = current["password_enc"] if "password" not in payload else _secret(hub, payload.get("password"))
     if password is None:
         raise WakeHubError("AMT password is required")
+    host = _updated_host(payload, current)
+    assert_available(hub, "amt", host, exclude_id=amt_id)
     hub.write(
         """
         UPDATE amt_endpoints
@@ -320,7 +330,7 @@ def update_amt(hub: Hub, amt_id: int, payload: dict[str, Any]) -> dict[str, Any]
         """,
         (
             payload.get("name") or current["name"],
-            _updated_host(payload, current),
+            host,
             int(payload.get("port") if payload.get("port") is not None else current["port"]),
             int(payload["use_tls"]) if "use_tls" in payload else current["use_tls"],
             int(payload["insecure_tls"]) if "insecure_tls" in payload else current["insecure_tls"],
@@ -331,6 +341,7 @@ def update_amt(hub: Hub, amt_id: int, payload: dict[str, Any]) -> dict[str, Any]
             amt_id,
         ),
     )
+    bind_identity(hub, "amt", amt_id, host)
     remember_profile(hub, "amt_endpoints", amt_id, payload)
     return public_amt(_row(hub, "amt", amt_id))
 
@@ -373,6 +384,7 @@ def add_jetkvm(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
             "device_id": payload.get("device_id"),
         }
     )
+    assert_available(hub, "jetkvm", fields["host"])
     item_id = hub.write(
         """
         INSERT INTO jetkvm_endpoints (
@@ -395,6 +407,7 @@ def add_jetkvm(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
         ),
     )
     _link(hub, fields["device_id"], {"kind": "jetkvm", "jetkvm_id": item_id})
+    bind_identity(hub, "jetkvm", item_id, fields["host"])
     remember_profile(hub, "jetkvm_endpoints", item_id, payload)
     return public_jetkvm(_row(hub, "jetkvm", item_id))
 
@@ -404,6 +417,8 @@ def update_jetkvm(hub: Hub, jetkvm_id: int, payload: dict[str, Any]) -> dict[str
     password = current["password_enc"] if "password" not in payload else _secret(hub, payload.get("password"))
     extension = _jet_extension(payload["extension"]) if "extension" in payload else (current["extension"] or "")
     poll_metrics = (1 if payload.get("poll_metrics") else 0) if "poll_metrics" in payload else current["poll_metrics"]
+    host = _updated_host(payload, current)
+    assert_available(hub, "jetkvm", host, exclude_id=jetkvm_id)
     hub.write(
         """
         UPDATE jetkvm_endpoints
@@ -412,7 +427,7 @@ def update_jetkvm(hub: Hub, jetkvm_id: int, payload: dict[str, Any]) -> dict[str
         """,
         (
             payload.get("name") or current["name"],
-            _updated_host(payload, current),
+            host,
             int(payload.get("port") if payload.get("port") is not None else current["port"]),
             int(payload["use_tls"]) if "use_tls" in payload else current["use_tls"],
             int(payload["insecure_tls"]) if "insecure_tls" in payload else current["insecure_tls"],
@@ -425,6 +440,7 @@ def update_jetkvm(hub: Hub, jetkvm_id: int, payload: dict[str, Any]) -> dict[str
             jetkvm_id,
         ),
     )
+    bind_identity(hub, "jetkvm", jetkvm_id, host)
     remember_profile(hub, "jetkvm_endpoints", jetkvm_id, payload)
     return public_jetkvm(_row(hub, "jetkvm", jetkvm_id))
 
@@ -473,6 +489,7 @@ def add_plug(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
             "device_id": payload.get("device_id"),
         }
     )
+    assert_available(hub, "plug", fields["host"])
     item_id = hub.write(
         """
         INSERT INTO plugs (
@@ -495,6 +512,7 @@ def add_plug(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
         ),
     )
     _link(hub, fields["device_id"], {"kind": "plug", "plug_id": item_id})
+    bind_identity(hub, "plug", item_id, fields["host"])
     remember_profile(hub, "plugs", item_id, payload)
     return public_plug(_row(hub, "plug", item_id))
 
@@ -505,6 +523,8 @@ def update_plug(hub: Hub, plug_id: int, payload: dict[str, Any]) -> dict[str, An
     kind = payload.get("kind") or current["kind"]
     if kind not in {"shelly", "kasa"}:
         raise WakeHubError("plug kind must be shelly or kasa")
+    host = _updated_host(payload, current)
+    assert_available(hub, "plug", host, exclude_id=plug_id)
     hub.write(
         """
         UPDATE plugs
@@ -514,7 +534,7 @@ def update_plug(hub: Hub, plug_id: int, payload: dict[str, Any]) -> dict[str, An
         (
             payload.get("name") or current["name"],
             kind,
-            _updated_host(payload, current),
+            host,
             int(payload.get("port") if payload.get("port") is not None else current["port"]),
             payload.get("username") if payload.get("username") is not None else current["username"],
             password,
@@ -526,6 +546,7 @@ def update_plug(hub: Hub, plug_id: int, payload: dict[str, Any]) -> dict[str, An
             plug_id,
         ),
     )
+    bind_identity(hub, "plug", plug_id, host)
     remember_profile(hub, "plugs", plug_id, payload)
     return public_plug(_row(hub, "plug", plug_id))
 
@@ -577,6 +598,7 @@ def add_ups(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
             "device_id": payload.get("device_id"),
         }
     )
+    assert_available(hub, "ups", fields["host"])
     item_id = hub.write(
         """
         INSERT INTO ups_cards (
@@ -601,6 +623,7 @@ def add_ups(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
         ),
     )
     _link(hub, fields["device_id"], {"kind": "ups", "ups_id": item_id})
+    bind_identity(hub, "ups", item_id, fields["host"])
     remember_profile(hub, "ups_cards", item_id, payload)
     return public_ups(_row(hub, "ups", item_id))
 
@@ -610,6 +633,8 @@ def update_ups(hub: Hub, ups_id: int, payload: dict[str, Any]) -> dict[str, Any]
     version = payload.get("snmp_version") or current["snmp_version"]
     if version not in {"1", "2c", "3"}:
         raise WakeHubError("SNMP version must be 1, 2c, or 3")
+    host = _updated_host(payload, current)
+    assert_available(hub, "ups", host, exclude_id=ups_id)
     hub.write(
         """
         UPDATE ups_cards SET
@@ -619,7 +644,7 @@ def update_ups(hub: Hub, ups_id: int, payload: dict[str, Any]) -> dict[str, Any]
         """,
         (
             payload.get("name") or current["name"],
-            _updated_host(payload, current),
+            host,
             int(payload.get("port") if payload.get("port") is not None else current["port"]),
             version,
             current["community_enc"] if "community" not in payload else _secret(hub, payload.get("community")),
@@ -633,6 +658,7 @@ def update_ups(hub: Hub, ups_id: int, payload: dict[str, Any]) -> dict[str, Any]
             ups_id,
         ),
     )
+    bind_identity(hub, "ups", ups_id, host)
     remember_profile(hub, "ups_cards", ups_id, payload)
     return public_ups(_row(hub, "ups", ups_id))
 

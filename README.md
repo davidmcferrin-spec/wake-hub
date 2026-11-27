@@ -36,7 +36,7 @@ Config lives in `/config`. SQLite lives in `/data`.
 
 ## What you can control
 
-- **Inventory.** Name, MAC, host, broadcast, WOL port, optional SecureOn password, notes, tags, enabled flag, and one or more power methods. Disabled devices are listed but cannot be acted on.
+- **Inventory.** Name, MAC, host, broadcast, WOL port, optional SecureOn password, notes, tags, enabled flag, and one or more power methods. Disabled devices are listed but cannot be acted on. A MAC or host can belong to only one device, and a host can belong to only one PDU, AMT endpoint, JetKVM, plug, or UPS. A repeat is a conflict that names the existing record. Hosts and MACs are compared after normalizing case, whitespace, and IPv6 spelling. Rows that were already duplicated are left in place and listed in settings.
 - **Wake-on-LAN.** Magic packet to a directed broadcast on port 9 or 7, then ICMP or a TCP port until the host answers or the timeout ends. `wake_strategy=power_then_wol` turns a linked plug or PDU outlet on before the packet.
 - **Synaccess netBooter.** Add by IP and credentials. List outlets, switch one on, off or reboot. The NP-1601DU reports inlet bank current, not per-outlet current.
 - **Intel AMT / vPro.** Digest auth on port 16992 or 16993. TLS can allow that device's self-signed certificate. Read power state and request on, off, power cycle, reset, or graceful shutdown through WS-Management.

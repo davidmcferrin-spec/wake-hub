@@ -302,7 +302,11 @@ def _start_ui_session(hub: Hub, response: Response) -> None:
 
 
 def _error_response(_request: Request, exc: WakeHubError) -> JSONResponse:
-    return JSONResponse(status_code=exc.status, content={"error": {"code": exc.code, "message": exc.message}})
+    error = {"code": exc.code, "message": exc.message}
+    existing = getattr(exc, "existing", None)
+    if existing:
+        error["existing"] = existing
+    return JSONResponse(status_code=exc.status, content={"error": error})
 
 
 def _public_router() -> APIRouter:

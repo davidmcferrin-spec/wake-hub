@@ -14,6 +14,7 @@ from typing import Any
 
 from wakehub.crypto import decrypt, encrypt
 from wakehub.errors import Conflict, DisabledDevice, NotFound, Unauthorized, WakeHubError, require_confirm
+from wakehub.identity import assert_available, bind_identity
 from wakehub.hub import Hub
 from wakehub.wol import (
     build_magic_packet,
@@ -212,6 +213,7 @@ def _insert_values(hub: Hub, fields: dict[str, Any]) -> dict[str, Any]:
         )
     except sqlite3.IntegrityError as exc:
         raise Conflict(f"a device named {fields['name']} already exists") from exc
+    bind_identity(hub, "device", device_id, fields["host"], fields["mac"])
     return get_device(hub, device_id)
 
 
@@ -243,12 +245,14 @@ def add_device(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
     notes = payload.get("notes") or ""
     if len(notes) > 2000:
         raise WakeHubError("notes must be 2000 characters or fewer")
+    host = _host(payload.get("host"))
+    assert_available(hub, "device", host, mac_norm)
     return _insert_values(
         hub,
         {
             "name": name,
             "mac": mac_norm,
-            "host": _host(payload.get("host")),
+            "host": host,
             "broadcast": _ipv4(payload.get("broadcast") or "255.255.255.255", "broadcast"),
             "wol_port": port,
             "secureon_enc": secureon_enc,
@@ -333,6 +337,7 @@ def update_device(hub: Hub, device_id: int, payload: dict[str, Any]) -> dict[str
         fields["wake_strategy"] = payload["wake_strategy"]
     if "methods" in payload and payload["methods"] is not None:
         fields["methods"] = json.dumps(normalize_methods(payload["methods"]))
+    assert_available(hub, "device", fields["host"], fields["mac"], exclude_id=device_id)
     try:
         hub.write(
             """
@@ -363,6 +368,7 @@ def update_device(hub: Hub, device_id: int, payload: dict[str, Any]) -> dict[str
         )
     except sqlite3.IntegrityError as exc:
         raise Conflict(f"a device named {fields['name']} already exists") from exc
+    bind_identity(hub, "device", device_id, fields["host"], fields["mac"])
     return get_device(hub, device_id)
 
 
@@ -595,7 +601,19 @@ def public_settings(hub: Hub) -> dict[str, Any]:
         "metrics_poll_seconds": int(hub.setting("metrics_poll_seconds", "60") or 60),
         "metrics_retention_days": int(hub.setting("metrics_retention_days", "30") or 30),
         "session_days": int(hub.setting("session_days", "30") or 30),
+        "duplicate_records": _duplicate_records(hub),
     }
+
+
+def _duplicate_records(hub: Hub) -> list[dict[str, Any]]:
+    raw = hub.setting("duplicate_records")
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    return parsed if isinstance(parsed, list) else []
 
 
 def update_settings(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:

@@ -20,15 +20,25 @@ function $(id) {
   return document.getElementById(id);
 }
 
-function showBanner(message, isError) {
+function showBanner(message, isError, existing) {
   const banner = $("banner");
   banner.classList.toggle("error", Boolean(isError));
+  banner.replaceChildren();
   if (!message) {
     banner.classList.add("hidden");
-    banner.textContent = "";
     return;
   }
-  banner.textContent = message;
+  banner.append(document.createTextNode(message));
+  if (existing && existing.id) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "ghost";
+    button.textContent = `Open ${existing.name}`;
+    button.dataset.openKind = existing.kind;
+    button.dataset.id = String(existing.id);
+    banner.append(document.createTextNode(" "));
+    banner.append(button);
+  }
   banner.classList.remove("hidden");
 }
 
@@ -46,7 +56,9 @@ async function api(method, path, body) {
   const data = text ? JSON.parse(text) : null;
   if (!response.ok) {
     const message = data && data.error ? data.error.message : response.statusText;
-    throw new Error(message);
+    const error = new Error(message);
+    error.existing = data && data.error ? data.error.existing : null;
+    throw error;
   }
   return data;
 }
@@ -279,6 +291,7 @@ function renderSettings() {
   $("view").innerHTML = `
     <section class="panel" style="padding:1rem" data-cap="get_settings" data-fields="">
       <h2>Browser access</h2>
+      ${(settings.duplicate_records || []).length ? `<p class="sub">Duplicate hosts were left in place: ${escapeHtml((settings.duplicate_records || []).map((item) => `${item.kind} ${item.key} (${item.names})`).join("; "))}. Remove the extras by hand.</p>` : ""}
     </section>
     <section class="panel" style="padding:1rem" data-cap="get_access_token" data-fields="">
       <h2>API token</h2>
@@ -351,7 +364,7 @@ async function show(page) {
     if (page === "history") await refreshActions();
     if (page === "settings") await refreshSettings();
   } catch (error) {
-    showBanner(error.message, true);
+    showBanner(error.message, true, error.existing);
   }
   render();
 }
@@ -454,7 +467,7 @@ async function onClick(event) {
     }
     render();
   } catch (error) {
-    showBanner(error.message, true);
+    showBanner(error.message, true, error.existing);
     render();
   }
 }
@@ -514,7 +527,7 @@ async function onSubmit(event) {
       await refreshDevices();
       render();
     } catch (error) {
-      showBanner(error.message, true);
+      showBanner(error.message, true, error.existing);
     }
     return;
   }
@@ -534,7 +547,7 @@ async function onSubmit(event) {
       showBanner("Settings saved.");
       render();
     } catch (error) {
-      showBanner(error.message, true);
+      showBanner(error.message, true, error.existing);
     }
   }
 }
@@ -591,7 +604,7 @@ window.runTest = async function (el) {
     const result = await api("POST", "/api/v1/test", body);
     showBanner(result.message, !result.ok);
   } catch (error) {
-    showBanner(error.message, true);
+    showBanner(error.message, true, error.existing);
   }
 };
 
@@ -620,21 +633,33 @@ window.removeProfile = async function (el) {
 };
 
 document.body.addEventListener("click", (event) => {
+  const opener = event.target.closest("[data-open-kind]");
+  if (opener) {
+    const kind = opener.dataset.openKind;
+    const id = Number(opener.dataset.id);
+    if (kind === "device") {
+      state.editing = id;
+      show("devices").catch((error) => showBanner(error.message, true, error.existing));
+    } else {
+      show("power").catch((error) => showBanner(error.message, true, error.existing));
+    }
+    return;
+  }
   const nav = event.target.closest("[data-page]");
   if (nav && nav.closest("aside")) {
-    show(nav.dataset.page).catch((error) => showBanner(error.message, true));
+    show(nav.dataset.page).catch((error) => showBanner(error.message, true, error.existing));
     return;
   }
   const control = event.target.closest("button[data-cap], a[data-cap]");
   if (!control || control.type === "submit") return;
   const handler = window.CONTROL_HANDLERS && window.CONTROL_HANDLERS[control.dataset.cap];
   if (!handler) {
-    onClick(event).catch((error) => showBanner(error.message, true));
+    onClick(event).catch((error) => showBanner(error.message, true, error.existing));
     return;
   }
-  Promise.resolve(handler(control)).catch((error) => showBanner(error.message, true));
+  Promise.resolve(handler(control)).catch((error) => showBanner(error.message, true, error.existing));
 });
 document.body.addEventListener("submit", (event) => {
-  onSubmit(event).catch((error) => showBanner(error.message, true));
+  onSubmit(event).catch((error) => showBanner(error.message, true, error.existing));
 });
-boot().catch((error) => showBanner(error.message, true));
+boot().catch((error) => showBanner(error.message, true, error.existing));
