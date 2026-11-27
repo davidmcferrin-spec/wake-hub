@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "httpx2>=2"]
+dev = ["pytest>=8", "httpx2>=2", "playwright>=1.49"]
 
 [project.scripts]
 wake-hub = "wakehub.main:main"

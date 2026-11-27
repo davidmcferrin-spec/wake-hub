@@ -9,10 +9,14 @@ from wakehub.clients.amt import AmtClient
 from wakehub.clients.jetkvm import JetKvmClient
 from wakehub.clients.kasa import KasaClient
 from wakehub.clients.shelly import ShellyClient
+from wakehub.clients.roku import RokuClient
 from wakehub.clients.synaccess import SynaccessClient
 from wakehub.clients.ups import PysnmpTransport, UpsClient
+from wakehub.credentials import remember_profile
 from wakehub.crypto import decrypt, encrypt
 from wakehub.errors import NotFound, WakeHubError
+from wakehub.identity import assert_available, bind_identity
+from wakehub.tags import normalize_tags
 from wakehub.hub import Hub
 from wakehub.inventory import host_for_url, utcnow, validate_host
 
@@ -22,6 +26,7 @@ TABLES = {
     "jetkvm": "jetkvm_endpoints",
     "plug": "plugs",
     "ups": "ups_cards",
+    "roku": "rokus",
 }
 
 
@@ -44,6 +49,16 @@ def _row(hub: Hub, kind: str, item_id: int):
     return row
 
 
+def _stored_tags(row) -> list[str]:
+    return json.loads(row["tags"] or "[]")
+
+
+def _apply_tags(hub: Hub, table: str, item_id: int, payload: dict[str, Any]) -> None:
+    if "tags" not in payload or payload["tags"] is None:
+        return
+    hub.write(f"UPDATE {table} SET tags = ? WHERE id = ?", (json.dumps(normalize_tags(payload["tags"])), item_id))
+
+
 def _stamp(fields: dict[str, Any]) -> dict[str, Any]:
     now = utcnow()
     fields["created_at"] = now
@@ -61,7 +76,10 @@ def public_pdu(row) -> dict[str, Any]:
         "insecure_tls": bool(row["insecure_tls"]),
         "username": row["username"],
         "password_set": bool(row["password_enc"]),
-        "outlet_names": json.loads(row["outlet_names"]),
+        "outlet_names": json.loads(row["outlet_names"] or "{}"),
+        "device_outlet_names": json.loads(row["device_outlet_names"] or "{}"),
+        "credential_profile_id": row["credential_profile_id"],
+        "tags": _stored_tags(row),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -77,7 +95,9 @@ def public_amt(row) -> dict[str, Any]:
         "insecure_tls": bool(row["insecure_tls"]),
         "username": row["username"],
         "password_set": bool(row["password_enc"]),
+        "credential_profile_id": row["credential_profile_id"],
         "device_id": row["device_id"],
+        "tags": _stored_tags(row),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -91,11 +111,14 @@ def public_jetkvm(row) -> dict[str, Any]:
         "port": row["port"],
         "use_tls": bool(row["use_tls"]),
         "insecure_tls": bool(row["insecure_tls"]),
+        "username": row["username"] or "",
         "password_set": bool(row["password_enc"]),
+        "credential_profile_id": row["credential_profile_id"],
         "extension": row["extension"] or "",
         "poll_metrics": bool(row["poll_metrics"]),
         "device_id": row["device_id"],
         "console_url": _console(row),
+        "tags": _stored_tags(row),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -113,7 +136,9 @@ def public_plug(row) -> dict[str, Any]:
         "insecure_tls": bool(row["insecure_tls"]),
         "protocol": row["protocol"],
         "switch_id": row["switch_id"],
+        "credential_profile_id": row["credential_profile_id"],
         "device_id": row["device_id"],
+        "tags": _stored_tags(row),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -132,7 +157,9 @@ def public_ups(row) -> dict[str, Any]:
         "v3_auth_set": bool(row["v3_auth_enc"]),
         "v3_priv_proto": row["v3_priv_proto"],
         "v3_priv_set": bool(row["v3_priv_enc"]),
+        "credential_profile_id": row["credential_profile_id"],
         "device_id": row["device_id"],
+        "tags": _stored_tags(row),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -188,6 +215,7 @@ def add_pdu(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
             "outlet_names": json.dumps(payload.get("outlet_names") or {}),
         }
     )
+    assert_available(hub, "pdu", fields["host"])
     item_id = hub.write(
         """
         INSERT INTO pdus (name, host, port, use_tls, insecure_tls, username, password_enc, outlet_names, created_at, updated_at)
@@ -195,6 +223,14 @@ def add_pdu(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
         """,
         tuple(fields[key] for key in ("name", "host", "port", "use_tls", "insecure_tls", "username", "password_enc", "outlet_names", "created_at", "updated_at")),
     )
+    bind_identity(hub, "pdu", item_id, fields["host"])
+    remember_profile(hub, "pdus", item_id, payload)
+    _apply_tags(hub, "pdus", item_id, payload)
+    try:
+        refresh_pdu_outlet_names(hub, item_id)
+    except Exception:
+        # Adding the record still succeeds when the PDU is offline or has no name API.
+        pass
     return public_pdu(_row(hub, "pdu", item_id))
 
 
@@ -204,6 +240,8 @@ def update_pdu(hub: Hub, pdu_id: int, payload: dict[str, Any]) -> dict[str, Any]
     if "password" in payload:
         password = _secret(hub, payload.get("password"))
     names = payload.get("outlet_names")
+    host = _updated_host(payload, current)
+    assert_available(hub, "pdu", host, exclude_id=pdu_id)
     hub.write(
         """
         UPDATE pdus SET name=?, host=?, port=?, use_tls=?, insecure_tls=?, username=?, password_enc=?, outlet_names=?, updated_at=?
@@ -211,7 +249,7 @@ def update_pdu(hub: Hub, pdu_id: int, payload: dict[str, Any]) -> dict[str, Any]
         """,
         (
             payload.get("name") or current["name"],
-            _updated_host(payload, current),
+            host,
             int(payload.get("port") if payload.get("port") is not None else current["port"]),
             int(payload["use_tls"]) if "use_tls" in payload else current["use_tls"],
             int(payload["insecure_tls"]) if "insecure_tls" in payload else current["insecure_tls"],
@@ -222,20 +260,68 @@ def update_pdu(hub: Hub, pdu_id: int, payload: dict[str, Any]) -> dict[str, Any]
             pdu_id,
         ),
     )
+    bind_identity(hub, "pdu", pdu_id, host)
+    remember_profile(hub, "pdus", pdu_id, payload)
+    _apply_tags(hub, "pdus", pdu_id, payload)
+    return public_pdu(_row(hub, "pdu", pdu_id))
+
+
+def outlet_labels(row) -> dict[int, str]:
+    # A name typed in Wake Hub replaces the name read from the PDU.
+    merged: dict[int, str] = {}
+    for raw in (row["device_outlet_names"], row["outlet_names"]):
+        for key, value in json.loads(raw or "{}").items():
+            if value is None or not str(value).strip():
+                continue
+            merged[int(key)] = str(value)
+    return merged
+
+
+def refresh_pdu_outlet_names(hub: Hub, pdu_id: int) -> dict[str, Any]:
+    _row(hub, "pdu", pdu_id)
+    row, client = pdu_client(hub, pdu_id)
+    try:
+        names = client.read_outlet_names()
+    finally:
+        client.close()
+    stored = {str(number): label for number, label in sorted(names.items())}
+    hub.write(
+        "UPDATE pdus SET device_outlet_names = ?, updated_at = ? WHERE id = ?",
+        (json.dumps(stored), utcnow(), pdu_id),
+    )
     return public_pdu(_row(hub, "pdu", pdu_id))
 
 
 def remove_pdu(hub: Hub, pdu_id: int) -> None:
     _row(hub, "pdu", pdu_id)
+    from wakehub.removal import detach
+
+    detach(hub, "pdu", pdu_id)
     hub.write("DELETE FROM pdus WHERE id = ?", (pdu_id,))
+
+
+def _resolved_login(hub: Hub, row, username_key: str = "username", secret_key: str = "password_enc") -> tuple[str, str]:
+    from wakehub.credentials import profile_login
+
+    profile_id = row["credential_profile_id"]
+    if profile_id:
+        try:
+            shared = profile_login(hub, int(profile_id))
+        except NotFound:
+            # The saved login was removed. The device's own username and password still work.
+            shared = None
+        if shared and shared[1]:
+            return shared[0] or str(row[username_key] or ""), shared[1]
+    return str(row[username_key] or ""), _plain(hub, row[secret_key])
 
 
 def pdu_client(hub: Hub, pdu_id: int) -> tuple[Any, SynaccessClient]:
     row = _row(hub, "pdu", pdu_id)
+    username, password = _resolved_login(hub, row)
     client = SynaccessClient(
         row["host"],
-        row["username"],
-        _plain(hub, row["password_enc"]),
+        username,
+        password,
         port=row["port"],
         use_tls=bool(row["use_tls"]),
         insecure_tls=bool(row["insecure_tls"]),
@@ -262,6 +348,7 @@ def add_amt(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
             "device_id": payload.get("device_id"),
         }
     )
+    assert_available(hub, "amt", fields["host"])
     item_id = hub.write(
         """
         INSERT INTO amt_endpoints (
@@ -282,6 +369,9 @@ def add_amt(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
         ),
     )
     _link(hub, fields["device_id"], {"kind": "amt", "amt_id": item_id})
+    bind_identity(hub, "amt", item_id, fields["host"])
+    remember_profile(hub, "amt_endpoints", item_id, payload)
+    _apply_tags(hub, "amt_endpoints", item_id, payload)
     return public_amt(_row(hub, "amt", item_id))
 
 
@@ -290,6 +380,8 @@ def update_amt(hub: Hub, amt_id: int, payload: dict[str, Any]) -> dict[str, Any]
     password = current["password_enc"] if "password" not in payload else _secret(hub, payload.get("password"))
     if password is None:
         raise WakeHubError("AMT password is required")
+    host = _updated_host(payload, current)
+    assert_available(hub, "amt", host, exclude_id=amt_id)
     hub.write(
         """
         UPDATE amt_endpoints
@@ -298,7 +390,7 @@ def update_amt(hub: Hub, amt_id: int, payload: dict[str, Any]) -> dict[str, Any]
         """,
         (
             payload.get("name") or current["name"],
-            _updated_host(payload, current),
+            host,
             int(payload.get("port") if payload.get("port") is not None else current["port"]),
             int(payload["use_tls"]) if "use_tls" in payload else current["use_tls"],
             int(payload["insecure_tls"]) if "insecure_tls" in payload else current["insecure_tls"],
@@ -309,20 +401,27 @@ def update_amt(hub: Hub, amt_id: int, payload: dict[str, Any]) -> dict[str, Any]
             amt_id,
         ),
     )
+    bind_identity(hub, "amt", amt_id, host)
+    remember_profile(hub, "amt_endpoints", amt_id, payload)
+    _apply_tags(hub, "amt_endpoints", amt_id, payload)
     return public_amt(_row(hub, "amt", amt_id))
 
 
 def remove_amt(hub: Hub, amt_id: int) -> None:
     _row(hub, "amt", amt_id)
+    from wakehub.removal import detach
+
+    detach(hub, "amt", amt_id)
     hub.write("DELETE FROM amt_endpoints WHERE id = ?", (amt_id,))
 
 
 def amt_client(hub: Hub, amt_id: int) -> tuple[Any, AmtClient]:
     row = _row(hub, "amt", amt_id)
+    username, password = _resolved_login(hub, row)
     client = AmtClient(
         row["host"],
-        row["username"],
-        _plain(hub, row["password_enc"]),
+        username or "admin",
+        password,
         port=row["port"],
         use_tls=bool(row["use_tls"]),
         insecure_tls=bool(row["insecure_tls"]),
@@ -342,17 +441,19 @@ def add_jetkvm(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
             "port": int(payload.get("port") or (443 if payload.get("use_tls") else 80)),
             "use_tls": 1 if payload.get("use_tls") else 0,
             "insecure_tls": 1 if payload.get("insecure_tls") else 0,
+            "username": str(payload.get("username") or ""),
             "password_enc": _secret(hub, payload.get("password")),
             "extension": _jet_extension(payload.get("extension")),
             "poll_metrics": 1 if payload.get("poll_metrics") else 0,
             "device_id": payload.get("device_id"),
         }
     )
+    assert_available(hub, "jetkvm", fields["host"])
     item_id = hub.write(
         """
         INSERT INTO jetkvm_endpoints (
-            name, host, port, use_tls, insecure_tls, password_enc, extension, poll_metrics, device_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            name, host, port, use_tls, insecure_tls, username, password_enc, extension, poll_metrics, device_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             fields["name"],
@@ -360,6 +461,7 @@ def add_jetkvm(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
             fields["port"],
             fields["use_tls"],
             fields["insecure_tls"],
+            fields["username"],
             fields["password_enc"],
             fields["extension"],
             fields["poll_metrics"],
@@ -369,6 +471,9 @@ def add_jetkvm(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
         ),
     )
     _link(hub, fields["device_id"], {"kind": "jetkvm", "jetkvm_id": item_id})
+    bind_identity(hub, "jetkvm", item_id, fields["host"])
+    remember_profile(hub, "jetkvm_endpoints", item_id, payload)
+    _apply_tags(hub, "jetkvm_endpoints", item_id, payload)
     return public_jetkvm(_row(hub, "jetkvm", item_id))
 
 
@@ -377,18 +482,21 @@ def update_jetkvm(hub: Hub, jetkvm_id: int, payload: dict[str, Any]) -> dict[str
     password = current["password_enc"] if "password" not in payload else _secret(hub, payload.get("password"))
     extension = _jet_extension(payload["extension"]) if "extension" in payload else (current["extension"] or "")
     poll_metrics = (1 if payload.get("poll_metrics") else 0) if "poll_metrics" in payload else current["poll_metrics"]
+    host = _updated_host(payload, current)
+    assert_available(hub, "jetkvm", host, exclude_id=jetkvm_id)
     hub.write(
         """
         UPDATE jetkvm_endpoints
-        SET name=?, host=?, port=?, use_tls=?, insecure_tls=?, password_enc=?, extension=?, poll_metrics=?, device_id=?, updated_at=?
+        SET name=?, host=?, port=?, use_tls=?, insecure_tls=?, username=?, password_enc=?, extension=?, poll_metrics=?, device_id=?, updated_at=?
         WHERE id=?
         """,
         (
             payload.get("name") or current["name"],
-            _updated_host(payload, current),
+            host,
             int(payload.get("port") if payload.get("port") is not None else current["port"]),
             int(payload["use_tls"]) if "use_tls" in payload else current["use_tls"],
             int(payload["insecure_tls"]) if "insecure_tls" in payload else current["insecure_tls"],
+            payload.get("username") if payload.get("username") is not None else (current["username"] or ""),
             password,
             extension,
             poll_metrics,
@@ -397,19 +505,26 @@ def update_jetkvm(hub: Hub, jetkvm_id: int, payload: dict[str, Any]) -> dict[str
             jetkvm_id,
         ),
     )
+    bind_identity(hub, "jetkvm", jetkvm_id, host)
+    remember_profile(hub, "jetkvm_endpoints", jetkvm_id, payload)
+    _apply_tags(hub, "jetkvm_endpoints", jetkvm_id, payload)
     return public_jetkvm(_row(hub, "jetkvm", jetkvm_id))
 
 
 def remove_jetkvm(hub: Hub, jetkvm_id: int) -> None:
     _row(hub, "jetkvm", jetkvm_id)
+    from wakehub.removal import detach
+
+    detach(hub, "jetkvm", jetkvm_id)
     hub.write("DELETE FROM jetkvm_endpoints WHERE id = ?", (jetkvm_id,))
 
 
 def jetkvm_client(hub: Hub, jetkvm_id: int, rpc=None) -> tuple[Any, JetKvmClient]:
     row = _row(hub, "jetkvm", jetkvm_id)
+    _username, password = _resolved_login(hub, row)
     client = JetKvmClient(
         row["host"],
-        _plain(hub, row["password_enc"]),
+        password,
         port=row["port"],
         use_tls=bool(row["use_tls"]),
         insecure_tls=bool(row["insecure_tls"]),
@@ -443,6 +558,7 @@ def add_plug(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
             "device_id": payload.get("device_id"),
         }
     )
+    assert_available(hub, "plug", fields["host"])
     item_id = hub.write(
         """
         INSERT INTO plugs (
@@ -465,6 +581,9 @@ def add_plug(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
         ),
     )
     _link(hub, fields["device_id"], {"kind": "plug", "plug_id": item_id})
+    bind_identity(hub, "plug", item_id, fields["host"])
+    remember_profile(hub, "plugs", item_id, payload)
+    _apply_tags(hub, "plugs", item_id, payload)
     return public_plug(_row(hub, "plug", item_id))
 
 
@@ -474,6 +593,8 @@ def update_plug(hub: Hub, plug_id: int, payload: dict[str, Any]) -> dict[str, An
     kind = payload.get("kind") or current["kind"]
     if kind not in {"shelly", "kasa"}:
         raise WakeHubError("plug kind must be shelly or kasa")
+    host = _updated_host(payload, current)
+    assert_available(hub, "plug", host, exclude_id=plug_id)
     hub.write(
         """
         UPDATE plugs
@@ -483,7 +604,7 @@ def update_plug(hub: Hub, plug_id: int, payload: dict[str, Any]) -> dict[str, An
         (
             payload.get("name") or current["name"],
             kind,
-            _updated_host(payload, current),
+            host,
             int(payload.get("port") if payload.get("port") is not None else current["port"]),
             payload.get("username") if payload.get("username") is not None else current["username"],
             password,
@@ -495,28 +616,34 @@ def update_plug(hub: Hub, plug_id: int, payload: dict[str, Any]) -> dict[str, An
             plug_id,
         ),
     )
+    bind_identity(hub, "plug", plug_id, host)
+    remember_profile(hub, "plugs", plug_id, payload)
+    _apply_tags(hub, "plugs", plug_id, payload)
     return public_plug(_row(hub, "plug", plug_id))
 
 
 def remove_plug(hub: Hub, plug_id: int) -> None:
     _row(hub, "plug", plug_id)
+    from wakehub.removal import detach
+
+    detach(hub, "plug", plug_id)
     hub.write("DELETE FROM plugs WHERE id = ?", (plug_id,))
 
 
 def plug_client(hub: Hub, plug_id: int):
     row = _row(hub, "plug", plug_id)
-    password = _plain(hub, row["password_enc"])
+    username, password = _resolved_login(hub, row)
     if row["kind"] == "shelly":
         client = ShellyClient(
             row["host"],
-            row["username"],
+            username,
             password,
             port=row["port"],
             switch_id=row["switch_id"],
             insecure_tls=bool(row["insecure_tls"]),
         )
     elif row["kind"] == "kasa":
-        client = KasaClient(row["host"], row["username"], password, protocol=row["protocol"], port=row["port"])
+        client = KasaClient(row["host"], username, password, protocol=row["protocol"], port=row["port"])
     else:
         raise WakeHubError(f"unknown plug kind {row['kind']}")
     return row, client
@@ -545,6 +672,7 @@ def add_ups(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
             "device_id": payload.get("device_id"),
         }
     )
+    assert_available(hub, "ups", fields["host"])
     item_id = hub.write(
         """
         INSERT INTO ups_cards (
@@ -569,6 +697,9 @@ def add_ups(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
         ),
     )
     _link(hub, fields["device_id"], {"kind": "ups", "ups_id": item_id})
+    bind_identity(hub, "ups", item_id, fields["host"])
+    remember_profile(hub, "ups_cards", item_id, payload)
+    _apply_tags(hub, "ups_cards", item_id, payload)
     return public_ups(_row(hub, "ups", item_id))
 
 
@@ -577,6 +708,8 @@ def update_ups(hub: Hub, ups_id: int, payload: dict[str, Any]) -> dict[str, Any]
     version = payload.get("snmp_version") or current["snmp_version"]
     if version not in {"1", "2c", "3"}:
         raise WakeHubError("SNMP version must be 1, 2c, or 3")
+    host = _updated_host(payload, current)
+    assert_available(hub, "ups", host, exclude_id=ups_id)
     hub.write(
         """
         UPDATE ups_cards SET
@@ -586,7 +719,7 @@ def update_ups(hub: Hub, ups_id: int, payload: dict[str, Any]) -> dict[str, Any]
         """,
         (
             payload.get("name") or current["name"],
-            _updated_host(payload, current),
+            host,
             int(payload.get("port") if payload.get("port") is not None else current["port"]),
             version,
             current["community_enc"] if "community" not in payload else _secret(hub, payload.get("community")),
@@ -600,28 +733,123 @@ def update_ups(hub: Hub, ups_id: int, payload: dict[str, Any]) -> dict[str, Any]
             ups_id,
         ),
     )
+    bind_identity(hub, "ups", ups_id, host)
+    remember_profile(hub, "ups_cards", ups_id, payload)
+    _apply_tags(hub, "ups_cards", ups_id, payload)
     return public_ups(_row(hub, "ups", ups_id))
 
 
 def remove_ups(hub: Hub, ups_id: int) -> None:
     _row(hub, "ups", ups_id)
+    from wakehub.removal import detach
+
+    detach(hub, "ups", ups_id)
     hub.write("DELETE FROM ups_cards WHERE id = ?", (ups_id,))
 
 
 def ups_client(hub: Hub, ups_id: int) -> tuple[Any, UpsClient]:
     row = _row(hub, "ups", ups_id)
+    from wakehub.credentials import profile_login
+
+    community = _plain(hub, row["community_enc"]) or "public"
+    v3_user = row["v3_user"]
+    v3_auth = _plain(hub, row["v3_auth_enc"])
+    if row["credential_profile_id"]:
+        shared = profile_login(hub, int(row["credential_profile_id"]))
+        if shared:
+            if shared[0]:
+                v3_user = shared[0]
+            if shared[1] and row["snmp_version"] == "3":
+                v3_auth = shared[1]
+            elif shared[1]:
+                community = shared[1]
     transport = PysnmpTransport(
         row["host"],
         row["port"],
         row["snmp_version"],
-        _plain(hub, row["community_enc"]) or "public",
-        row["v3_user"],
+        community,
+        v3_user,
         row["v3_auth_proto"],
-        _plain(hub, row["v3_auth_enc"]),
+        v3_auth,
         row["v3_priv_proto"],
         _plain(hub, row["v3_priv_enc"]),
     )
     return row, UpsClient(transport)
+
+
+def public_roku(row) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "host": row["host"],
+        "port": row["port"],
+        "device_id": row["device_id"],
+        "tags": _stored_tags(row),
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def list_rokus(hub: Hub) -> list[dict[str, Any]]:
+    return [public_roku(row) for row in hub.query("SELECT * FROM rokus ORDER BY name COLLATE NOCASE")]
+
+
+def add_roku(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
+    fields = _stamp(
+        {
+            "name": _require_name(payload),
+            "host": _require_host(payload),
+            "port": int(payload.get("port") or 8060),
+            "device_id": payload.get("device_id"),
+            "tags": json.dumps(normalize_tags(payload.get("tags"))),
+        }
+    )
+    assert_available(hub, "roku", fields["host"])
+    item_id = hub.write(
+        """
+        INSERT INTO rokus (name, host, port, device_id, tags, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (fields["name"], fields["host"], fields["port"], fields["device_id"], fields["tags"], fields["created_at"], fields["updated_at"]),
+    )
+    _link(hub, fields["device_id"], {"kind": "roku", "roku_id": item_id})
+    bind_identity(hub, "roku", item_id, fields["host"])
+    return public_roku(_row(hub, "roku", item_id))
+
+
+def update_roku(hub: Hub, roku_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    current = _row(hub, "roku", roku_id)
+    host = _updated_host(payload, current)
+    assert_available(hub, "roku", host, exclude_id=roku_id)
+    hub.write(
+        """
+        UPDATE rokus SET name=?, host=?, port=?, device_id=?, updated_at=? WHERE id=?
+        """,
+        (
+            payload.get("name") or current["name"],
+            host,
+            int(payload.get("port") if payload.get("port") is not None else current["port"]),
+            payload["device_id"] if "device_id" in payload else current["device_id"],
+            utcnow(),
+            roku_id,
+        ),
+    )
+    _apply_tags(hub, "rokus", roku_id, payload)
+    bind_identity(hub, "roku", roku_id, host)
+    return public_roku(_row(hub, "roku", roku_id))
+
+
+def remove_roku(hub: Hub, roku_id: int) -> None:
+    _row(hub, "roku", roku_id)
+    from wakehub.removal import detach
+
+    detach(hub, "roku", roku_id)
+    hub.write("DELETE FROM rokus WHERE id = ?", (roku_id,))
+
+
+def roku_client(hub: Hub, roku_id: int) -> tuple[Any, RokuClient]:
+    row = _row(hub, "roku", roku_id)
+    return row, RokuClient(row["host"], port=row["port"])
 
 
 def _link(hub: Hub, device_id: int | None, method: dict[str, Any]) -> None:

@@ -8,14 +8,21 @@ from typing import Any
 
 from wakehub.clients.jetkvm import DESTRUCTIVE_ATX
 from wakehub.clients.ups import DESTRUCTIVE as UPS_DESTRUCTIVE
+from wakehub.clients.roku import KEYS as ROKU_KEYS
 from wakehub.endpoints import (
     amt_client,
     jetkvm_client,
+    list_plugs,
+    list_rokus,
+    outlet_labels,
     pdu_client,
     plug_client,
+    refresh_pdu_outlet_names,
+    roku_client,
     ups_client,
 )
-from wakehub.errors import WakeHubError, require_confirm
+from wakehub.errors import ConfirmationRequired, WakeHubError, require_confirm
+from wakehub.tags import has_tags, normalize_tags
 from wakehub.hub import Hub
 from wakehub.inventory import _get_row, _require_enabled, record_action, wake_device
 
@@ -82,6 +89,11 @@ def dispatch_device(
         if jet_action is None:
             raise WakeHubError(f"JetKVM cannot {action}")
         return jetkvm_power(hub, chosen["jetkvm_id"], jet_action, confirm=confirm, source=source)
+    if chosen["kind"] == "roku":
+        mapped = {"on": "on", "off": "off"}.get(action)
+        if mapped is None:
+            raise WakeHubError(f"a Roku cannot {action}")
+        return roku_power(hub, chosen["roku_id"], mapped, confirm=confirm, source=source)
     if chosen["kind"] == "ups":
         mapped = {"off": "turn_off", "shutdown": "shutdown", "reboot": "reboot", "cycle": "reboot", "on": "turn_on"}.get(action)
         if mapped is None:
@@ -144,10 +156,13 @@ def set_pdu_outlet(hub: Hub, pdu_id: int, outlet: int, action: str, *, confirm: 
 
 
 def list_pdu_outlets(hub: Hub, pdu_id: int) -> dict[str, Any]:
+    try:
+        refresh_pdu_outlet_names(hub, pdu_id)
+    except Exception:
+        pass
     row, client = pdu_client(hub, pdu_id)
     try:
-        names = {int(key): value for key, value in json.loads(row["outlet_names"]).items()}
-        status = client.status(names)
+        status = client.status(outlet_labels(row))
     finally:
         client.close()
     return {
@@ -157,6 +172,76 @@ def list_pdu_outlets(hub: Hub, pdu_id: int) -> dict[str, Any]:
         "per_outlet_current": False,
         "outlets": [{"number": item.number, "name": item.name, "on": item.on} for item in status.outlets],
     }
+
+
+def roku_status(hub: Hub, roku_id: int) -> dict[str, Any]:
+    _row, client = roku_client(hub, roku_id)
+    try:
+        info = client.device_info()
+    finally:
+        client.close()
+    return {"roku_id": roku_id, **info}
+
+
+def roku_power(hub: Hub, roku_id: int, action: str, *, confirm: bool, source: str) -> dict[str, Any]:
+    if action not in ROKU_KEYS:
+        raise WakeHubError("Roku action must be on, off, or toggle")
+    # PowerOff and Power can both turn the TV off.
+    if action in {"off", "toggle"} and confirm is not True:
+        raise ConfirmationRequired(f"{action} can turn the Roku off; set confirm to true")
+    row, client = roku_client(hub, roku_id)
+    try:
+        client.keypress(ROKU_KEYS[action])
+        info = client.device_info()
+    except Exception as exc:
+        record_action(hub, source=source, action=f"roku_{action}", ok=False, detail=str(exc), target_kind="roku", target_id=roku_id, target_name=row["name"])
+        client.close()
+        raise
+    client.close()
+    record_action(hub, source=source, action=f"roku_{action}", ok=True, detail=str(info.get("power_mode") or ""), target_kind="roku", target_id=roku_id, target_name=row["name"])
+    return {"roku_id": roku_id, "action": action, "ok": True, **info}
+
+
+def tag_action(hub: Hub, tags: list[str], action: str, *, confirm: bool, source: str) -> dict[str, Any]:
+    wanted = normalize_tags(tags)
+    if not wanted:
+        raise WakeHubError("name at least one tag")
+    if action not in {"wake", "on", "off"}:
+        raise WakeHubError("tag action must be wake, on, or off")
+    if confirm is not True:
+        raise ConfirmationRequired("bulk tag actions need confirm set to true")
+    from wakehub.inventory import list_devices
+
+    results: list[dict[str, Any]] = []
+    for device in list_devices(hub):
+        if not has_tags(device["tags"], wanted):
+            continue
+        try:
+            if action == "wake":
+                wake_device(hub, device["id"], source=source)
+            else:
+                dispatch_device(hub, device["id"], action=action, confirm=True, source=source)
+            results.append({"kind": "device", "id": device["id"], "name": device["name"], "ok": True, "detail": action})
+        except Exception as exc:
+            results.append({"kind": "device", "id": device["id"], "name": device["name"], "ok": False, "detail": str(exc)})
+    if action in {"on", "off"}:
+        for plug in list_plugs(hub):
+            if not has_tags(plug["tags"], wanted):
+                continue
+            try:
+                plug_power(hub, plug["id"], action, confirm=True, source=source)
+                results.append({"kind": "plug", "id": plug["id"], "name": plug["name"], "ok": True, "detail": action})
+            except Exception as exc:
+                results.append({"kind": "plug", "id": plug["id"], "name": plug["name"], "ok": False, "detail": str(exc)})
+        for roku in list_rokus(hub):
+            if not has_tags(roku["tags"], wanted):
+                continue
+            try:
+                roku_power(hub, roku["id"], action, confirm=True, source=source)
+                results.append({"kind": "roku", "id": roku["id"], "name": roku["name"], "ok": True, "detail": action})
+            except Exception as exc:
+                results.append({"kind": "roku", "id": roku["id"], "name": roku["name"], "ok": False, "detail": str(exc)})
+    return {"action": action, "tags": wanted, "matched": len(results), "results": results}
 
 
 def plug_power(hub: Hub, plug_id: int, action: str, *, confirm: bool, source: str, cycle_seconds: float = 5) -> dict[str, Any]:

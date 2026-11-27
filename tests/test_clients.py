@@ -19,7 +19,7 @@ from wakehub.clients.kasa import (
     xor_tcp_unframe,
 )
 from wakehub.clients.shelly import parse_shelly_info, parse_switch_status
-from wakehub.clients.synaccess import SynaccessClient, parse_result, parse_status
+from wakehub.clients.synaccess import SynaccessClient, parse_outlet_names, parse_result, parse_status
 from wakehub.clients.ups import OIDS, command_set, status_from_varbinds
 
 
@@ -47,6 +47,26 @@ def test_synaccess_np1601_status_is_bank_current():
     parsed = client.status()
     assert parsed.outlets[0].on is True
     assert parsed.bank_amps == (0.10,)
+    client.close()
+
+
+def test_synaccess_outlet_names_come_from_json_or_the_setup_page(monkeypatch):
+    monkeypatch.undo()
+    assert parse_outlet_names('[{"outletIndex": 1, "outletName": "NAS"}, {"outletIndex": 2, "outletName": "Desk"}]') == {1: "NAS", 2: "Desk"}
+    assert parse_outlet_names('{"outlets": [{"index": 0, "name": "NAS"}]}') == {1: "NAS"}
+    html = '<input type="text" name="name1" value="NAS"><input value="Desk" name="name2">'
+    assert parse_outlet_names(html) == {1: "NAS", 2: "Desk"}
+    assert parse_outlet_names('var outletname = ["NAS", "Desk"];') == {1: "NAS", 2: "Desk"}
+
+    def handler(request):
+        if request.url.path == "/api/outlets":
+            return httpx.Response(404)
+        if request.url.path == "/":
+            return httpx.Response(200, text=html)
+        return httpx.Response(404)
+
+    client = SynaccessClient("10.0.0.5", "admin", "secret", http=httpx.Client(transport=httpx.MockTransport(handler)))
+    assert client.read_outlet_names() == {1: "NAS", 2: "Desk"}
     client.close()
 
 

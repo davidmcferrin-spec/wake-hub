@@ -40,9 +40,9 @@ def build_server() -> MCPServer:
 
     @server.tool()
     @expose
-    def list_devices(tag: str | None = None, q: str | None = None) -> list[dict[str, Any]]:
-        """List inventory devices, including disabled ones. Does not change power state. Filter with a tag or a name, host or MAC substring."""
-        return records.list_devices(get_hub(), tag=tag, q=q)
+    def list_devices(tag: str | None = None, tags: str | None = None, q: str | None = None) -> list[dict[str, Any]]:
+        """List inventory devices, including disabled ones. Does not change power state. Filter with a tag, a comma-separated tags list (all must match), or a name, host or MAC substring. q understands #tag."""
+        return records.list_devices(get_hub(), tag=tag, tags=tags, q=q)
 
     @server.tool()
     @expose
@@ -199,6 +199,9 @@ def build_server() -> MCPServer:
         cors_origins: list[str] | None = None,
         metrics_poll_seconds: int | None = None,
         metrics_retention_days: int | None = None,
+        session_days: int | None = None,
+        scan_keep: int | None = None,
+        scan_keep_days: int | None = None,
     ) -> dict[str, Any]:
         """Change settings. Set ui_password to require a password in the browser. clear_ui_password removes it. cors_origins is the list of allowed browser origins. An empty list blocks cross-origin calls."""
         payload: dict[str, Any] = {"clear_ui_password": clear_ui_password}
@@ -210,6 +213,12 @@ def build_server() -> MCPServer:
             payload["metrics_poll_seconds"] = metrics_poll_seconds
         if metrics_retention_days is not None:
             payload["metrics_retention_days"] = metrics_retention_days
+        if session_days is not None:
+            payload["session_days"] = session_days
+        if scan_keep is not None:
+            payload["scan_keep"] = scan_keep
+        if scan_keep_days is not None:
+            payload["scan_keep_days"] = scan_keep_days
         return records.update_settings(get_hub(), payload)
 
     @server.tool()
@@ -243,6 +252,15 @@ def build_server() -> MCPServer:
         hub = get_hub()
         password_set = bool(hub.setting("ui_password"))
         return {"password_required": True, "setup_required": not password_set}
+
+    @server.tool()
+    @expose
+    def ui_logout() -> dict[str, Any]:
+        """Sign the web UI out. Clears every browser session. Rotating the API token does the same."""
+        from wakehub.sessions import drop_all
+
+        drop_all(get_hub())
+        return {"ok": True}
 
     from wakehub.mcp_extra import register
 

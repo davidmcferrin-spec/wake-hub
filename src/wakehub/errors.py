@@ -26,6 +26,10 @@ class Conflict(WakeHubError):
     status = 409
     code = "conflict"
 
+    def __init__(self, message: str, *, existing: dict | None = None):
+        super().__init__(message)
+        self.existing = existing
+
 
 class ConfirmationRequired(WakeHubError):
     status = 409

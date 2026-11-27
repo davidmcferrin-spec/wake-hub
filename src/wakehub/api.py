@@ -17,6 +17,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from wakehub import __version__
 from wakehub.errors import Unauthorized, WakeHubError
 from wakehub.hub import Hub, get_hub, set_hub
+from wakehub import sessions as ui_sessions
 from wakehub.inventory import (
     add_device,
     get_device,
@@ -47,6 +48,7 @@ PUBLIC = {
     ("GET", "/redoc"),
     ("GET", "/favicon.ico"),
     ("POST", "/api/v1/ui/login"),
+    ("POST", "/api/v1/ui/logout"),
     ("POST", "/api/v1/ui/setup"),
     ("GET", "/api/v1/ui/session"),
 }
@@ -122,6 +124,9 @@ class SettingsIn(BaseModel):
     cors_origins: list[str] | None = None
     metrics_poll_seconds: int | None = None
     metrics_retention_days: int | None = None
+    session_days: int | None = None
+    scan_keep: int | None = None
+    scan_keep_days: int | None = None
 
 
 class LoginIn(BaseModel):
@@ -295,13 +300,15 @@ def _client_key(request: Request) -> str:
 
 
 def _start_ui_session(hub: Hub, response: Response) -> None:
-    session = secrets.token_urlsafe(24)
-    hub._write_setting("ui_session", session)
-    response.set_cookie("wakehub_ui", session, httponly=True, samesite="lax", max_age=14 * 24 * 3600, path="/")
+    ui_sessions.issue(hub, response)
 
 
 def _error_response(_request: Request, exc: WakeHubError) -> JSONResponse:
-    return JSONResponse(status_code=exc.status, content={"error": {"code": exc.code, "message": exc.message}})
+    error = {"code": exc.code, "message": exc.message}
+    existing = getattr(exc, "existing", None)
+    if existing:
+        error["existing"] = existing
+    return JSONResponse(status_code=exc.status, content={"error": error})
 
 
 def _public_router() -> APIRouter:
@@ -321,14 +328,20 @@ def _public_router() -> APIRouter:
         _start_ui_session(hub, response)
         return result
 
+    @router.post("/ui/logout", tags=["settings"])
+    def logout(request: Request, response: Response) -> dict[str, Any]:
+        hub = get_hub()
+        ui_sessions.drop(hub, request.cookies.get(ui_sessions.COOKIE, ""))
+        ui_sessions.clear_cookie(response)
+        return {"ok": True}
+
     @router.get("/ui/session", tags=["settings"])
-    def session(request: Request) -> dict[str, Any]:
+    def session(request: Request):
         hub = get_hub()
         password_set = bool(hub.setting("ui_password"))
-        cookie = request.cookies.get("wakehub_ui", "")
-        expected = hub.setting("ui_session") or ""
-        if not password_set or not cookie or not token_matches(cookie, expected):
-            # No token in this body. Setup is gated by the API token from the log or /config/token.
+        cookie = request.cookies.get(ui_sessions.COOKIE, "")
+        if not password_set or not ui_sessions.valid(hub, cookie):
+            # No token in this body. The API token is only for the first setup.
             return JSONResponse(
                 status_code=401,
                 content={
@@ -337,7 +350,11 @@ def _public_router() -> APIRouter:
                     "password_required": True,
                 },
             )
-        return {"token": hub.token, "password_required": True, "setup_required": False}
+        response = JSONResponse(
+            {"token": hub.token, "password_required": True, "setup_required": False}
+        )
+        ui_sessions.slide(hub, response, cookie)
+        return response
 
     return router
 
@@ -346,8 +363,8 @@ def _api_router() -> APIRouter:
     router = APIRouter(prefix="/api/v1", dependencies=[Depends(require_bearer)])
 
     @router.get("/devices", tags=["devices"])
-    def devices(tag: str | None = None, q: str | None = None) -> list[dict[str, Any]]:
-        return list_devices(get_hub(), tag=tag, q=q)
+    def devices(tag: str | None = None, tags: str | None = None, q: str | None = None) -> list[dict[str, Any]]:
+        return list_devices(get_hub(), tag=tag, tags=tags, q=q)
 
     @router.post("/devices", tags=["devices"], status_code=201)
     def create_device(body: DeviceIn) -> dict[str, Any]:
@@ -406,8 +423,15 @@ def _api_router() -> APIRouter:
         return public_settings(get_hub())
 
     @router.patch("/settings", tags=["settings"])
-    def patch_settings(body: SettingsIn) -> dict[str, Any]:
-        return update_settings(get_hub(), body.model_dump(exclude_unset=True))
+    def patch_settings(body: SettingsIn, request: Request, response: Response) -> dict[str, Any]:
+        hub = get_hub()
+        payload = body.model_dump(exclude_unset=True)
+        signed_in = ui_sessions.valid(hub, request.cookies.get(ui_sessions.COOKIE, ""))
+        result = update_settings(hub, payload)
+        if signed_in and payload.get("ui_password") and not payload.get("clear_ui_password"):
+            # This browser stays signed in. Every other session was already cleared.
+            ui_sessions.issue(hub, response)
+        return result
 
     @router.get("/access-token", tags=["settings"])
     def access_token() -> dict[str, str]:

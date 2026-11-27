@@ -11,22 +11,27 @@ from wakehub.endpoints import (
     add_jetkvm,
     add_pdu,
     add_plug,
+    add_roku,
     add_ups,
     list_amt,
     list_jetkvm,
     list_pdus,
     list_plugs,
+    list_rokus,
     list_ups,
     public_jetkvm,
     remove_amt,
     remove_jetkvm,
+    refresh_pdu_outlet_names,
     remove_pdu,
     remove_plug,
+    remove_roku,
     remove_ups,
     update_amt,
     update_jetkvm,
     update_pdu,
     update_plug,
+    update_roku,
     update_ups,
 )
 from wakehub.hub import get_hub
@@ -39,11 +44,16 @@ from wakehub.power import (
     list_pdu_outlets,
     plug_power,
     plug_status,
+    roku_power,
+    roku_status,
     set_pdu_outlet,
+    tag_action,
     ups_action,
     ups_status,
 )
-from wakehub.scan import add_from_scan, get_scan, list_scans, start_scan
+from wakehub.salvos import add_salvo, duplicate_salvo, get_salvo, list_salvos, remove_salvo, run_salvo, update_salvo
+from wakehub.tags import list_tags
+from wakehub.scan import add_from_scan, clear_scans, delete_scan, get_scan, list_scans, rescan, start_scan
 from fastapi import Request
 
 
@@ -56,6 +66,8 @@ class PduIn(BaseModel):
     username: str = "admin"
     password: str | None = None
     outlet_names: dict[str, str] | None = None
+    credential_profile_id: int | None = None
+    tags: list[str] | None = None
 
 
 class PduPatch(BaseModel):
@@ -67,6 +79,8 @@ class PduPatch(BaseModel):
     username: str | None = None
     password: str | None = None
     outlet_names: dict[str, str] | None = None
+    credential_profile_id: int | None = None
+    tags: list[str] | None = None
 
 
 class OutletIn(BaseModel):
@@ -83,6 +97,8 @@ class AmtIn(BaseModel):
     username: str = "admin"
     password: str
     device_id: int | None = None
+    credential_profile_id: int | None = None
+    tags: list[str] | None = None
 
 
 class AmtPatch(BaseModel):
@@ -94,6 +110,8 @@ class AmtPatch(BaseModel):
     username: str | None = None
     password: str | None = None
     device_id: int | None = None
+    credential_profile_id: int | None = None
+    tags: list[str] | None = None
 
 
 class JetIn(BaseModel):
@@ -102,10 +120,13 @@ class JetIn(BaseModel):
     port: int | None = None
     use_tls: bool = False
     insecure_tls: bool = False
+    username: str = ""
     password: str | None = None
     extension: str = ""
     poll_metrics: bool = False
     device_id: int | None = None
+    credential_profile_id: int | None = None
+    tags: list[str] | None = None
 
 
 class JetPatch(BaseModel):
@@ -114,10 +135,13 @@ class JetPatch(BaseModel):
     port: int | None = None
     use_tls: bool | None = None
     insecure_tls: bool | None = None
+    username: str | None = None
     password: str | None = None
     extension: str | None = None
     poll_metrics: bool | None = None
     device_id: int | None = None
+    credential_profile_id: int | None = None
+    tags: list[str] | None = None
 
 
 class JetPowerIn(BaseModel):
@@ -137,6 +161,8 @@ class PlugIn(BaseModel):
     insecure_tls: bool = False
     switch_id: int = 0
     device_id: int | None = None
+    credential_profile_id: int | None = None
+    tags: list[str] | None = None
 
 
 class PlugPatch(BaseModel):
@@ -150,6 +176,8 @@ class PlugPatch(BaseModel):
     insecure_tls: bool | None = None
     switch_id: int | None = None
     device_id: int | None = None
+    credential_profile_id: int | None = None
+    tags: list[str] | None = None
 
 
 class PlugPowerIn(BaseModel):
@@ -170,6 +198,8 @@ class UpsIn(BaseModel):
     v3_priv_proto: str = "aes"
     v3_priv: str | None = None
     device_id: int | None = None
+    credential_profile_id: int | None = None
+    tags: list[str] | None = None
 
 
 class UpsPatch(BaseModel):
@@ -184,6 +214,8 @@ class UpsPatch(BaseModel):
     v3_priv_proto: str | None = None
     v3_priv: str | None = None
     device_id: int | None = None
+    credential_profile_id: int | None = None
+    tags: list[str] | None = None
 
 
 class UpsActionIn(BaseModel):
@@ -193,8 +225,110 @@ class UpsActionIn(BaseModel):
     outlet: int | None = None
 
 
+class RokuIn(BaseModel):
+    name: str
+    host: str
+    port: int = 8060
+    device_id: int | None = None
+    tags: list[str] | None = None
+
+
+class RokuPatch(BaseModel):
+    name: str | None = None
+    host: str | None = None
+    port: int | None = None
+    device_id: int | None = None
+    tags: list[str] | None = None
+
+
+class RokuPowerIn(BaseModel):
+    action: str
+    confirm: bool = False
+
+
+class TagActionIn(BaseModel):
+    tags: list[str]
+    action: str
+    confirm: bool = False
+
+
+class SalvoStepIn(BaseModel):
+    target_kind: str
+    target_id: int | None = None
+    tags: list[str] = []
+    action: str
+    delay_seconds: float = 0
+
+
+class SalvoIn(BaseModel):
+    name: str
+    steps: list[SalvoStepIn] = []
+    on_error: str = "stop"
+    slug: str | None = None
+
+
+class SalvoPatch(BaseModel):
+    name: str | None = None
+    steps: list[SalvoStepIn] | None = None
+    on_error: str | None = None
+    slug: str | None = None
+
+
+class SalvoRunIn(BaseModel):
+    confirm: bool = False
+    dry_run: bool = False
+
+
 class ScanIn(BaseModel):
     cidr: str | None = None
+    replace: bool = False
+
+
+class BulkTarget(BaseModel):
+    kind: str
+    id: int
+
+
+class BulkRemoveIn(BaseModel):
+    confirm: bool = False
+    targets: list[BulkTarget] = []
+    tags: list[str] = []
+
+
+class ClearScansIn(BaseModel):
+    confirm: bool = False
+
+
+class RescanIn(BaseModel):
+    replace: bool = True
+
+
+class TestIn(BaseModel):
+    kind: str
+    host: str | None = None
+    mac: str | None = None
+    broadcast: str | None = None
+    username: str | None = None
+    password: str | None = None
+    port: int | None = None
+    use_tls: bool = False
+    insecure_tls: bool = False
+    confirm: bool = False
+    plug_kind: str | None = None
+    community: str | None = None
+    snmp_version: str | None = None
+
+
+class ProfileIn(BaseModel):
+    name: str
+    username: str = ""
+    password: str | None = None
+
+
+class ProfilePatch(BaseModel):
+    name: str | None = None
+    username: str | None = None
+    password: str | None = None
 
 
 class AddFromScanIn(BaseModel):
@@ -227,6 +361,10 @@ def control_router() -> APIRouter:
         from fastapi import Response
 
         return Response(status_code=204)
+
+    @router.post("/pdus/{pdu_id}/outlet-names", tags=["pdu"])
+    def refresh_outlet_names(pdu_id: int) -> dict[str, Any]:
+        return refresh_pdu_outlet_names(get_hub(), pdu_id)
 
     @router.get("/pdus/{pdu_id}/outlets", tags=["pdu"])
     def outlets(pdu_id: int) -> dict[str, Any]:
@@ -370,9 +508,128 @@ def control_router() -> APIRouter:
             outlet=body.outlet,
         )
 
+    @router.get("/rokus", tags=["roku"])
+    def rokus() -> list[dict[str, Any]]:
+        return list_rokus(get_hub())
+
+    @router.post("/rokus", tags=["roku"], status_code=201)
+    def create_roku(body: RokuIn) -> dict[str, Any]:
+        return add_roku(get_hub(), body.model_dump())
+
+    @router.patch("/rokus/{roku_id}", tags=["roku"])
+    def patch_roku(roku_id: int, body: RokuPatch) -> dict[str, Any]:
+        return update_roku(get_hub(), roku_id, body.model_dump(exclude_unset=True))
+
+    @router.delete("/rokus/{roku_id}", tags=["roku"], status_code=204)
+    def delete_roku(roku_id: int):
+        remove_roku(get_hub(), roku_id)
+        from fastapi import Response
+
+        return Response(status_code=204)
+
+    @router.get("/rokus/{roku_id}/status", tags=["roku"])
+    def read_roku(roku_id: int) -> dict[str, Any]:
+        return roku_status(get_hub(), roku_id)
+
+    @router.post("/rokus/{roku_id}/power", tags=["roku"])
+    def roku_key(roku_id: int, body: RokuPowerIn, request: Request) -> dict[str, Any]:
+        return roku_power(get_hub(), roku_id, body.action, confirm=body.confirm, source=request_source(request))
+
+    @router.get("/tags", tags=["tags"])
+    def tags() -> list[str]:
+        return list_tags(get_hub())
+
+    @router.post("/tags/action", tags=["tags"])
+    def tags_action(body: TagActionIn, request: Request) -> dict[str, Any]:
+        return tag_action(get_hub(), body.tags, body.action, confirm=body.confirm, source=request_source(request))
+
+    @router.get("/salvos", tags=["salvos"])
+    def salvos() -> list[dict[str, Any]]:
+        return list_salvos(get_hub())
+
+    @router.post("/salvos", tags=["salvos"], status_code=201)
+    def create_salvo(body: SalvoIn) -> dict[str, Any]:
+        return add_salvo(get_hub(), body.model_dump())
+
+    @router.get("/salvos/{salvo}", tags=["salvos"])
+    def one_salvo(salvo: str) -> dict[str, Any]:
+        return get_salvo(get_hub(), salvo)
+
+    @router.patch("/salvos/{salvo}", tags=["salvos"])
+    def patch_salvo(salvo: str, body: SalvoPatch) -> dict[str, Any]:
+        return update_salvo(get_hub(), salvo, body.model_dump(exclude_unset=True))
+
+    @router.delete("/salvos/{salvo}", tags=["salvos"], status_code=204)
+    def delete_salvo(salvo: str):
+        remove_salvo(get_hub(), salvo)
+        from fastapi import Response
+
+        return Response(status_code=204)
+
+    @router.post("/salvos/{salvo}/duplicate", tags=["salvos"], status_code=201)
+    def copy_salvo(salvo: str) -> dict[str, Any]:
+        return duplicate_salvo(get_hub(), salvo)
+
+    @router.post("/salvos/{salvo}/run", tags=["salvos"])
+    def run_one_salvo(salvo: str, body: SalvoRunIn, request: Request) -> dict[str, Any]:
+        return run_salvo(get_hub(), salvo, confirm=body.confirm, dry_run=body.dry_run, source=request_source(request))
+
+    @router.get("/interfaces", tags=["scan"])
+    def interfaces() -> list[dict[str, Any]]:
+        from wakehub.scan import list_interfaces
+
+        return list_interfaces()
+
+    @router.post("/test", tags=["scan"])
+    def test_connection(body: TestIn) -> dict[str, Any]:
+        from wakehub.probe import test_target
+
+        return test_target(get_hub(), body.model_dump())
+
+    @router.get("/credential-profiles", tags=["credentials"])
+    def profiles() -> list[dict[str, Any]]:
+        from wakehub.credentials import list_profiles
+
+        return list_profiles(get_hub())
+
+    @router.post("/credential-profiles", tags=["credentials"], status_code=201)
+    def create_profile(body: ProfileIn) -> dict[str, Any]:
+        from wakehub.credentials import add_profile
+
+        return add_profile(get_hub(), body.model_dump())
+
+    @router.patch("/credential-profiles/{profile_id}", tags=["credentials"])
+    def edit_profile(profile_id: int, body: ProfilePatch) -> dict[str, Any]:
+        from wakehub.credentials import update_profile
+
+        return update_profile(get_hub(), profile_id, body.model_dump(exclude_unset=True))
+
+    @router.delete("/credential-profiles/{profile_id}", tags=["credentials"], status_code=204)
+    def delete_profile(profile_id: int, force: bool = False):
+        from fastapi import Response
+        from wakehub.credentials import remove_profile
+
+        remove_profile(get_hub(), profile_id, force=force)
+        return Response(status_code=204)
+
+    @router.post("/inventory/remove", tags=["inventory"])
+    def bulk_remove_records(body: BulkRemoveIn) -> dict[str, Any]:
+        from wakehub.removal import bulk_remove
+
+        return bulk_remove(
+            get_hub(),
+            confirm=body.confirm,
+            targets=[item.model_dump() for item in body.targets],
+            tags=body.tags,
+        )
+
+    @router.post("/scans/clear", tags=["scan"])
+    def clear_scan_history(body: ClearScansIn) -> dict[str, Any]:
+        return clear_scans(get_hub(), confirm=body.confirm)
+
     @router.post("/scans", tags=["scan"], status_code=202)
     def create_scan(body: ScanIn) -> dict[str, Any]:
-        return start_scan(get_hub(), body.cidr)
+        return start_scan(get_hub(), body.cidr, replace=body.replace)
 
     @router.get("/scans", tags=["scan"])
     def scans() -> list[dict[str, Any]]:
@@ -385,6 +642,14 @@ def control_router() -> APIRouter:
     @router.post("/scans/{scan_id}/hosts/{host_id}/add", tags=["scan"], status_code=201)
     def adopt(scan_id: int, host_id: int, body: AddFromScanIn) -> dict[str, Any]:
         return add_from_scan(get_hub(), scan_id, host_id, body.kind, body.model_dump(exclude={"kind"}, exclude_none=True))
+
+    @router.delete("/scans/{scan_id}", tags=["scan"], status_code=200)
+    def remove_scan(scan_id: int) -> dict[str, Any]:
+        return delete_scan(get_hub(), scan_id)
+
+    @router.post("/scans/{scan_id}/rescan", tags=["scan"], status_code=202)
+    def rescan_one(scan_id: int, body: RescanIn) -> dict[str, Any]:
+        return rescan(get_hub(), scan_id, replace=body.replace)
 
     @router.get("/metrics", tags=["metrics"])
     def metrics(

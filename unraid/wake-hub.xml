@@ -7,7 +7,7 @@
   <Privileged>false</Privileged>
   <Support>https://github.com/davidmcferrin-spec/wake-hub/issues</Support>
   <ReadMe>https://raw.githubusercontent.com/davidmcferrin-spec/wake-hub/main/README.md</ReadMe>
-  <Overview>Self-hosted LAN power control: Wake-on-LAN, Synaccess PDU, Intel AMT, JetKVM, Shelly, Kasa and CyberPower UPS, with a web UI, REST API and MCP server on one port. Host networking is required so magic packets and ARP scans reach the LAN.</Overview>
+  <Overview>Self-hosted LAN power control: Wake-on-LAN, Synaccess PDU, Intel AMT, JetKVM, Shelly, Kasa and CyberPower UPS, with a web UI, REST API and MCP server on one port. Host networking is required so magic packets and ARP scans reach the LAN. The API token is entered once at first-run setup. After that the browser keeps a 30-day session.</Overview>
   <Category>Network:Tools</Category>
   <WebUI>http://[IP]:[PORT:8765]/</WebUI>
   <ExtraParams>--cap-add=NET_RAW</ExtraParams>

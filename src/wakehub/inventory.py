@@ -14,6 +14,7 @@ from typing import Any
 
 from wakehub.crypto import decrypt, encrypt
 from wakehub.errors import Conflict, DisabledDevice, NotFound, Unauthorized, WakeHubError, require_confirm
+from wakehub.identity import assert_available, bind_identity
 from wakehub.hub import Hub
 from wakehub.wol import (
     build_magic_packet,
@@ -34,18 +35,9 @@ def utcnow() -> str:
 
 
 def _tags(values: list[str]) -> list[str]:
-    cleaned: list[str] = []
-    for value in values:
-        item = value.strip()
-        if not item:
-            continue
-        if len(item) > 32:
-            raise WakeHubError("a tag must be 32 characters or fewer")
-        if item not in cleaned:
-            cleaned.append(item)
-    if len(cleaned) > 20:
-        raise WakeHubError("a device can have at most 20 tags")
-    return cleaned
+    from wakehub.tags import normalize_tags
+
+    return normalize_tags(values)
 
 
 def normalize_methods(methods: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
@@ -68,6 +60,8 @@ def normalize_methods(methods: list[dict[str, Any]] | None) -> list[dict[str, An
             cleaned.append({"kind": "plug", "plug_id": int(item["plug_id"])})
         elif kind == "ups":
             cleaned.append({"kind": "ups", "ups_id": int(item["ups_id"])})
+        elif kind == "roku":
+            cleaned.append({"kind": "roku", "roku_id": int(item["roku_id"])})
         else:
             raise WakeHubError(f"unknown power method {kind}")
     return cleaned
@@ -152,13 +146,17 @@ def _get_row(hub: Hub, device_id: int) -> Any:
     return row
 
 
-def list_devices(hub: Hub, *, tag: str | None = None, q: str | None = None) -> list[dict[str, Any]]:
+def list_devices(hub: Hub, *, tag: str | None = None, tags: str | None = None, q: str | None = None) -> list[dict[str, Any]]:
+    from wakehub.tags import has_tags, normalize_tags
+
     rows = hub.query("SELECT * FROM devices ORDER BY name COLLATE NOCASE")
-    devices = [public_device(row) for row in rows]
-    if tag:
-        devices = [item for item in devices if tag in item["tags"]]
-    if q:
-        needle = q.lower()
+    devices = [_with_power(hub, public_device(row)) for row in rows]
+    text, inline = _query_tags(q)
+    wanted = normalize_tags([*(tags or "").split(","), *([tag] if tag else []), *inline])
+    if wanted:
+        devices = [item for item in devices if has_tags(item["tags"], wanted)]
+    if text:
+        needle = text.lower()
         devices = [
             item
             for item in devices
@@ -169,8 +167,28 @@ def list_devices(hub: Hub, *, tag: str | None = None, q: str | None = None) -> l
     return devices
 
 
+def _query_tags(q: str | None) -> tuple[str, list[str]]:
+    if not q:
+        return "", []
+    tags: list[str] = []
+    words: list[str] = []
+    for part in q.split():
+        if part.startswith("#") and len(part) > 1:
+            tags.append(part)
+        else:
+            words.append(part)
+    return " ".join(words), tags
+
+
 def get_device(hub: Hub, device_id: int) -> dict[str, Any]:
-    return public_device(_get_row(hub, device_id))
+    return _with_power(hub, public_device(_get_row(hub, device_id)))
+
+
+def _with_power(hub: Hub, device: dict[str, Any]) -> dict[str, Any]:
+    from wakehub.metrics import power_snapshot
+
+    device["power"] = power_snapshot(hub, device)
+    return device
 
 
 def _insert_values(hub: Hub, fields: dict[str, Any]) -> dict[str, Any]:
@@ -205,6 +223,7 @@ def _insert_values(hub: Hub, fields: dict[str, Any]) -> dict[str, Any]:
         )
     except sqlite3.IntegrityError as exc:
         raise Conflict(f"a device named {fields['name']} already exists") from exc
+    bind_identity(hub, "device", device_id, fields["host"], fields["mac"])
     return get_device(hub, device_id)
 
 
@@ -236,12 +255,14 @@ def add_device(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
     notes = payload.get("notes") or ""
     if len(notes) > 2000:
         raise WakeHubError("notes must be 2000 characters or fewer")
+    host = _host(payload.get("host"))
+    assert_available(hub, "device", host, mac_norm)
     return _insert_values(
         hub,
         {
             "name": name,
             "mac": mac_norm,
-            "host": _host(payload.get("host")),
+            "host": host,
             "broadcast": _ipv4(payload.get("broadcast") or "255.255.255.255", "broadcast"),
             "wol_port": port,
             "secureon_enc": secureon_enc,
@@ -326,6 +347,7 @@ def update_device(hub: Hub, device_id: int, payload: dict[str, Any]) -> dict[str
         fields["wake_strategy"] = payload["wake_strategy"]
     if "methods" in payload and payload["methods"] is not None:
         fields["methods"] = json.dumps(normalize_methods(payload["methods"]))
+    assert_available(hub, "device", fields["host"], fields["mac"], exclude_id=device_id)
     try:
         hub.write(
             """
@@ -356,11 +378,15 @@ def update_device(hub: Hub, device_id: int, payload: dict[str, Any]) -> dict[str
         )
     except sqlite3.IntegrityError as exc:
         raise Conflict(f"a device named {fields['name']} already exists") from exc
+    bind_identity(hub, "device", device_id, fields["host"], fields["mac"])
     return get_device(hub, device_id)
 
 
 def remove_device(hub: Hub, device_id: int) -> None:
     _get_row(hub, device_id)
+    from wakehub.removal import detach
+
+    detach(hub, "device", device_id)
     hub.write_many(
         [
             ("UPDATE actions SET device_id = NULL WHERE device_id = ?", (device_id,)),
@@ -587,17 +613,40 @@ def public_settings(hub: Hub) -> dict[str, Any]:
         "cors_origins": hub.cors_origins(),
         "metrics_poll_seconds": int(hub.setting("metrics_poll_seconds", "60") or 60),
         "metrics_retention_days": int(hub.setting("metrics_retention_days", "30") or 30),
+        "session_days": int(hub.setting("session_days", "30") or 30),
+        "scan_keep": int(hub.setting("scan_keep", "0") or 0),
+        "scan_keep_days": int(hub.setting("scan_keep_days", "0") or 0),
+        "duplicate_records": _duplicate_records(hub),
     }
 
 
+def _duplicate_records(hub: Hub) -> list[dict[str, Any]]:
+    raw = hub.setting("duplicate_records")
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
 def update_settings(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
+    password_changed = False
     if payload.get("clear_ui_password"):
         hub.write("DELETE FROM settings WHERE key = 'ui_password'")
+        password_changed = True
     elif payload.get("ui_password"):
         password = str(payload["ui_password"])
         if len(password) < 8:
             raise WakeHubError("UI password must be at least 8 characters")
         hub._write_setting("ui_password", hash_password(password))
+        password_changed = True
+    if password_changed:
+        # An old browser session must not stay signed in after the password changes.
+        from wakehub.sessions import drop_all
+
+        drop_all(hub)
     if payload.get("metrics_poll_seconds") is not None:
         seconds = int(payload["metrics_poll_seconds"])
         if seconds < 15 or seconds > 3600:
@@ -608,6 +657,21 @@ def update_settings(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
         if days < 1 or days > 3650:
             raise WakeHubError("metrics retention must be between 1 and 3650 days")
         hub._write_setting("metrics_retention_days", str(days))
+    if payload.get("session_days") is not None:
+        days = int(payload["session_days"])
+        if days < 1 or days > 365:
+            raise WakeHubError("session length must be between 1 and 365 days")
+        hub._write_setting("session_days", str(days))
+    if payload.get("scan_keep") is not None:
+        keep = int(payload["scan_keep"])
+        if keep < 0 or keep > 500:
+            raise WakeHubError("scan history length must be between 0 and 500")
+        hub._write_setting("scan_keep", str(keep))
+    if payload.get("scan_keep_days") is not None:
+        days = int(payload["scan_keep_days"])
+        if days < 0 or days > 3650:
+            raise WakeHubError("scan history age must be between 0 and 3650 days")
+        hub._write_setting("scan_keep_days", str(days))
     if payload.get("cors_origins") is not None:
         origins = payload["cors_origins"]
         if isinstance(origins, str):
@@ -615,6 +679,10 @@ def update_settings(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(origins, list) or not origins:
             raise WakeHubError("cors_origins must be a list of origins, or *")
         hub._write_setting("cors_origins", ",".join(str(item).strip() for item in origins if str(item).strip()))
+    if payload.get("scan_keep") is not None or payload.get("scan_keep_days") is not None:
+        from wakehub.scan import prune_scans
+
+        prune_scans(hub)
     return public_settings(hub)
 
 
