@@ -33,6 +33,7 @@ def test_editing_each_hardware_type_stays_put_and_saves(live_server, hub):
         page.wait_for_selector("#page-title")
         page.click("aside button[data-page=power]")
         page.wait_for_function("document.querySelector('#page-title').textContent === 'Hardware'")
+        page.click("button[data-add-form=pdu-form]")
         page.click("#pdu-form input[name=name]")
         assert page.inner_text("#page-title") == "Hardware"
         for original, renamed, _row in created:

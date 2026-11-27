@@ -305,7 +305,10 @@ def sync_pdu_outlets(hub: Hub, pdu_id: int, count: int, names: dict[int, str]) -
             labels[number] = labels.get(number) or label
     for number in range(1, max(int(count or 0), 0) + 1):
         existing = current.get(number)
-        name = labels.get(number) or (existing["name"] if existing and existing["name"] else f"Outlet {number}")
+        candidate = labels.get(number) or ""
+        if candidate.lower() in {"0", "1", "on", "off", "true", "false"}:
+            candidate = ""
+        name = candidate or (existing["name"] if existing and existing["name"] else f"Outlet {number}")
         if existing is None:
             hub.write(
                 "INSERT INTO pdu_outlets (pdu_id, number, name, tags) VALUES (?, ?, ?, '[]')",
@@ -926,5 +929,7 @@ def _link(hub: Hub, device_id: int | None, method: dict[str, Any]) -> None:
     device = get_device(hub, int(device_id))
     methods = list(device["methods"])
     if method not in methods:
-        methods.append(method)
+        from wakehub.controls import _insert_before_wol
+
+        methods = _insert_before_wol(methods, method)
     update_device(hub, int(device_id), {"methods": normalize_methods(methods)})

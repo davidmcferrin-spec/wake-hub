@@ -33,8 +33,10 @@ def test_devices_toolbar_and_hardware_tabs(live_server, hub):
         assert page.get_by_role("tab", name="PDU").count() == 1
         page.get_by_role("tab", name="PDU").click()
         assert "/#/hardware/pdu" in page.url
+        page.click("button[data-add-form=pdu-form]")
         assert page.locator("#pdu-form").is_visible()
         assert page.locator("#amt-form").is_hidden()
+        page.get_by_role("tab", name="PDU").focus()
         page.keyboard.press("ArrowLeft")
         assert page.get_by_role("tab", name="All").get_attribute("aria-selected") == "true"
         page.set_viewport_size({"width": 800, "height": 900})

@@ -254,6 +254,7 @@ def connect(path: Path) -> sqlite3.Connection:
         _ensure_column(conn, table, "host_key", "TEXT")
         _ensure_column(conn, table, "tags", "TEXT NOT NULL DEFAULT '[]'")
     _ensure_column(conn, "devices", "power_method", "TEXT NOT NULL DEFAULT 'auto'")
+    _ensure_column(conn, "devices", "reach_timeout_set", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(conn, "devices", "host_key", "TEXT")
     _ensure_column(conn, "devices", "mac_key", "TEXT")
     from wakehub.identity import migrate_identity

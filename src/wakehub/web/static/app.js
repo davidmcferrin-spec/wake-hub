@@ -135,27 +135,97 @@ function searchValue() {
   return [...(state.tagFilter || []).map((tag) => `#${String(tag).replace(/^#/, "")}`), state.deviceQuery || ""].filter(Boolean).join(" ");
 }
 
+function methodName(kind) {
+  return { wol: "Wake-on-LAN", amt: "AMT", pdu: "PDU outlet", plug: "plug", jetkvm: "JetKVM", ups: "UPS", roku: "Roku" }[kind] || kind;
+}
+
+function methodForAction(device, action) {
+  const can = {
+    on: ["wol", "plug", "pdu", "amt", "ups", "jetkvm", "roku"],
+    off: ["plug", "pdu", "amt", "ups", "jetkvm", "roku"],
+    reboot: ["amt", "plug", "pdu", "ups", "jetkvm"],
+    cycle: ["plug", "pdu", "amt", "ups", "jetkvm"],
+  }[action] || [];
+  return ((device && device.methods) || [{ kind: "wol" }]).find((item) => can.includes(item.kind)) || null;
+}
+
+function via(device, action, verb) {
+  const method = methodForAction(device, action);
+  return method ? `${verb} via ${methodName(method.kind)}` : verb;
+}
+
 function deviceCard(device) {
+  const choices = ((device.methods || [{ kind: "wol" }])).map((item) => `<option value="${escapeHtml(item.kind)}">${escapeHtml(methodName(item.kind))}</option>`).join("");
   return `
     <article class="card">
-      <header>
+      <header class="card-head">
         <label class="check"><input type="checkbox" class="select-record" data-kind="device" data-id="${device.id}" ${isSelected("device", device.id) ? "checked" : ""} aria-label="Select ${escapeHtml(device.name)}"></label>
         <h2><button type="button" class="name-button" data-open-kind="device" data-id="${device.id}">${escapeHtml(device.name)}</button></h2>
         ${pill(device)}
-        <button type="button" class="danger delete" data-cap="remove_device" data-fields="" data-id="${device.id}">Delete</button>
       </header>
       <p class="meta" title="Broadcast ${escapeHtml(device.broadcast)}:${escapeHtml(device.wol_port)}">${escapeHtml(device.host || "no host")} · ${escapeHtml(device.mac || "no MAC")}</p>
       ${powerBlock(device)}
-      ${deviceLinks(device)}
       ${tagChips(device.tags)}
+      <div class="row-actions actions">
+        <button type="button" class="primary" data-cap="power_action" data-fields="action,confirm,method" data-action="on" data-id="${device.id}">${escapeHtml(via(device, "on", "Wake"))}</button>
+        <button type="button" class="danger" data-cap="power_action" data-fields="action,confirm,method" data-action="off" data-id="${device.id}">${escapeHtml(via(device, "off", "Off"))}</button>
+        <button type="button" class="danger" data-cap="power_action" data-fields="action,confirm,method" data-action="reboot" data-id="${device.id}">${escapeHtml(via(device, "reboot", "Reset"))}</button>
+        <button type="button" class="danger" data-cap="power_action" data-fields="action,confirm,method" data-action="cycle" data-id="${device.id}">${escapeHtml(via(device, "cycle", "Cycle"))}</button>
+      </div>
       <div class="row-actions">
-        <button type="button" class="primary" data-cap="wake_device" data-fields="timeout" data-id="${device.id}">Wake</button>
-        <button type="button" class="danger" data-cap="power_action" data-fields="action,confirm,method" data-action="off" data-id="${device.id}">Off</button>
-        <button type="button" class="danger" data-cap="power_action" data-fields="action,confirm,method" data-action="reboot" data-id="${device.id}">Reset</button>
+        <label>Use <select class="action-method" aria-label="Method for the next action"><option value="auto">Auto</option>${choices}</select></label>
         <button type="button" class="ghost" data-open-kind="device" data-id="${device.id}">Open</button>
         <button type="button" class="ghost" data-cap="get_device" data-fields="" data-id="${device.id}" aria-label="Edit ${escapeHtml(device.name)}">Edit</button>
+        <details class="more">
+          <summary class="ghost">More</summary>
+          <button type="button" class="danger delete" data-cap="remove_device" data-fields="" data-id="${device.id}">Delete</button>
+        </details>
       </div>
     </article>`;
+}
+
+function hardwareChoices(kind, selected) {
+  const power = state.power || {};
+  const rows = { amt: power.amts, jetkvm: power.jetkvms, plug: power.plugs, pdu: power.pdus, ups: power.ups, roku: power.rokus }[kind] || [];
+  const options = rows.map((row) => `<option value="${row.id}" ${Number(selected) === Number(row.id) ? "selected" : ""}>${escapeHtml(row.name)}</option>`).join("");
+  return `<select class="method-target" aria-label="${escapeHtml(methodName(kind))}"><option value="">New</option>${options}</select>`;
+}
+
+function methodEditor(device) {
+  const methods = (device && device.methods && device.methods.length) ? device.methods : [{ kind: "wol" }];
+  return methods.map((method) => methodRow(method)).join("");
+}
+
+function methodRow(method) {
+  const kind = method.kind || "wol";
+  const ref = method.amt_id || method.jetkvm_id || method.plug_id || method.pdu_id || method.ups_id || method.roku_id || "";
+  const record = findMethodRecord(kind, ref);
+  const login = (state.power && state.power.profiles || []).map((item) => `<option value="${item.id}">${escapeHtml(item.name)}</option>`).join("");
+  const fields = kind === "wol" ? `<p class="sub">Uses this device's MAC address and broadcast.</p>` : `
+    <label>Record ${hardwareChoices(kind, ref)}</label>
+    <label>Host <input name="method_host" value="${escapeHtml(record && record.host || "")}"></label>
+    <label>Port <input name="method_port" type="number" value="${escapeHtml(record && record.port || "")}"></label>
+    <label class="check"><input type="checkbox" name="method_tls" ${record && record.use_tls ? "checked" : ""}> TLS</label>
+    <label>Username <input name="method_username" value="${escapeHtml(record && record.username || "")}"></label>
+    <label>Password <input name="method_password" type="password" placeholder="Leave blank to keep"></label>
+    <label>Saved login <select name="method_profile"><option value="">None</option>${login}</select></label>
+    ${kind === "pdu" ? `<label>Outlet <input name="method_outlet" type="number" value="${escapeHtml(method.outlet || 1)}"></label>` : ""}`;
+  return `<fieldset class="method-row" data-kind="${kind}" data-ref="${ref}">
+    <legend>${escapeHtml(methodName(kind))}</legend>
+    ${fields}
+    <div class="row-actions">
+      <button type="button" class="ghost" data-move="up">Up</button>
+      <button type="button" class="ghost" data-move="down">Down</button>
+      <button type="button" class="ghost test-method">Test</button>
+      <button type="button" class="danger" data-remove-method="1">Remove</button>
+    </div>
+  </fieldset>`;
+}
+
+function findMethodRecord(kind, id) {
+  const power = state.power || {};
+  const rows = { amt: power.amts, jetkvm: power.jetkvms, plug: power.plugs, pdu: power.pdus, ups: power.ups, roku: power.rokus }[kind] || [];
+  return rows.find((row) => Number(row.id) === Number(id)) || null;
 }
 
 function editorHtml() {
@@ -203,18 +273,28 @@ function editorHtml() {
           <label for="reach_port">TCP port</label>
           <input id="reach_port" name="reach_port" type="number" value="${value("reach_port")}">
         </div>
-        <div>
-          <label for="power_method">Wake method</label>
-          <select id="power_method" name="power_method">
-            ${[["auto", "Auto: plug, PDU outlet, AMT, UPS, JetKVM, then Wake-on-LAN"], ["wol", "Wake-on-LAN"], ["pdu", "PDU outlet"], ["amt", "AMT"], ["jetkvm", "JetKVM"], ["plug", "Shelly or Kasa"], ["ups", "UPS"], ["roku", "Roku"]].map(([method, label]) => `<option value="${method}" ${device && device.power_method === method ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}
-          </select>
-          <p class="sub">Auto uses that order and skips a method this computer does not have. The choice is saved on this device.</p>
-          <button type="button" id="test-wake-method">Test this method</button>
-        </div>
-        <div>
+        <div class="span-2">
           <label for="reach_timeout">Wake timeout (seconds)</label>
-          <input id="reach_timeout" name="reach_timeout" type="number" value="${value("reach_timeout", (state.settings && state.settings.default_wake_timeout) || 30)}">
-          <p class="sub">Overrides the default wake timeout in Settings.</p>
+          <input id="reach_timeout" name="reach_timeout" type="number" value="${device && device.reach_timeout != null ? escapeHtml(device.reach_timeout) : ""}" placeholder="${escapeHtml((state.settings && state.settings.default_wake_timeout) || 30)}">
+          <p class="sub">Leave blank to use the default in Settings at the moment you wake the device.</p>
+        </div>
+        <div class="span-2" id="method-list">
+          <p class="sub">Methods are tried in this order. The first one that can do the action is used.</p>
+          ${methodEditor(device)}
+          <div class="row-actions">
+            <label>Add method
+              <select id="new-method-kind" aria-label="Method to add">
+                <option value="amt">AMT</option>
+                <option value="jetkvm">JetKVM</option>
+                <option value="plug">Plug</option>
+                <option value="pdu">PDU outlet</option>
+                <option value="ups">UPS</option>
+                <option value="roku">Roku</option>
+                <option value="wol">Wake-on-LAN</option>
+              </select>
+            </label>
+            <button type="button" class="ghost" id="add-method">Add method</button>
+          </div>
         </div>
         <div>
           <label for="wake_strategy">Wake strategy</label>
@@ -233,31 +313,7 @@ function editorHtml() {
         </div>
       </div>
       <label class="check"><input type="checkbox" name="enabled" ${!device || device.enabled ? "checked" : ""}> Enabled</label>
-      <div class="row-actions" style="margin-top:0.8rem">
-        <div>
-          <label for="link-pdu">Linked PDU</label>
-          <input id="link-pdu" name="pdu_id" type="number" placeholder="pdu id">
-        </div>
-        <div>
-          <label for="link-outlet">Outlet</label>
-          <input id="link-outlet" name="outlet" type="number" placeholder="outlet">
-        </div>
-        <div>
-          <label for="link-amt">Linked AMT</label>
-          <input id="link-amt" name="amt_id" type="number" placeholder="amt id">
-        </div>
-        <div>
-          <label for="link-jet">Linked JetKVM</label>
-          <input id="link-jet" name="jetkvm_id" type="number" placeholder="jetkvm id">
-        </div>
-        <div>
-          <label for="link-plug">Linked plug</label>
-          <input id="link-plug" name="plug_id" type="number" placeholder="plug id">
-        </div>
-        <div>
-          <label for="link-ups">Linked UPS</label>
-          <input id="link-ups" name="ups_id" type="number" placeholder="ups id">
-        </div>
+      <div class="editor-footer">
         ${device
           ? `<button type="submit" data-cap="update_device" data-fields="broadcast,enabled,host,mac,methods,name,notes,power_method,reach_mode,reach_port,reach_timeout,secureon,tags,wake_strategy,wol_port">Save</button>`
           : `<button type="submit" data-cap="add_device" data-fields="broadcast,enabled,host,mac,methods,name,notes,power_method,reach_mode,reach_port,reach_timeout,secureon,tags,wake_strategy,wol_port">Add device</button>`}
@@ -267,15 +323,22 @@ function editorHtml() {
     </form>`;
 }
 
+function linkedHardware(kind, item) {
+  const key = { amt: "amt_id", jetkvm: "jetkvm_id", plug: "plug_id", roku: "roku_id" }[kind];
+  if (!key) return false;
+  const mentioned = (state.devices || []).some((device) => (device.methods || []).some((method) => method.kind === kind && Number(method[key]) === Number(item.id)));
+  return mentioned || Boolean(item.device_id);
+}
+
 function hardwareInventory() {
   const power = state.power || { pdus: [], amts: [], jetkvms: [], plugs: [], ups: [] };
   return [
     ...(power.pdus || []).map((item) => ({ kind: "pdu", label: "PDU", item })),
-    ...(power.amts || []).map((item) => ({ kind: "amt", label: "AMT", item })),
-    ...(power.jetkvms || []).map((item) => ({ kind: "jetkvm", label: "JetKVM", item })),
-    ...(power.plugs || []).map((item) => ({ kind: "plug", label: "Plug", item })),
+    ...(power.amts || []).filter((item) => !linkedHardware("amt", item)).map((item) => ({ kind: "amt", label: "AMT", item })),
+    ...(power.jetkvms || []).filter((item) => !linkedHardware("jetkvm", item)).map((item) => ({ kind: "jetkvm", label: "JetKVM", item })),
+    ...(power.plugs || []).filter((item) => !linkedHardware("plug", item)).map((item) => ({ kind: "plug", label: "Plug", item })),
     ...(power.ups || []).map((item) => ({ kind: "ups", label: "UPS", item })),
-    ...(power.rokus || []).map((item) => ({ kind: "roku", label: "Roku", item })),
+    ...(power.rokus || []).filter((item) => !linkedHardware("roku", item)).map((item) => ({ kind: "roku", label: "Roku", item })),
   ];
 }
 
@@ -428,10 +491,11 @@ function salvoPanel() {
         <button type="button" class="danger" data-cap="remove_salvo" data-fields="" data-id="${escapeHtml(salvo.slug || salvo.id)}">Delete</button>
       </div>
     </article>`).join("");
-  return `<section class="panel" style="padding:1rem;margin-bottom:1rem">
-    <h2>Salvos</h2>
-    <p class="lede">A salvo is a named sequence, such as Home Away or All Lights Off. One confirmation covers the whole run, after a preview of every device it will hit.</p>
-    <form id="salvo-form" class="hardware-form">
+  const showEditor = Boolean(state.salvoSlug || state.salvoComposer || (draft && draft.id));
+  return `<section class="panel salvo-layout">
+    <p class="lede">A sequence such as Home Away. One confirmation covers the whole run, after a preview.</p>
+    <div class="row-actions"><button type="button" class="primary" id="new-salvo">New sequence</button></div>
+    <form id="salvo-form" class="hardware-form ${showEditor ? "" : "hidden"}">
       <label>Name<input name="name" value="${escapeHtml(draft.name || "")}" required></label>
       <label>Short link<input name="slug" value="${escapeHtml(draft.slug || "")}" placeholder="home-away"></label>
       <p class="sub">The slug is the stable path, for example /api/v1/salvos/home-away/run. Leave it blank to build one from the name. Renaming the salvo does not change it.</p>
@@ -610,17 +674,35 @@ function renderDevices() {
       state.editing = device.id;
       state.focus = null;
     } else {
+      const methods = (device.methods || []).map((item, index) => `<li>${index + 1}. ${escapeHtml(methodName(item.kind))}</li>`).join("");
       $("view").innerHTML = `
         <div class="row-actions"><button type="button" class="ghost" id="back-inventory">Back</button><button type="button" class="ghost" data-cap="get_device" data-fields="" data-id="${device.id}">Edit</button></div>
-        ${deviceCard(device)}
-        <div class="row-actions">
-          <button type="button" class="ghost" data-cap="power_action" data-fields="action,confirm,method" data-action="on" data-id="${device.id}">On</button>
-          <button type="button" class="danger" data-cap="power_action" data-fields="action,confirm,method" data-action="cycle" data-id="${device.id}">Cycle</button>
-          <button type="button" class="danger" data-cap="power_action" data-fields="action,confirm,method" data-action="shutdown" data-id="${device.id}">Shutdown</button>
+        <article class="card detail">
+          <header class="card-head"><h2>${escapeHtml(device.name)}</h2>${pill(device)}</header>
+          <p class="meta">${escapeHtml(device.host || "no host")} · ${escapeHtml(device.mac || "no MAC")}</p>
+          ${tagChips(device.tags)}
+          <h3>Methods</h3>
+          <ol>${methods}</ol>
+          <h3>Linked outlets</h3>
+          ${deviceLinks(device) || `<p class="sub">No outlet is linked.</p>`}
+          <h3>Power history</h3>
+          <div id="power-history"><p class="sub">Loading samples.</p></div>
+          <button type="button" class="sr-only" data-cap="wake_device" data-fields="method,timeout" data-id="${device.id}">Send magic packet</button>
           <button type="button" class="ghost" data-cap="device_status" data-fields="" data-id="${device.id}">Status</button>
           <button type="button" class="ghost" data-cap="device_metrics" data-fields="limit" data-id="${device.id}">Metrics</button>
           <button type="button" class="ghost" data-cap="set_device_enabled" data-fields="enabled" data-id="${device.id}" data-enabled="${device.enabled ? "0" : "1"}">${device.enabled ? "Disable" : "Enable"}</button>
-        </div>`;
+          <button type="button" class="ghost" data-cap="power_action" data-fields="action,confirm,method" data-action="on" data-id="${device.id}">On</button>
+          <button type="button" class="danger" data-cap="power_action" data-fields="action,confirm,method" data-action="cycle" data-id="${device.id}">Cycle</button>
+          <button type="button" class="danger" data-cap="power_action" data-fields="action,confirm,method" data-action="shutdown" data-id="${device.id}">Shutdown</button>
+        </article>`;
+      api("GET", `/api/v1/devices/${device.id}/metrics?limit=40`).then((rows) => {
+        const slot = $("power-history");
+        if (!slot) return;
+        slot.innerHTML = rows.length && typeof sparkline === "function" ? sparkline(rows.map((row) => ({ value: row.watts || row.value || 0 }))) : `<p class="sub">No samples yet.</p>`;
+      }).catch(() => {
+        const slot = $("power-history");
+        if (slot) slot.innerHTML = `<p class="sub">No samples yet.</p>`;
+      });
       return;
     }
   }
@@ -723,6 +805,7 @@ function renderSettings() {
   $("view").innerHTML = `
     <section class="panel" style="padding:1rem" data-cap="get_settings" data-fields="">
       <h2>Browser access</h2>
+      ${(settings.control_merges || []).length ? `<p class="sub">Folded into a device: ${escapeHtml((settings.control_merges || []).map((item) => `${item.hardware} (${item.kind}) into ${item.into}`).join("; "))}.</p>` : ""}
       ${(settings.duplicate_records || []).length ? `<p class="sub">Duplicate hosts were left in place: ${escapeHtml((settings.duplicate_records || []).map((item) => `${item.kind} ${item.key} (${item.names})`).join("; "))}. Remove the extras by hand.</p>` : ""}
     </section>
     <section class="panel" style="padding:1rem" data-cap="get_access_token" data-fields="">
@@ -942,15 +1025,31 @@ function devicePayload(form) {
     notes: data.notes || "",
     tags,
     enabled: form.elements.enabled.checked,
-    methods: linkedMethods(data),
     reach_mode: data.reach_mode,
     reach_port: data.reach_port ? Number(data.reach_port) : null,
-    reach_timeout: Number(data.reach_timeout || (state.settings && state.settings.default_wake_timeout) || 30),
-    power_method: data.power_method || "auto",
     wake_strategy: data.wake_strategy,
   };
   if (data.secureon) payload.secureon = data.secureon;
+  if (String(data.reach_timeout || "").trim()) payload.reach_timeout = Number(data.reach_timeout);
+  const methods = readMethods(form);
+  if (methods) payload.methods = methods;
   return payload;
+}
+
+function readMethods(form) {
+  const rows = [...form.querySelectorAll(".method-row")];
+  if (!rows.length) return null;
+  return rows.map((row) => {
+    const kind = row.dataset.kind;
+    if (kind === "wol") return { kind: "wol" };
+    const id = Number((row.querySelector(".method-target") || {}).value || row.dataset.ref || 0);
+    const outlet = row.querySelector("[name=method_outlet]");
+    const method = { kind };
+    const key = { amt: "amt_id", jetkvm: "jetkvm_id", plug: "plug_id", pdu: "pdu_id", ups: "ups_id", roku: "roku_id" }[kind];
+    if (key && id) method[key] = id;
+    if (kind === "pdu") method.outlet = Number(outlet && outlet.value || 1);
+    return method;
+  }).filter((method) => method.kind === "wol" || Object.keys(method).length > 1);
 }
 
 async function onClick(event) {
@@ -1384,6 +1483,49 @@ document.body.addEventListener("click", (event) => {
   }
   const field = event.target.closest("input, select, textarea, label");
   if (field && !event.target.closest("button, a")) return;
+  if (event.target.id === "new-salvo") {
+    state.salvoComposer = true;
+    state.salvoReplace = true;
+    render();
+    return;
+  }
+  if (event.target.dataset && event.target.dataset.addForm) {
+    const form = $(event.target.dataset.addForm);
+    if (form) form.classList.toggle("hidden");
+    return;
+  }
+  if (event.target.dataset && event.target.dataset.move) {
+    const row = event.target.closest(".method-row");
+    const other = event.target.dataset.move === "up" ? row.previousElementSibling : row.nextElementSibling;
+    if (other && other.classList.contains("method-row")) {
+      if (event.target.dataset.move === "up") row.parentElement.insertBefore(row, other);
+      else row.parentElement.insertBefore(other, row);
+    }
+    return;
+  }
+  if (event.target.dataset && event.target.dataset.removeMethod) {
+    const row = event.target.closest(".method-row");
+    if (row) row.remove();
+    return;
+  }
+  if (event.target.classList && event.target.classList.contains("test-method")) {
+    const row = event.target.closest(".method-row");
+    const kind = row.dataset.kind === "auto" ? "wol" : row.dataset.kind;
+    const host = row.querySelector("[name=method_host]");
+    api("POST", "/api/v1/test", { kind: kind === "wol" ? "wol" : kind, confirm: false, host: host ? host.value : "", mac: "" }).then((result) => {
+      showBanner(result.message || "Test finished", result.ok === false);
+    }).catch((error) => showBanner(error.message, true));
+    return;
+  }
+  if (event.target.id === "add-method") {
+    const kind = $("new-method-kind").value;
+    const list = $("method-list");
+    const actions = list.querySelector(".row-actions");
+    const html = methodRow({ kind });
+    if (actions) actions.insertAdjacentHTML("beforebegin", html);
+    else list.insertAdjacentHTML("beforeend", html);
+    return;
+  }
   if (event.target.id === "roku-help") {
     const note = $("roku-help-text");
     if (note) {

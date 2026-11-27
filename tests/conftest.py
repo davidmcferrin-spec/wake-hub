@@ -39,6 +39,8 @@ def pdu_names_offline(monkeypatch):
     original_status = SynaccessClient.status
 
     def status(self, names=None):
+        from wakehub.errors import UpstreamError
+
         # Unit tests pass their own HTTP client. Live adds must not wait on the LAN.
         if not getattr(self, "_owns", True):
             return original_status(self, names)

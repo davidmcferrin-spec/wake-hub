@@ -34,6 +34,9 @@ class Hub:
         self.token = self._load_or_create_token()
         self._ensure_cors_default()
         self._abandon_running_scans()
+        from wakehub.controls import fold_linked_controls
+
+        fold_linked_controls(self)
         self._attempts: dict[str, list[float]] = {}
         self._attempt_lock = threading.Lock()
 

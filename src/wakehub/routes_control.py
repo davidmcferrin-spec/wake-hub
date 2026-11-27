@@ -347,6 +347,7 @@ class AddFromScanIn(BaseModel):
     username: str | None = None
     community: str | None = None
     plug_kind: str | None = None
+    device_id: int | None = None
 
 
 def control_router() -> APIRouter:

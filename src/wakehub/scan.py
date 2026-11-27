@@ -274,6 +274,7 @@ def get_scan(hub: Hub, scan_id: int) -> dict[str, Any]:
                 if marker not in seen:
                     seen.add(marker)
                     matches.append(item)
+        suggestion = detail.get("suggestion") or {}
         result["hosts"].append(
             {
                 "id": host["id"],
@@ -285,9 +286,55 @@ def get_scan(hub: Hub, scan_id: int) -> dict[str, Any]:
                 "detail": detail,
                 "matches": matches,
                 "known": matches[0] if matches else None,
+                "attach": _attach_device(hub, suggestion, host["mac"], host["hostname"]),
             }
         )
     return result
+
+
+def _attach_device(hub: Hub, suggestion: dict[str, Any], mac: str | None, hostname: str | None) -> dict[str, Any] | None:
+    kind = str(suggestion.get("type") or "")
+    if kind not in {"amt", "jetkvm", "shelly", "kasa", "roku"}:
+        return None
+    from wakehub.identity import mac_key
+
+    wanted_mac = ""
+    if mac:
+        try:
+            wanted_mac = mac_key(mac)
+        except WakeHubError:
+            wanted_mac = ""
+    host_name = str(hostname or "").strip().casefold()
+    for device in hub.query("SELECT id, name, mac, host FROM devices"):
+        device_mac = ""
+        if device["mac"]:
+            try:
+                device_mac = mac_key(device["mac"])
+            except WakeHubError:
+                device_mac = ""
+        name = str(device["name"] or "").strip().casefold()
+        host = str(device["host"] or "").strip().casefold()
+        if (wanted_mac and device_mac == wanted_mac) or (host_name and host_name in {name, host}):
+            label = {"amt": "AMT", "jetkvm": "JetKVM", "shelly": "Shelly", "kasa": "Kasa", "roku": "Roku"}[kind]
+            return {"device_id": device["id"], "name": device["name"], "label": f"Add {label} to {device['name']}"}
+    return None
+
+
+def _remember_method(hub: Hub, device_id: int | None, method: dict[str, Any]) -> None:
+    if not device_id:
+        return
+    from wakehub.controls import _has_method, _insert_before_wol
+
+    row = hub.query_one("SELECT methods FROM devices WHERE id = ?", (int(device_id),))
+    if row is None:
+        return
+    methods = json.loads(row["methods"] or "[]") or [{"kind": "wol"}]
+    if _has_method(methods, method):
+        return
+    hub.write(
+        "UPDATE devices SET methods = ? WHERE id = ?",
+        (json.dumps(_insert_before_wol(methods, method)), int(device_id)),
+    )
 
 
 def add_from_scan(hub: Hub, scan_id: int, host_id: int, kind: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -318,7 +365,9 @@ def add_from_scan(hub: Hub, scan_id: int, host_id: int, kind: str, payload: dict
     if kind == "pdu":
         return add_pdu(hub, {"name": name, "host": host["ip"], **extra})
     if kind == "amt":
-        return add_amt(hub, {"name": name, "host": host["ip"], **extra})
+        created = add_amt(hub, {"name": name, "host": host["ip"], **extra})
+        _remember_method(hub, extra.get("device_id"), {"kind": "amt", "amt_id": created["id"]})
+        return created
     if kind == "jetkvm":
         return add_jetkvm(hub, {"name": name, "host": host["ip"], **extra})
     if kind == "plug":

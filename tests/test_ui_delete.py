@@ -40,6 +40,7 @@ def test_delete_button_names_the_device_and_the_salvos(live_server, hub):
         page.fill("#ui-password", "correct horse")
         page.click("button[data-cap=ui_login]")
         page.wait_for_selector("#device-search")
+        page.locator("article", has_text="Desk").locator("summary", has_text="More").click()
         page.locator("article", has_text="Desk").locator("button.delete").click()
         page.wait_for_selector("#banner:not(.hidden)")
         assert "Delete Desk?" in messages[0]

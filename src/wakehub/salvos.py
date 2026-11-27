@@ -197,7 +197,7 @@ def _execute(hub: Hub, salvo_name: str, action: str, target: dict[str, Any], sou
         return {"kind": kind, "id": item_id, "name": name, "ok": False, "detail": reason}
     try:
         if kind == "device" and action == "wake":
-            wake_device(hub, item_id, source=source)
+            dispatch_device(hub, item_id, action="on", method="auto", confirm=False, source=source)
         elif kind == "device":
             dispatch_device(hub, item_id, action=action, confirm=True, source=source)
         elif kind == "plug":

@@ -56,7 +56,8 @@ def test_every_hardware_type_shows_its_controls(live_server, hub):
         expect(page, "Office PC", ["Wake", "Off", "Reset"])
         assert page.locator("article .method-picker, article .wake-timeout").count() == 0
         expect(page, "Bare AMT", ["Power on", "Off", "Reset", "Status"])
-        expect(page, "Linked AMT", ["Power on", "Off", "Reset"])
+        expect(page, "Office PC", ["Wake via AMT"])
+        assert page.get_by_role("heading", name="Linked AMT", exact=True).count() == 0
         expect(page, "Rack PDU", ["On", "Off", "Cycle"])
         expect(page, "Desk KVM", ["Power", "Off", "Reset", "Status"])
         expect(page, "Lamp Plug", ["On", "Off", "Status"])

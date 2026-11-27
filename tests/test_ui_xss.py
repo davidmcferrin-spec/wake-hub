@@ -38,6 +38,7 @@ def test_names_from_the_user_are_not_html(live_server, hub):
         assert page.locator("img[src='x']").count() == 0
         page.click("aside button[data-page=power]")
         page.select_option("#hw-add-type", "amt")
+        page.click("button[data-add-form=amt-form]")
         page.wait_for_selector("#amt-form select[name=credential_profile_id]")
         page.wait_for_selector("#amt-form select[name=device_id]")
         assert page.evaluate("() => window.__xss") is None

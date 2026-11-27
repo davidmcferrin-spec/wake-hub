@@ -49,7 +49,9 @@ def dispatch_device(
     if chosen["kind"] == "wol":
         if action != "on":
             raise WakeHubError("Wake-on-LAN only supports action on")
-        result = wake_device(hub, device_id, source=source)
+        from wakehub.inventory import send_wake_packet
+
+        result = send_wake_packet(hub, device_id, source=source)
         result["method"] = "wol"
         return result
     if chosen["kind"] == "pdu":
@@ -102,21 +104,24 @@ def dispatch_device(
     raise WakeHubError(f"unknown power method {chosen['kind']}")
 
 
+# Order in the device's methods list is the priority. A kind is skipped when it cannot do the action.
+_ACTION_KINDS = {
+    "on": {"wol", "plug", "pdu", "amt", "ups", "jetkvm", "roku"},
+    "off": {"plug", "pdu", "amt", "ups", "jetkvm", "roku"},
+    "reboot": {"amt", "plug", "pdu", "ups", "jetkvm"},
+    "cycle": {"plug", "pdu", "amt", "ups", "jetkvm"},
+    "shutdown": {"amt", "ups", "jetkvm"},
+}
+
+
 def _select_method(methods: list[dict[str, Any]], requested: str, action: str) -> dict[str, Any]:
-    if requested == "auto":
-        if action == "on":
-            for kind in ("plug", "pdu", "amt", "ups", "jetkvm", "wol"):
-                found = next((item for item in methods if item["kind"] == kind), None)
-                if found:
-                    return found
-        else:
-            for kind in ("amt", "plug", "pdu", "ups", "jetkvm"):
-                found = next((item for item in methods if item["kind"] == kind), None)
-                if found:
-                    return found
-        raise WakeHubError("device has no power method for that action")
-    found = next((item for item in methods if item["kind"] == requested), None)
-    if found is None:
+    capable = [item for item in methods if item.get("kind") in _ACTION_KINDS.get(action, set())]
+    if requested in {None, "", "auto"}:
+        if not capable:
+            raise WakeHubError("device has no power method for that action")
+        return capable[0]
+    found = next((item for item in methods if item.get("kind") == requested), None)
+    if found is None or found.get("kind") not in _ACTION_KINDS.get(action, set()):
         raise WakeHubError(f"device has no {requested} power method")
     return found
 

@@ -383,9 +383,9 @@ def register(server) -> None:
 
     @server.tool()
     @expose
-    def add_from_scan(scan_id: int, host_id: int, kind: str, name: str | None = None, password: str | None = None, username: str | None = None, community: str | None = None, plug_kind: str | None = None) -> dict[str, Any]:
-        """Add one discovered host. kind is device, pdu, amt, jetkvm, plug or ups. AMT needs password. UPS can take community."""
-        payload = {key: value for key, value in {"name": name, "password": password, "username": username, "community": community, "plug_kind": plug_kind}.items() if value is not None}
+    def add_from_scan(scan_id: int, host_id: int, kind: str, name: str | None = None, password: str | None = None, username: str | None = None, community: str | None = None, plug_kind: str | None = None, device_id: int | None = None) -> dict[str, Any]:
+        """Add one discovered host. kind is device, pdu, amt, jetkvm, plug or ups. Pass device_id to attach the hardware to that device. AMT needs password."""
+        payload = {key: value for key, value in {"name": name, "password": password, "username": username, "community": community, "plug_kind": plug_kind, "device_id": device_id}.items() if value is not None}
         return scansvc.add_from_scan(get_hub(), scan_id, host_id, kind, payload)
 
     @server.tool()

@@ -149,16 +149,16 @@ def build_server() -> MCPServer:
 
     @server.tool()
     @expose
-    def wake_device(device_id: int, timeout: float | None = None) -> dict[str, Any]:
-        """Send a Wake-on-LAN magic packet to an enabled device, then poll ICMP or the configured TCP port until it answers or the timeout elapses. Refuses a disabled device."""
-        return records.wake_device(get_hub(), device_id, source="mcp", timeout=timeout)
+    def wake_device(device_id: int, timeout: float | None = None, method: str = "auto") -> dict[str, Any]:
+        """Wake an enabled device using its method priority, or method when that override is set. Wake-on-LAN then waits until the host answers or the timeout elapses."""
+        return records.wake_device(get_hub(), device_id, source="mcp", timeout=timeout, method=method)
 
     @server.tool()
     @expose
     def power_action(
         device_id: int,
         action: str,
-        method: str = "wol",
+        method: str = "auto",
         confirm: bool = False,
     ) -> dict[str, Any]:
         """Change power. action is on, off, cycle, reboot or shutdown. method is wol for Wake-on-LAN, which only supports on. off, cycle, reboot and shutdown require confirm=true."""

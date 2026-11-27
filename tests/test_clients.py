@@ -78,6 +78,8 @@ def test_netbooter_setup_page_and_challenge_are_recognized():
     assert len(names) == 16
     assert names[1] == "Load 1"
     assert names[16] == "Load 16"
+    checkbox = '<input type="checkbox" name="on3" value="1"><input type="text" name="outletname1" value="NAS">'
+    assert parse_outlet_names(checkbox) == {1: "NAS"}
     assert synaccess_http({"Server": "Synaccess"}, html, 200)
     assert synaccess_http({"WWW-Authenticate": 'Basic realm="netBooter"'}, "", 401)
     assert not synaccess_http({"Server": "nginx"}, "<title>Router</title>", 401)

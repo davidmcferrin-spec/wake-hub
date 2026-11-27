@@ -118,9 +118,10 @@ def parse_result(body: str) -> None:
 
 
 _OUTLET_INPUT = re.compile(
-    r"^(?:outlet[_-]?)?(?:name|nm|custom|c|on)[_-]?(\d+)$",
+    r"^(?:outlet[_-]?)?(?:name|nm|custom)[_-]?(\d+)$",
     re.IGNORECASE,
 )
+_JUNK_NAME = {"0", "1", "on", "off", "true", "false"}
 _TITLE = re.compile(r"<title>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 
 
@@ -165,9 +166,12 @@ def _names_from_html(text: str) -> dict[int, str]:
             match.group(1),
         ):
             attrs[attr.group(1).lower()] = next(group for group in attr.groups()[1:] if group is not None)
+        kind = attrs.get("type", "text").lower()
+        if kind not in {"text", ""}:
+            continue
         found = _OUTLET_INPUT.match(attrs.get("name", ""))
         label = attrs.get("value", "").strip()
-        if found and label:
+        if found and label and label.lower() not in _JUNK_NAME:
             names[int(found.group(1))] = label
     if names:
         return names
@@ -224,9 +228,8 @@ class SynaccessClient:
         parse_result(self._command(f"$A7 {1 if on else 0}"))
 
     def read_outlet_names(self) -> dict[int, str]:
-        # $A5 reports on/off bits, not the names typed into Outlet Setup.
-        origin = self._base.split("/cmd.cgi", 1)[0]
         # $A5/$A0 is on/off bits and bank current. Names live on the setup pages.
+        origin = self._base.split("/cmd.cgi", 1)[0]
         for path in ("/api/outlets", "/outletsetup.htm", "/outlets.htm", "/outlet.htm", "/setup.htm", "/"):
             try:
                 response = self._http.get(origin + path, timeout=2.0)

@@ -210,7 +210,9 @@ function renderScan() {
         ? matches.map((item) => `Already a ${item.kind}: ${item.name}`).join("; ")
         : "New";
       const links = matches.map((item) => `<button type="button" class="ghost" data-open-kind="${escapeHtml(item.kind)}" data-id="${item.id}">Open ${escapeHtml(item.name)}</button>`).join("");
-      const add = blocked.length ? "" : `<button type="button" data-cap="add_from_scan" data-fields="community,kind,name,password,plug_kind,username" data-scan="${state.scan.id}" data-host="${host.id}" data-kind="${escapeHtml(addKind)}" data-plug-kind="${escapeHtml((suggestion.prefill && suggestion.prefill.plug_kind) || "")}">Add</button>`;
+      const attach = host.attach;
+      const addLabel = attach ? attach.label : "Add";
+      const add = blocked.length ? "" : `<button type="button" class="ghost" data-cap="add_from_scan" data-fields="community,device_id,kind,name,password,plug_kind,username" data-scan="${state.scan.id}" data-host="${host.id}" data-kind="${escapeHtml(addKind)}" data-device-id="${attach ? attach.device_id : ""}" data-plug-kind="${escapeHtml((suggestion.prefill && suggestion.prefill.plug_kind) || "")}">${escapeHtml(addLabel)}</button>`;
       return `
       <article class="card">
         <header><h2>${escapeHtml(host.ip)}</h2><span class="pill">${escapeHtml(suggestion.confidence || "")}</span></header>
@@ -255,7 +257,7 @@ function outletRow(pduId, outlet) {
   if (!outletShown(outlet)) return "";
   const stateText = outlet.on === true ? "on" : outlet.on === false ? "off" : "state unknown";
   const tags = (outlet.tags || []).join(" ");
-  return `<div class="row-actions" data-outlet-row="${outlet.number}">
+  return `<div class="row-actions outlet-line" data-outlet-row="${outlet.number}">
     <span>${escapeHtml(outlet.name)} · ${escapeHtml(stateText)}</span>
     <button type="button" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${pduId}" data-outlet="${outlet.number}" data-action="on">On</button>
     <button type="button" class="danger" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${pduId}" data-outlet="${outlet.number}" data-action="off">Off</button>
@@ -542,7 +544,8 @@ function renderPower() {
     <section data-cap="list_pdus" data-fields="" id="hw-panel-pdu" role="tabpanel" aria-labelledby="hw-tab-pdu" class="${showType("pdu") ? "" : "hidden"}">
       <h2>PDU</h2>
       <p class="lede">A power strip. Outlet names are read from the device when you add it.</p>
-      <form id="pdu-form" class="editor hardware-form">
+      <button type="button" class="ghost" data-add-form="pdu-form">Add PDU</button>
+      <form id="pdu-form" class="editor hardware-form hidden">
         ${hardwareFields("pdu", null)}
         <div class="row-actions">
           <button type="button" class="ghost" data-cap="test_target" data-fields="broadcast,community,confirm,host,insecure_tls,kind,mac,password,plug_kind,port,snmp_version,use_tls,username" data-kind="pdu">Test</button>
@@ -554,7 +557,8 @@ function renderPower() {
     <section data-cap="list_amt" data-fields="" id="hw-panel-amt" role="tabpanel" aria-labelledby="hw-tab-amt" class="${showType("amt") ? "" : "hidden"}">
       <h2>AMT</h2>
       <p class="lede">Remote power for a vPro computer. The username and password belong to that computer.</p>
-      <form id="amt-form" class="editor hardware-form">
+      <button type="button" class="ghost" data-add-form="amt-form">Add AMT</button>
+      <form id="amt-form" class="editor hardware-form hidden">
         ${hardwareFields("amt", null)}
         <div class="row-actions">
           <button type="button" class="ghost" data-cap="test_target" data-fields="broadcast,community,confirm,host,insecure_tls,kind,mac,password,plug_kind,port,snmp_version,use_tls,username" data-kind="amt">Test</button>
@@ -566,7 +570,8 @@ function renderPower() {
     <section data-cap="list_jetkvm" data-fields="" id="hw-panel-jetkvm" role="tabpanel" aria-labelledby="hw-tab-jetkvm" class="${showType("jetkvm") ? "" : "hidden"}">
       <h2>JetKVM</h2>
       <p class="lede">A local keyboard and power button. Force off holds the button down.</p>
-      <form id="jet-form" class="editor hardware-form">
+      <button type="button" class="ghost" data-add-form="jet-form">Add JetKVM</button>
+      <form id="jet-form" class="editor hardware-form hidden">
         ${hardwareFields("jetkvm", null)}
         <div class="row-actions">
           <button type="button" class="ghost" data-cap="test_target" data-fields="broadcast,community,confirm,host,insecure_tls,kind,mac,password,plug_kind,port,snmp_version,use_tls,username" data-kind="jetkvm">Test</button>
@@ -578,7 +583,8 @@ function renderPower() {
     <section data-cap="list_plugs" data-fields="" id="hw-panel-${plugKind}" role="tabpanel" aria-labelledby="hw-tab-${plugKind}" class="${plugShown ? "" : "hidden"}">
       <h2>${plugKind === "kasa" ? "Kasa" : "Shelly"}</h2>
       <p class="lede">A smart plug. Use its own login, or pick a saved one.</p>
-      <form id="plug-form" class="editor hardware-form">
+      <button type="button" class="ghost" data-add-form="plug-form">Add plug</button>
+      <form id="plug-form" class="editor hardware-form hidden">
         ${hardwareFields("plug", { kind: plugKind })}
         <div class="row-actions">
           <button type="button" class="ghost" data-cap="test_target" data-fields="broadcast,community,confirm,host,insecure_tls,kind,mac,password,plug_kind,port,snmp_version,use_tls,username" data-kind="plug">Test</button>
@@ -590,7 +596,8 @@ function renderPower() {
     <section data-cap="list_ups" data-fields="" id="hw-panel-ups" role="tabpanel" aria-labelledby="hw-tab-ups" class="${showType("ups") ? "" : "hidden"}">
       <h2>UPS</h2>
       <p class="lede">A battery backup. Shutdown and outlet-off ask you to confirm, because they can turn everything off.</p>
-      <form id="ups-form" class="editor hardware-form">
+      <button type="button" class="ghost" data-add-form="ups-form">Add UPS</button>
+      <form id="ups-form" class="editor hardware-form hidden">
         ${hardwareFields("ups", null)}
         <div class="row-actions">
           <button type="button" class="ghost" data-cap="test_target" data-fields="broadcast,community,confirm,host,insecure_tls,kind,mac,password,plug_kind,port,snmp_version,use_tls,username" data-kind="ups">Test</button>
@@ -603,7 +610,8 @@ function renderPower() {
     <section data-cap="list_rokus" data-fields="" id="hw-panel-roku" role="tabpanel" aria-labelledby="hw-tab-roku" class="${showType("roku") ? "" : "hidden"}">
       <h2>Roku</h2>
       <p class="lede">A Roku on your network.</p>
-      <form id="roku-form" class="editor hardware-form">
+      <button type="button" class="ghost" data-add-form="roku-form">Add Roku</button>
+      <form id="roku-form" class="editor hardware-form hidden">
         ${hardwareFields("roku", null)}
         <div class="row-actions">
           <button type="button" class="ghost" data-cap="test_target" data-fields="broadcast,community,confirm,host,insecure_tls,kind,mac,password,plug_kind,port,snmp_version,use_tls,username" data-kind="roku">Test</button>
@@ -697,6 +705,7 @@ window.handlePowerCap = async function handlePowerCap(button) {
     } else if (cap === "add_from_scan") {
       const body = { kind: button.dataset.kind };
       if (button.dataset.plugKind) body.plug_kind = button.dataset.plugKind;
+      if (button.dataset.deviceId) body.device_id = Number(button.dataset.deviceId);
       if (body.kind === "amt") {
         const password = window.prompt("AMT password");
         if (!password) return true;
@@ -960,7 +969,8 @@ async function sendPower(el) {
   const id = Number(el.dataset.id);
   const action = el.dataset.action || "on";
   const device = (state.devices || []).find((item) => item.id === id);
-  const method = (device && device.power_method) || "auto";
+  const pick = el.closest("article") && el.closest("article").querySelector(".action-method");
+  const method = (pick && pick.value) || "auto";
   const destructive = action !== "on";
   if (destructive && !window.confirm(`Confirm ${action}?`)) return;
   const result = await api("POST", `/api/v1/devices/${id}/power`, { action, method, confirm: destructive });

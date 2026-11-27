@@ -304,12 +304,35 @@ button.sr-only {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: var(--s3);
-  align-items: stretch;
+  align-items: start;
 }
 
-.card { height: 100%; padding: var(--s4); display: flex; flex-direction: column; gap: var(--s2); }
+.card { height: auto; padding: var(--s4); display: flex; flex-direction: column; gap: var(--s2); }
 
-.card .row-actions:last-child { margin-top: auto; }
+.card-head { align-items: center; }
+
+.card-head h2 { flex: 1; text-align: left; }
+
+.card .check { margin: 0; }
+
+.editor-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--gap);
+  margin-top: var(--s4);
+  padding-top: var(--s3);
+  border-top: 1px solid var(--line);
+}
+
+.method-row { border: 1px solid var(--line); border-radius: 12px; padding: var(--s3); margin: var(--s2) 0; }
+
+.outlet-line { display: grid; grid-template-columns: minmax(6rem, 1fr) auto auto auto; gap: var(--s2); align-items: center; }
+
+details.more summary { list-style: none; height: var(--control); display: inline-flex; align-items: center; padding: 0 0.9rem; border: 1px solid var(--line); border-radius: 999px; cursor: pointer; background: #fff; }
+
+.hardware-list { display: flex; flex-direction: column; gap: var(--s3); margin-top: var(--s4); }
+
+.tablist label { margin: 0; display: flex; align-items: center; gap: var(--s2); }
 
 .card header, .split {
   display: flex;

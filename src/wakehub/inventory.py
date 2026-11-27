@@ -139,10 +139,11 @@ def public_device(row: Any) -> dict[str, Any]:
         "enabled": bool(row["enabled"]),
         "reach_mode": row["reach_mode"],
         "reach_port": row["reach_port"],
-        "reach_timeout": row["reach_timeout"],
+        "reach_timeout": row["reach_timeout"] if row["reach_timeout_set"] else None,
         "wake_strategy": row["wake_strategy"],
         "power_method": row["power_method"] or "auto",
         "methods": json.loads(row["methods"]),
+        "priority": [item.get("kind") for item in json.loads(row["methods"] or "[]")],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -207,9 +208,9 @@ def _insert_values(hub: Hub, fields: dict[str, Any]) -> dict[str, Any]:
             """
             INSERT INTO devices (
                 name, mac, host, broadcast, wol_port, secureon_enc, notes, tags,
-                enabled, reach_mode, reach_port, reach_timeout, wake_strategy, power_method, methods,
+                enabled, reach_mode, reach_port, reach_timeout, reach_timeout_set, wake_strategy, power_method, methods,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 fields["name"],
@@ -224,6 +225,7 @@ def _insert_values(hub: Hub, fields: dict[str, Any]) -> dict[str, Any]:
                 fields["reach_mode"],
                 fields["reach_port"],
                 fields["reach_timeout"],
+                fields["reach_timeout_set"],
                 fields["wake_strategy"],
                 fields["power_method"],
                 fields["methods"],
@@ -260,12 +262,13 @@ def add_device(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
         if reach_port < 1 or reach_port > 65535:
             raise WakeHubError("reach_port must be between 1 and 65535")
     if payload.get("reach_timeout") is None:
-        raw = hub.setting("default_wake_timeout", "30") or "30"
-        timeout = float(raw)
+        timeout = 30
+        timeout_set = 0
     else:
         timeout = float(payload.get("reach_timeout"))
-    if timeout <= 0 or timeout > 300:
-        raise WakeHubError("reach_timeout must be between 0 and 300 seconds")
+        if timeout <= 0 or timeout > 300:
+            raise WakeHubError("reach_timeout must be between 0 and 300 seconds")
+        timeout_set = 1
     notes = payload.get("notes") or ""
     if len(notes) > 2000:
         raise WakeHubError("notes must be 2000 characters or fewer")
@@ -286,6 +289,7 @@ def add_device(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
             "reach_mode": reach_mode,
             "reach_port": reach_port,
             "reach_timeout": timeout,
+            "reach_timeout_set": timeout_set,
             "wake_strategy": strategy,
             "power_method": _power_method(payload.get("power_method")),
             "methods": json.dumps(normalize_methods(payload.get("methods"))),
@@ -308,6 +312,7 @@ def update_device(hub: Hub, device_id: int, payload: dict[str, Any]) -> dict[str
         "reach_mode": row["reach_mode"],
         "reach_port": row["reach_port"],
         "reach_timeout": row["reach_timeout"],
+        "reach_timeout_set": row["reach_timeout_set"],
         "wake_strategy": row["wake_strategy"],
         "power_method": row["power_method"] or "auto",
         "methods": row["methods"],
@@ -352,11 +357,15 @@ def update_device(hub: Hub, device_id: int, payload: dict[str, Any]) -> dict[str
             if reach_port < 1 or reach_port > 65535:
                 raise WakeHubError("reach_port must be between 1 and 65535")
         fields["reach_port"] = reach_port
-    if "reach_timeout" in payload and payload["reach_timeout"] is not None:
-        timeout = float(payload["reach_timeout"])
-        if timeout <= 0 or timeout > 300:
-            raise WakeHubError("reach_timeout must be between 0 and 300 seconds")
-        fields["reach_timeout"] = timeout
+    if "reach_timeout" in payload:
+        if payload["reach_timeout"] is None:
+            fields["reach_timeout_set"] = 0
+        else:
+            timeout = float(payload["reach_timeout"])
+            if timeout <= 0 or timeout > 300:
+                raise WakeHubError("reach_timeout must be between 0 and 300 seconds")
+            fields["reach_timeout"] = timeout
+            fields["reach_timeout_set"] = 1
     if "wake_strategy" in payload and payload["wake_strategy"] is not None:
         if payload["wake_strategy"] not in WAKE_STRATEGIES:
             raise WakeHubError("wake_strategy must be wol_only or power_then_wol")
@@ -371,7 +380,7 @@ def update_device(hub: Hub, device_id: int, payload: dict[str, Any]) -> dict[str
             """
             UPDATE devices SET
                 name=?, mac=?, host=?, broadcast=?, wol_port=?, secureon_enc=?, notes=?, tags=?,
-                enabled=?, reach_mode=?, reach_port=?, reach_timeout=?, wake_strategy=?, power_method=?, methods=?,
+                enabled=?, reach_mode=?, reach_port=?, reach_timeout=?, reach_timeout_set=?, wake_strategy=?, power_method=?, methods=?,
                 updated_at=?
             WHERE id=?
             """,
@@ -388,6 +397,7 @@ def update_device(hub: Hub, device_id: int, payload: dict[str, Any]) -> dict[str
                 fields["reach_mode"],
                 fields["reach_port"],
                 fields["reach_timeout"],
+                fields["reach_timeout_set"],
                 fields["wake_strategy"],
                 fields["power_method"],
                 fields["methods"],
@@ -502,7 +512,27 @@ def _require_enabled(hub: Hub, row: Any, source: str, action: str) -> None:
     raise DisabledDevice("Device is disabled")
 
 
-def wake_device(hub: Hub, device_id: int, *, source: str, timeout: float | None = None) -> dict[str, Any]:
+def wake_device(
+    hub: Hub,
+    device_id: int,
+    *,
+    source: str,
+    timeout: float | None = None,
+    method: str | None = None,
+) -> dict[str, Any]:
+    row = _get_row(hub, device_id)
+    _require_enabled(hub, row, source, "wake")
+    requested = method or "auto"
+    if requested != "wol":
+        from wakehub.power import _select_method, dispatch_device
+
+        chosen = _select_method(json.loads(row["methods"] or "[]"), requested, "on")
+        if chosen["kind"] != "wol":
+            return dispatch_device(hub, device_id, action="on", method=chosen["kind"], confirm=False, source=source)
+    return send_wake_packet(hub, device_id, source=source, timeout=timeout)
+
+
+def send_wake_packet(hub: Hub, device_id: int, *, source: str, timeout: float | None = None) -> dict[str, Any]:
     row = _get_row(hub, device_id)
     _require_enabled(hub, row, source, "wake")
     if not row["mac"]:
@@ -536,7 +566,7 @@ def wake_device(hub: Hub, device_id: int, *, source: str, timeout: float | None 
             target_name=row["name"],
         )
         raise
-    probe_timeout = float(timeout if timeout is not None else row["reach_timeout"])
+    probe_timeout = _resolved_timeout(hub, row, timeout)
     reachable, elapsed = wait_until_reachable(row["host"], row["reach_mode"], row["reach_port"], probe_timeout)
     detail = json.dumps(
         {
@@ -566,6 +596,14 @@ def wake_device(hub: Hub, device_id: int, *, source: str, timeout: float | None 
         "reachable": reachable,
         "elapsed_s": round(elapsed, 2),
     }
+
+
+def _resolved_timeout(hub: Hub, row, timeout: float | None) -> float:
+    if timeout is not None:
+        return float(timeout)
+    if row["reach_timeout_set"]:
+        return float(row["reach_timeout"])
+    return float(hub.setting("default_wake_timeout", "30") or 30)
 
 
 def power_action(
@@ -636,8 +674,20 @@ def public_settings(hub: Hub) -> dict[str, Any]:
         "scan_keep": int(hub.setting("scan_keep", "0") or 0),
         "scan_keep_days": int(hub.setting("scan_keep_days", "0") or 0),
         "default_wake_timeout": float(hub.setting("default_wake_timeout", "30") or 30),
+        "control_merges": _control_merges(hub),
         "duplicate_records": _duplicate_records(hub),
     }
+
+
+def _control_merges(hub: Hub) -> list[dict[str, Any]]:
+    raw = hub.setting("control_merges")
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    return parsed if isinstance(parsed, list) else []
 
 
 def _duplicate_records(hub: Hub) -> list[dict[str, Any]]:
