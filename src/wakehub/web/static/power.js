@@ -954,6 +954,14 @@ window.CONTROL_HANDLERS = {
   list_metrics(el) { return window.handlePowerCap(el); },
 };
 
+function powerConfirm(device, action, method) {
+  const verb = { off: "Shut down", shutdown: "Shut down", reboot: "Reset", cycle: "Power cycle" }[action] || action;
+  const name = device && device.name ? device.name : "this device";
+  const chosen = method && method !== "auto" ? method : ((typeof methodForAction === "function" && methodForAction(device, action)) || {}).kind;
+  const via = chosen ? ` via ${chosen === "wol" ? "WOL" : (typeof methodName === "function" ? methodName(chosen) : chosen)}` : "";
+  return `${verb} ${name}${via}?`;
+}
+
 async function sendPower(el) {
   const id = Number(el.dataset.id);
   const action = el.dataset.action || "on";
@@ -961,7 +969,7 @@ async function sendPower(el) {
   const pick = el.closest("article") && el.closest("article").querySelector(".action-method");
   const method = (pick && pick.value) || "auto";
   const destructive = action !== "on";
-  if (destructive && !window.confirm(`Confirm ${action}?`)) return;
+  if (destructive && !window.confirm(powerConfirm(device, action, method))) return;
   const result = await api("POST", `/api/v1/devices/${id}/power`, { action, method, confirm: destructive });
   showBanner(result.noop ? result.reason : reachText(result));
   await refreshDevices();

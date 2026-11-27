@@ -347,6 +347,41 @@ def test_a_slow_pdu_fetch_does_not_block_another_request(live_server, hub, monke
     assert result["response"].status_code == 200, result["response"].text
 
 
+def test_after_commit_stays_with_the_request_that_registered_it(hub):
+    import threading
+    import time
+
+    started = threading.Event()
+    finished = []
+
+    def first():
+        def follow():
+            started.set()
+            time.sleep(0.4)
+            finished.append("a")
+
+        with hub.transaction():
+            hub.after_commit(follow)
+            hub.write("UPDATE settings SET value = value WHERE key = ?", ("cors_origins",))
+
+    def second():
+        assert started.wait(2)
+        began = time.monotonic()
+        with hub.transaction():
+            hub.after_commit(lambda: finished.append("b"))
+            hub.write("UPDATE settings SET value = value WHERE key = ?", ("cors_origins",))
+        assert time.monotonic() - began < 0.3
+
+    left = threading.Thread(target=first)
+    right = threading.Thread(target=second)
+    left.start()
+    right.start()
+    left.join(3)
+    right.join(3)
+    assert finished.count("a") == 1
+    assert finished.count("b") == 1
+
+
 def test_scan_offers_add_amt_to_the_matching_device(hub):
     hub.write(
         "INSERT INTO devices (name, mac, host, broadcast, wol_port, notes, tags, enabled, reach_mode, reach_timeout, reach_timeout_set, wake_strategy, power_method, methods, created_at, updated_at) VALUES ('UNRAID', '02:00:00:00:00:97', '192.168.0.97', '255.255.255.255', 9, '', '[]', 1, 'icmp', 30, 0, 'wol_only', 'auto', ?, 't', 't')",

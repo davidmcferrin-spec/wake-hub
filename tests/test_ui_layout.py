@@ -128,6 +128,29 @@ def test_devices_toolbar_and_hardware_tabs(live_server, hub):
             }"""
         )
         assert row["spread"] < 4, row
+        messages = []
+        page.once("dialog", lambda dialog: messages.append(dialog.message) or dialog.dismiss())
+        page.locator("article", has_text="Office PC").get_by_role("button", name="Off via AMT").click()
+        assert messages and "Office PC" in messages[0] and "AMT" in messages[0]
+        page.click("aside button[data-page=power]")
+        page.wait_for_selector("article.card .more-toggle")
+        page.set_viewport_size({"width": 1280, "height": 900})
+        toggle = page.locator("article.card .more-toggle").first
+        toggle.click()
+        page.wait_for_selector(".more .menu:not(.hidden)")
+        page.mouse.wheel(0, 250)
+        page.wait_for_function("() => !document.querySelector('.more .menu:not(.hidden)')")
+        toggle.click()
+        page.wait_for_selector(".more .menu:not(.hidden)")
+        page.locator("#page-title").click()
+        page.wait_for_function("() => !document.querySelector('.more .menu:not(.hidden)')")
+        toggle.click()
+        page.wait_for_selector(".more .menu:not(.hidden)")
+        page.keyboard.press("Escape")
+        page.wait_for_function("() => !document.querySelector('.more .menu:not(.hidden)')")
+        assert page.evaluate("() => document.activeElement && document.activeElement.classList.contains('more-toggle')")
+        page.click("aside button[data-page=devices]")
+        page.wait_for_selector("#device-search")
         tv_card = page.locator("article", has_text="Living TV")
         assert tv_card.get_by_role("button", name="Reset").count() == 0
         assert tv_card.get_by_role("button", name="Wake", exact=False).count() >= 1

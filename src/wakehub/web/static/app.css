@@ -326,9 +326,11 @@ button.sr-only {
 .card.detail .actions { margin-top: 0.1rem; }
 
 @media (min-width: 1100px) {
-  .card[data-kind="device"] .actions { flex-wrap: nowrap; }
-  .card[data-kind="device"] .actions > button,
-  .card[data-kind="device"] .actions .more-toggle { padding-left: 0.65rem; padding-right: 0.65rem; }
+  .card .actions,
+  .card > .row-actions { flex-wrap: nowrap; }
+  .card .actions > button,
+  .card > .row-actions > button,
+  .card .more-toggle { padding-left: 0.55rem; padding-right: 0.55rem; }
 }
 
 .tablist label.add-type { white-space: nowrap; flex: 0 0 auto; }

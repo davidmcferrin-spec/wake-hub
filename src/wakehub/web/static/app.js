@@ -187,7 +187,7 @@ function recordCard(spec) {
       <div class="row-actions actions">
         ${spec.primary || ""}
         <div class="more">
-          <button type="button" class="ghost more-toggle">More</button>
+          <button type="button" class="ghost more-toggle" aria-haspopup="menu" aria-expanded="false">More</button>
           <div class="menu hidden">${spec.more || ""}</div>
         </div>
       </div>
@@ -403,13 +403,19 @@ function removeCap(kind) {
 function hardwareInventoryCard(entry) {
   const item = entry.item;
   const port = item.port ? `:${item.port}` : "";
+  const controls = window.hardwareControls ? window.hardwareControls(entry.kind, item, false) : "";
+  const marker = '<div class="row-actions">';
+  const splitAt = controls.lastIndexOf(marker);
+  const body = splitAt >= 0 ? controls.slice(0, splitAt) : controls;
+  const primary = splitAt >= 0 ? controls.slice(splitAt + marker.length).replace(/<\/div>\s*$/, "") : "";
   return recordCard({
     kind: entry.kind,
     id: item.id,
     name: item.name,
     badge: `<span class="pill">${escapeHtml(entry.label)}</span>`,
     meta: `${item.host || "no host"}${port}`,
-    body: `${tagChips(item.tags)}${window.hardwareControls ? window.hardwareControls(entry.kind, item, false) : ""}`,
+    body: `${tagChips(item.tags)}${body}`,
+    primary,
     more: `
       <button type="button" class="ghost" data-open-kind="${entry.kind}" data-id="${item.id}">Open</button>
       <button type="button" class="ghost" data-edit-kind="${entry.kind}" data-id="${item.id}" aria-label="Edit ${escapeHtml(item.name)}">Edit</button>
@@ -1032,6 +1038,20 @@ function placeMenu(wrap) {
   if (placed.bottom > bounds.bottom) menu.style.top = `${Math.round(Math.max(bounds.top, bounds.bottom - placed.height))}px`;
   if (placed.right > bounds.right) menu.style.left = `${Math.round(Math.max(bounds.left, bounds.right - placed.width))}px`;
   menu.dataset.placed = "1";
+  if (toggle) toggle.setAttribute("aria-expanded", "true");
+}
+
+let menuScrollArmed = false;
+
+function closeMenus() {
+  menuScrollArmed = false;
+  document.querySelectorAll(".more .menu").forEach((menu) => menu.classList.add("hidden"));
+  document.querySelectorAll(".more-toggle").forEach((toggle) => toggle.setAttribute("aria-expanded", "false"));
+}
+
+function armMenuScroll() {
+  menuScrollArmed = false;
+  requestAnimationFrame(() => { menuScrollArmed = true; });
 }
 
 function restoreTransient(saved) {
@@ -1043,6 +1063,7 @@ function restoreTransient(saved) {
     if (menu) {
       menu.classList.remove("hidden");
       placeMenu(wrap);
+      armMenuScroll();
     }
   });
   saved.methods.forEach((key) => {
@@ -1664,6 +1685,17 @@ window.addEventListener("hashchange", () => {
 window.addEventListener("resize", () => {
   document.querySelectorAll(".more .menu:not(.hidden)").forEach((menu) => placeMenu(menu.parentElement));
 });
+window.addEventListener("scroll", () => {
+  if (menuScrollArmed) closeMenus();
+}, true);
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  const menu = document.querySelector(".more .menu:not(.hidden)");
+  if (!menu) return;
+  const toggle = menu.parentElement.querySelector(".more-toggle");
+  closeMenus();
+  if (toggle) toggle.focus();
+});
 
 document.body.addEventListener("click", (event) => {
   const toggle = event.target.closest && event.target.closest(".more-toggle");
@@ -1671,17 +1703,22 @@ document.body.addEventListener("click", (event) => {
     const wrap = toggle.closest(".more");
     const menu = wrap.querySelector(".menu");
     const opening = menu.classList.contains("hidden");
-    document.querySelectorAll(".more .menu").forEach((node) => node.classList.add("hidden"));
+    closeMenus();
     if (opening) {
       menu.classList.remove("hidden");
+      toggle.setAttribute("aria-expanded", "true");
       placeMenu(wrap);
+      armMenuScroll();
     }
     return;
   }
+  if (!event.target.closest || !event.target.closest(".more")) closeMenus();
   const menuButton = event.target.closest && event.target.closest(".more .menu button, .more .menu a");
   if (menuButton) {
     const menu = menuButton.closest(".menu");
     if (menu) menu.classList.add("hidden");
+    const toggle = menuButton.closest(".more").querySelector(".more-toggle");
+    if (toggle) toggle.setAttribute("aria-expanded", "false");
   }
   const completion = event.target.closest("[data-complete-tag]");
   if (completion) {
