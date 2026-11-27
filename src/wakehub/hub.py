@@ -24,6 +24,9 @@ class Hub:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.lock = threading.Lock()
+        self._background_stop = threading.Event()
+        self._workers: list[threading.Thread] = []
+        self._closed = False
         settings.data_dir.mkdir(parents=True, exist_ok=True)
         settings.config_dir.mkdir(parents=True, exist_ok=True)
         self.db = connect(settings.data_dir / "wakehub.sqlite3")
@@ -38,8 +41,35 @@ class Hub:
     def open(cls, settings: Settings) -> Hub:
         return cls(settings)
 
+    def track_background(self, thread: threading.Thread) -> None:
+        self._workers.append(thread)
+
+    def stopping(self) -> bool:
+        return self._background_stop.is_set() or self._closed
+
+    def stop_background(self) -> None:
+        self._background_stop.set()
+
+    def join_background(self, timeout: float = 5.0) -> None:
+        self.stop_background()
+        for thread in list(self._workers):
+            if thread.is_alive() and thread is not threading.current_thread():
+                thread.join(timeout)
+
     def close(self) -> None:
-        self.db.close()
+        # Wait out workers before closing. sqlite can segfault if another thread is mid-query.
+        self.join_background()
+        with self.lock:
+            if self._closed:
+                return
+            self._closed = True
+            self.db.close()
+
+    def _skip_locked(self) -> bool:
+        if self._closed:
+            return True
+        # A worker that has been told to stop must not start another statement.
+        return self._background_stop.is_set() and threading.current_thread() in self._workers
 
     def _load_or_create_token(self) -> str:
         row = self.db.execute("SELECT value FROM settings WHERE key = 'api_token'").fetchone()
@@ -80,6 +110,8 @@ class Hub:
 
     def setting(self, key: str, default: str | None = None) -> str | None:
         with self.lock:
+            if self._skip_locked():
+                return default
             row = self.db.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
         if row is None:
             return default
@@ -124,20 +156,28 @@ class Hub:
 
     def query(self, sql: str, params: tuple[Any, ...] = ()) -> list[Any]:
         with self.lock:
+            if self._skip_locked():
+                return []
             return list(self.db.execute(sql, params).fetchall())
 
     def query_one(self, sql: str, params: tuple[Any, ...] = ()) -> Any:
         with self.lock:
+            if self._skip_locked():
+                return None
             return self.db.execute(sql, params).fetchone()
 
     def write(self, sql: str, params: tuple[Any, ...] = ()) -> int:
         with self.lock:
+            if self._skip_locked():
+                return 0
             cursor = self.db.execute(sql, params)
             self.db.commit()
             return int(cursor.lastrowid or 0)
 
     def write_many(self, statements: list[tuple[str, tuple[Any, ...]]]) -> None:
         with self.lock:
+            if self._skip_locked():
+                return
             for sql, params in statements:
                 self.db.execute(sql, params)
             self.db.commit()

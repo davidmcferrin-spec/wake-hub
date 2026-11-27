@@ -254,6 +254,7 @@ def create_app(hub: Hub) -> FastAPI:
                 yield
         finally:
             stop_metrics.set()
+            hub.join_background(timeout=5)
 
     app = FastAPI(
         title="Wake Hub",

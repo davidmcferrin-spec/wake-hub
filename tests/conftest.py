@@ -23,6 +23,8 @@ def hub(tmp_path):
     )
     opened = Hub.open(settings)
     yield opened
+    opened.stop_background()
+    opened.join_background(timeout=5)
     opened.close()
 
 

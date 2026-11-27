@@ -14,7 +14,12 @@ def main() -> None:
     settings = Settings.from_env()
     hub = Hub.open(settings)
     app = create_app(hub)
-    uvicorn.run(app, host=settings.host, port=settings.port, log_level="info")
+    try:
+        uvicorn.run(app, host=settings.host, port=settings.port, log_level="info")
+    finally:
+        hub.stop_background()
+        hub.join_background(timeout=5)
+        hub.close()
 
 
 if __name__ == "__main__":
