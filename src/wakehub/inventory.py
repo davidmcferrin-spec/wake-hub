@@ -632,13 +632,21 @@ def _duplicate_records(hub: Hub) -> list[dict[str, Any]]:
 
 
 def update_settings(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
+    password_changed = False
     if payload.get("clear_ui_password"):
         hub.write("DELETE FROM settings WHERE key = 'ui_password'")
+        password_changed = True
     elif payload.get("ui_password"):
         password = str(payload["ui_password"])
         if len(password) < 8:
             raise WakeHubError("UI password must be at least 8 characters")
         hub._write_setting("ui_password", hash_password(password))
+        password_changed = True
+    if password_changed:
+        # An old browser session must not stay signed in after the password changes.
+        from wakehub.sessions import drop_all
+
+        drop_all(hub)
     if payload.get("metrics_poll_seconds") is not None:
         seconds = int(payload["metrics_poll_seconds"])
         if seconds < 15 or seconds > 3600:

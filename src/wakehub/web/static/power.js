@@ -16,6 +16,7 @@ async function refreshPower() {
   state.power.ups = await api("GET", "/api/v1/ups");
   state.power.rokus = await api("GET", "/api/v1/rokus");
   state.power.profiles = await api("GET", "/api/v1/credential-profiles");
+  state.allDevices = await api("GET", "/api/v1/devices");
 }
 
 function formatPairs(names) {
@@ -65,10 +66,13 @@ function hardwareFields(kind, record) {
   const hostPort = `<div class="pair"><label>Host<input name="host" required value="${shown("host")}"></label><label>Port<input name="port" type="number" value="${shown("port", portFallback)}"></label></div>`;
   const tls = `<div class="pair"><label class="check"><input type="checkbox" name="use_tls" ${checked("use_tls")}> TLS</label><label class="check"><input type="checkbox" name="insecure_tls" ${checked("insecure_tls")}> Allow self-signed certificate</label></div>`;
   const login = `<div class="pair"><label>Username<input name="username" value="${shown("username", editing ? "" : "admin")}"></label><label>Password${password("password")}</label></div>`;
-  const saved = `<label>Saved login<input name="credential_profile_id" type="number" value="${shown("credential_profile_id")}"></label>`;
+  const profiles = (state.power && state.power.profiles) || [];
+  const computers = state.allDevices || state.devices || [];
+  const recordSelect = (field, rows, selected) => choice(field, [["", "None"], ...rows.map((row) => [String(row.id), row.name])], selected ?? "");
+  const saved = `<label>Saved login${recordSelect("credential_profile_id", profiles, current.credential_profile_id)}</label>`;
   const tagText = editing ? (current.tags || []).map((tag) => (String(tag).startsWith("#") ? tag : `#${tag}`)).join(" ") : "";
   const tagsField = `<label>Tags<input name="tags" value="${escapeHtml(tagText)}" placeholder="#Office #TV"></label>`;
-  const linked = `<label>Linked device<input name="device_id" type="number" value="${shown("device_id")}"></label>`;
+  const linked = `<label>Linked device${recordSelect("device_id", computers, current.device_id)}</label>`;
   if (kind === "pdu") {
     const names = editing ? escapeHtml(formatPairs(current.outlet_names)) : "";
     const fromDevice = editing
@@ -180,8 +184,11 @@ window.saveHardware = async function (button) {
 };
 
 function renderScan() {
+  const typed = document.getElementById("cidr");
+  const kept = typed ? typed.value : "";
   const interfaces = state.interfaces || [];
   const primary = interfaces.find((item) => item.primary) || interfaces[0];
+  const cidrValue = kept || (primary ? primary.cidr : "");
   const options = interfaces.map((item) => `<option value="${escapeHtml(item.cidr)}"${item.primary ? " selected" : ""}>${escapeHtml(item.name)} ${escapeHtml(item.cidr)}</option>`).join("");
   const picker = interfaces.length > 1
     ? `<label>Subnet <select id="cidr-pick" aria-label="Choose a subnet">${options}</select></label>`
@@ -224,7 +231,7 @@ function renderScan() {
     <p class="lede">The subnet is taken from this host. Docker, veth and bridge interfaces are skipped. Pick another when the machine has more than one LAN. Deleting a scan does not remove devices already added to the inventory.</p>
     <form id="scan-form" class="toolbar">
       ${picker}
-      <label>CIDR <input id="cidr" name="cidr" value="${escapeHtml(primary ? primary.cidr : "")}" aria-label="CIDR"></label>
+      <label>CIDR <input id="cidr" name="cidr" value="${escapeHtml(cidrValue)}" aria-label="CIDR"></label>
       <label class="check"><input type="checkbox" name="replace"> Replace earlier results for this subnet</label>
       <button type="submit" data-cap="scan_subnet" data-fields="cidr,replace">Scan subnet</button>
       <button type="button" class="ghost" data-cap="list_interfaces" data-fields="">Refresh subnets</button>
@@ -242,7 +249,7 @@ function renderPower() {
       <h2>${escapeHtml(item.name)}</h2>
       <p class="meta">${escapeHtml(item.username || "no username")} · ${item.password_set ? "password stored" : "no password"}</p>
       <div class="row-actions">
-        <button type="button" class="danger" data-cap="remove_credential_profile" data-fields="" data-id="${item.id}">Remove</button>
+        <button type="button" class="danger" data-cap="remove_credential_profile" data-fields="force" data-id="${item.id}">Remove</button>
       </div>
     </article>`).join("");
   const pduCards = state.power.pdus.map((pdu) => `

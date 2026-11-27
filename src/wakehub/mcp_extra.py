@@ -427,9 +427,9 @@ def register(server) -> None:
 
     @server.tool()
     @expose
-    def remove_credential_profile(profile_id: int) -> dict[str, Any]:
-        """Remove a saved login. Devices keep their own stored passwords."""
+    def remove_credential_profile(profile_id: int, force: bool = False) -> dict[str, Any]:
+        """Remove a saved login. Refuses when a device still uses it, naming those devices, unless force is true. force clears the link on every hardware record and leaves each device's own password in place."""
         from wakehub.credentials import remove_profile
 
-        remove_profile(get_hub(), profile_id)
+        remove_profile(get_hub(), profile_id, force=force)
         return {"removed": profile_id}

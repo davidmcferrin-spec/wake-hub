@@ -1018,7 +1018,16 @@ window.saveProfile = async function (el) {
 };
 
 window.removeProfile = async function (el) {
-  await api("DELETE", `/api/v1/credential-profiles/${el.dataset.id}`);
+  const path = `/api/v1/credential-profiles/${el.dataset.id}`;
+  try {
+    await api("DELETE", path);
+  } catch (error) {
+    const records = (error.existing && error.existing.records) || [];
+    if (!records.length) throw error;
+    const names = records.map((item) => `${item.kind} ${item.name}`).join(", ");
+    if (!window.confirm(`${names} use this login. Remove it and clear those links?`)) return;
+    await api("DELETE", `${path}?force=true`);
+  }
   await refreshPower();
   renderPower();
 };

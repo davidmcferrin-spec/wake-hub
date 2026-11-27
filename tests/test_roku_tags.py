@@ -26,6 +26,9 @@ def test_roku_device_info_and_ssdp_are_parsed():
     found = parse_ssdp(packet)
     assert found["ip"] == "192.168.0.20"
     assert found["port"] == 8060
+    from_sender = parse_ssdp(packet, "10.0.0.9")
+    assert from_sender["ip"] == "10.0.0.9"
+    assert from_sender["port"] == 8060
     assert parse_ssdp("HTTP/1.1 200 OK\r\nST: upnp:rootdevice\r\n") is None
 
 

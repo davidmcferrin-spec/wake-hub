@@ -71,18 +71,25 @@ def _backfill(conn: sqlite3.Connection) -> list[dict]:
     duplicates: list[dict] = []
     for kind, (table, has_mac) in TABLES.items():
         columns = "id, name, host, mac" if has_mac else "id, name, host"
-        seen_host: dict[str, int] = {}
-        seen_mac: dict[str, int] = {}
+        seen_host: dict[str, tuple[int, str]] = {}
+        seen_mac: dict[str, tuple[int, str]] = {}
         for row in conn.execute(f"SELECT {columns} FROM {table} ORDER BY id"):
             key = host_key(row["host"])
             if key and key in seen_host:
+                first_id, first_name = seen_host[key]
                 duplicates.append(
-                    {"kind": kind, "field": "host_key", "key": key, "ids": f"{seen_host[key]},{row['id']}", "names": row["name"]}
+                    {
+                        "kind": kind,
+                        "field": "host_key",
+                        "key": key,
+                        "ids": f"{first_id},{row['id']}",
+                        "names": f"{first_name}, {row['name']}",
+                    }
                 )
-                log.warning("left duplicate %s host %s in place: %s", kind, key, row["name"])
+                log.warning("left duplicate %s host %s in place: %s and %s", kind, key, first_name, row["name"])
                 key = None
             elif key:
-                seen_host[key] = row["id"]
+                seen_host[key] = (row["id"], row["name"])
             mac = None
             if has_mac and row["mac"]:
                 try:
@@ -90,13 +97,20 @@ def _backfill(conn: sqlite3.Connection) -> list[dict]:
                 except WakeHubError:
                     mac = None
                 if mac and mac in seen_mac:
+                    first_id, first_name = seen_mac[mac]
                     duplicates.append(
-                        {"kind": kind, "field": "mac_key", "key": mac, "ids": f"{seen_mac[mac]},{row['id']}", "names": row["name"]}
+                        {
+                            "kind": kind,
+                            "field": "mac_key",
+                            "key": mac,
+                            "ids": f"{first_id},{row['id']}",
+                            "names": f"{first_name}, {row['name']}",
+                        }
                     )
-                    log.warning("left duplicate %s MAC %s in place: %s", kind, mac, row["name"])
+                    log.warning("left duplicate %s MAC %s in place: %s and %s", kind, mac, first_name, row["name"])
                     mac = None
                 elif mac:
-                    seen_mac[mac] = row["id"]
+                    seen_mac[mac] = (row["id"], row["name"])
             if has_mac:
                 conn.execute("UPDATE devices SET host_key = ?, mac_key = ? WHERE id = ?", (key, mac, row["id"]))
             else:

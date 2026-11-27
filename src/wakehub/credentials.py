@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from wakehub.crypto import decrypt, encrypt
-from wakehub.errors import NotFound, WakeHubError
+from wakehub.errors import Conflict, NotFound, WakeHubError
 from wakehub.hub import Hub
 from wakehub.inventory import utcnow
 
@@ -72,10 +72,38 @@ def update_profile(hub: Hub, profile_id: int, payload: dict[str, Any]) -> dict[s
     return public_profile(hub.query_one("SELECT * FROM credential_profiles WHERE id = ?", (profile_id,)))
 
 
-def remove_profile(hub: Hub, profile_id: int) -> None:
+_PROFILE_TABLES = (
+    ("pdus", "PDU"),
+    ("amt_endpoints", "AMT"),
+    ("jetkvm_endpoints", "JetKVM"),
+    ("plugs", "plug"),
+    ("ups_cards", "UPS"),
+    ("rokus", "Roku"),
+)
+
+
+def _profile_users(hub: Hub, profile_id: int) -> list[dict[str, Any]]:
+    users: list[dict[str, Any]] = []
+    for table, kind in _PROFILE_TABLES:
+        for row in hub.query(f"SELECT id, name FROM {table} WHERE credential_profile_id = ?", (profile_id,)):
+            users.append({"kind": kind, "id": row["id"], "name": row["name"]})
+    return users
+
+
+def remove_profile(hub: Hub, profile_id: int, *, force: bool = False) -> None:
     current = hub.query_one("SELECT id FROM credential_profiles WHERE id = ?", (profile_id,))
     if current is None:
         raise NotFound(f"credential profile {profile_id} was not found")
+    users = _profile_users(hub, profile_id)
+    if users and not force:
+        listed = ", ".join(f"{item['kind']} {item['name']}" for item in users)
+        raise Conflict(
+            f"saved login is used by {listed}. Set force to true to clear those links.",
+            existing={"records": users},
+        )
+    if force:
+        for table, _kind in _PROFILE_TABLES:
+            hub.write(f"UPDATE {table} SET credential_profile_id = NULL WHERE credential_profile_id = ?", (profile_id,))
     hub.write("DELETE FROM credential_profiles WHERE id = ?", (profile_id,))
 
 

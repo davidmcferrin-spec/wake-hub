@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import select
 import socket
+import struct
 import subprocess
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable
@@ -50,13 +53,46 @@ def interfaces_from(addrs: list[dict[str, Any]], routes: list[dict[str, Any]]) -
             prefix = addr.get("prefixlen")
             if prefix is None:
                 continue
-            network = ipaddress.ip_network(f"{local}/{prefix}", strict=False)
-            if not isinstance(network, ipaddress.IPv4Network) or network.prefixlen < 22:
+            try:
+                host = ipaddress.ip_address(local)
+            except ValueError:
                 continue
-            found.append({"name": name, "cidr": str(network), "primary": bool(primary) and name == primary})
-    if found and not any(item["primary"] for item in found):
-        found[0]["primary"] = True
-    return found
+            if not isinstance(host, ipaddress.IPv4Address):
+                continue
+            # A LAN wider than /22 is offered as the /24 around this host.
+            # The full network would be refused, and the picker would fall back to a placeholder.
+            if int(prefix) < 22:
+                cidr = str(ipaddress.ip_network(f"{host}/24", strict=False))
+            else:
+                network = ipaddress.ip_network(f"{host}/{int(prefix)}", strict=False)
+                if not isinstance(network, ipaddress.IPv4Network):
+                    continue
+                cidr = str(network)
+            found.append({"name": name, "cidr": cidr, "primary": bool(primary) and name == primary})
+    return _merge_interfaces(found)
+
+
+def _merge_interfaces(found: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One choice per subnet. Unraid shows the same LAN on br0, shim-br0 and vhost0."""
+    merged: dict[str, dict[str, Any]] = {}
+    for item in found:
+        current = merged.get(item["cidr"])
+        if current is None or _prefer_iface(item, current):
+            merged[item["cidr"]] = item
+    chosen = list(merged.values())
+    if chosen and not any(item["primary"] for item in chosen):
+        chosen[0]["primary"] = True
+    return chosen
+
+
+def _prefer_iface(candidate: dict[str, Any], current: dict[str, Any]) -> bool:
+    if candidate["primary"] != current["primary"]:
+        return bool(candidate["primary"])
+    return _extra_iface(current["name"]) and not _extra_iface(candidate["name"])
+
+
+def _extra_iface(name: str) -> bool:
+    return name.startswith(("shim", "vhost"))
 
 
 def list_interfaces() -> list[dict[str, Any]]:
@@ -310,7 +346,7 @@ def discover_subnet(cidr: str, progress: Callable[[int, int], None]) -> list[dic
         ssdp_job = pool.submit(_roku_ssdp)
         pings = {pool.submit(ping, ip, 1): ip for ip in hosts}
         arp = arp_job.result()
-        names = mdns_job.result()
+        names_by_ip = mdns_job.result()
         roku_ips = ssdp_job.result()
         for job in as_completed(pings):
             ip = pings[job]
@@ -323,7 +359,7 @@ def discover_subnet(cidr: str, progress: Callable[[int, int], None]) -> list[dic
                 if done % 16 == 0 or done == total:
                     progress(done, total)
                 continue
-            described = inspect(ip, arp, names, answered or ip in arp)
+            described = inspect(ip, arp, names_by_ip.get(ip, []), answered or ip in arp)
             if described:
                 found[ip] = described
             if done % 16 == 0 or done == total:
@@ -336,21 +372,22 @@ def discover_subnet(cidr: str, progress: Callable[[int, int], None]) -> list[dic
                     continue
             except ValueError:
                 continue
-            described = inspect(ip, arp, names, False)
+            described = inspect(ip, arp, names_by_ip.get(ip, []), False)
             if described:
                 found[ip] = described
         for ip in roku_ips:
+            own_names = names_by_ip.get(ip, [])
             if ip in found:
                 detail = found[ip].setdefault("detail", {})
                 suggestion = dict((detail.get("suggestion") or {}))
                 if suggestion.get("type") != "roku":
-                    kinds, finger = _fingerprint(ip, found[ip].get("mac") or "", names)
+                    kinds, finger = _fingerprint(ip, found[ip].get("mac") or "", own_names)
                     finger["suggestion"] = suggest(
                         vendor=found[ip].get("vendor") or "",
                         mac=found[ip].get("mac") or "",
                         ports=set(finger.get("ports") or []),
                         http_kinds=kinds,
-                        mdns=names,
+                        mdns=own_names,
                         ssdp=True,
                     )
                     found[ip]["kinds"] = kinds
@@ -361,14 +398,14 @@ def discover_subnet(cidr: str, progress: Callable[[int, int], None]) -> list[dic
                     continue
             except ValueError:
                 continue
-            described = inspect(ip, arp, names, True)
+            described = inspect(ip, arp, own_names, True)
             if described:
                 described["detail"]["suggestion"] = suggest(
                     vendor=described.get("vendor") or "",
                     mac=described.get("mac") or "",
                     ports=set((described.get("detail") or {}).get("ports") or []),
                     http_kinds=described.get("kinds") or [],
-                    mdns=names,
+                    mdns=own_names,
                     ssdp=True,
                 )
                 found[ip] = described
@@ -413,8 +450,8 @@ def _hostname(ip: str) -> str:
 def _fingerprint(ip: str, mac: str, mdns: list[str] | None = None) -> tuple[list[str], dict[str, Any]]:
     kinds: list[str] = []
     ports: set[int] = set()
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        checks = {pool.submit(_port_open, ip, port): port for port in (16992, 16993, 9999, 161, 8060)}
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        checks = {pool.submit(_port_open, ip, port): port for port in (80, 443, 16992, 16993, 9999, 161, 8060)}
         for job in as_completed(checks):
             if job.result():
                 ports.add(checks[job])
@@ -533,30 +570,45 @@ def _roku_ssdp() -> set[str]:
     return {str(item["ip"]) for item in discover_ecp()}
 
 
-def _mdns_names() -> list[str]:
-    """Ask the LAN for Shelly and JetKVM service names. Silence means none were heard."""
-    import select
-    import struct
-
+def _mdns_names() -> dict[str, list[str]]:
+    """Ask the LAN for Shelly and JetKVM names, keyed by the address that sent them."""
     queries = (_dns_query("_shelly._tcp.local"), _dns_query("_jetkvm._tcp.local"))
-    names: list[str] = []
+    by_ip: dict[str, list[str]] = {}
+    sock = None
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 1)
         sock.setblocking(False)
         for query in queries:
             sock.sendto(query, ("224.0.0.251", 5353))
-        deadline = __import__("time").monotonic() + 0.6
-        while __import__("time").monotonic() < deadline:
+        deadline = time.monotonic() + 0.6
+        while time.monotonic() < deadline:
             ready, _, _ = select.select([sock], [], [], 0.2)
             if not ready:
                 continue
-            packet, _addr = sock.recvfrom(2048)
-            names.extend(_dns_names(packet))
-        sock.close()
-    except OSError:
-        return names
-    return names
+            packet, addr = sock.recvfrom(2048)
+            _remember_mdns(by_ip, packet, addr[0])
+    except Exception:
+        # A bad packet or a closed multicast socket must not fail the whole scan.
+        return by_ip
+    finally:
+        if sock is not None:
+            sock.close()
+    return by_ip
+
+
+def _remember_mdns(by_ip: dict[str, list[str]], packet: bytes, sender: str) -> None:
+    names, addresses = _dns_records(packet)
+    targets = {sender} if sender else set()
+    for ip, owner in addresses:
+        targets.add(ip)
+        if owner and owner not in names:
+            names.append(owner)
+    for ip in targets:
+        bucket = by_ip.setdefault(ip, [])
+        for name in names:
+            if name and name not in bucket:
+                bucket.append(name)
 
 
 def _dns_query(name: str) -> bytes:
@@ -565,9 +617,15 @@ def _dns_query(name: str) -> bytes:
 
 
 def _dns_names(packet: bytes) -> list[str]:
+    names, _addresses = _dns_records(packet)
+    return names
+
+
+def _dns_records(packet: bytes) -> tuple[list[str], list[tuple[str, str]]]:
     names: list[str] = []
+    addresses: list[tuple[str, str]] = []
     if len(packet) < 12:
-        return names
+        return names, addresses
     offset = 12
     try:
         questions = int.from_bytes(packet[4:6], "big")
@@ -579,14 +637,16 @@ def _dns_names(packet: bytes) -> list[str]:
             name, offset = _dns_label(packet, offset)
             if offset + 10 > len(packet):
                 break
-            _kind, _klass, _ttl, length = struct.unpack("!HHIH", packet[offset:offset + 10])
+            kind, _klass, _ttl, length = struct.unpack("!HHIH", packet[offset:offset + 10])
             offset += 10
             if name:
                 names.append(name)
+            if kind == 1 and length == 4 and offset + 4 <= len(packet):
+                addresses.append((socket.inet_ntoa(packet[offset:offset + 4]), name))
             offset += length
     except (IndexError, struct.error, UnicodeError):
-        return names
-    return names
+        return names, addresses
+    return names, addresses
 
 
 def _dns_label(packet: bytes, offset: int) -> tuple[str, int]:

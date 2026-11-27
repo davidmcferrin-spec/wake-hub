@@ -605,11 +605,11 @@ def control_router() -> APIRouter:
         return update_profile(get_hub(), profile_id, body.model_dump(exclude_unset=True))
 
     @router.delete("/credential-profiles/{profile_id}", tags=["credentials"], status_code=204)
-    def delete_profile(profile_id: int):
+    def delete_profile(profile_id: int, force: bool = False):
         from fastapi import Response
         from wakehub.credentials import remove_profile
 
-        remove_profile(get_hub(), profile_id)
+        remove_profile(get_hub(), profile_id, force=force)
         return Response(status_code=204)
 
     @router.post("/inventory/remove", tags=["inventory"])

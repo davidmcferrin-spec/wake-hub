@@ -44,7 +44,7 @@ def parse_device_info(body: str) -> dict[str, str | bool]:
     }
 
 
-def parse_ssdp(body: str) -> dict[str, str | int] | None:
+def parse_ssdp(body: str, sender: str | None = None) -> dict[str, str | int] | None:
     if "roku:ecp" not in body.lower():
         return None
     location = ""
@@ -52,7 +52,11 @@ def parse_ssdp(body: str) -> dict[str, str | int] | None:
         if line.lower().startswith("location:"):
             location = line.split(":", 1)[1].strip()
             break
-    match = _LOCATION.match(location)
+    match = _LOCATION.match(location) if location else None
+    # The packet's source address is the player. LOCATION can name a different host.
+    if sender:
+        port = int(match.group(2)) if match else 8060
+        return {"ip": sender, "port": port, "location": location}
     if not match:
         return None
     return {"ip": match.group(1), "port": int(match.group(2)), "location": location}
@@ -78,10 +82,10 @@ def discover_ecp(timeout: float = 0.8) -> list[dict[str, str | int]]:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
-                packet, _addr = sock.recvfrom(4096)
+                packet, addr = sock.recvfrom(4096)
             except (TimeoutError, OSError):
                 continue
-            parsed = parse_ssdp(packet.decode("utf-8", "replace"))
+            parsed = parse_ssdp(packet.decode("utf-8", "replace"), addr[0])
             if parsed and str(parsed["ip"]) not in seen:
                 seen.add(str(parsed["ip"]))
                 found.append(parsed)

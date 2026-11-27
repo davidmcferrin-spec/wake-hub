@@ -97,5 +97,6 @@ def test_existing_duplicates_are_reported_and_kept(tmp_path):
     names = [row["name"] for row in again.query("SELECT name FROM devices ORDER BY name")]
     assert names == ["One", "Two"]
     report = json.loads(again.setting("duplicate_records") or "[]")
-    assert any(item["key"] == "10.1.1.9" and item["kind"] == "device" for item in report)
+    match = next(item for item in report if item["key"] == "10.1.1.9" and item["kind"] == "device")
+    assert "One" in match["names"] and "Two" in match["names"]
     again.close()

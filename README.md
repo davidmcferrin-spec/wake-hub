@@ -47,7 +47,7 @@ Config lives in `/config`. SQLite lives in `/data`.
 - **Roku.** Add by IP. External Control Protocol on port 8060: power on, off and toggle, and status from device-info (power mode, model, name). Discovery uses SSDP `roku:ecp` and the Roku MAC vendor. Test checks device-info without sending a key. Control by mobile apps must be enabled on the TV. Some models need network standby before they can power back on. Off and toggle ask for confirmation.
 - **CyberPower RCCARD100.** SNMP v1, v2c or v3. Status, on line or on battery, capacity, runtime, input and output voltage, load, current and watts. Shutdown, reboot, turn off (immediate or delayed), battery test, and outlet-bank control. The UI warns before those commands.
 - **Discovery.** The scan box is filled from this host's primary IPv4 subnet. A scan can replace earlier results for that same subnet or keep them. A past scan can be run again with the same subnet, deleted on its own, or cleared with confirmation. None of those remove inventory devices. Settings can keep the last N scans or drop scans older than a number of days; 0 leaves that limit off. Docker, veth and bridge interfaces are skipped, and a picker appears when more than one LAN remains. Ping, ARP and fingerprinting run together. Each host is grouped by a suggested type (AMT, Kasa, Shelly, JetKVM, Synaccess, CyberPower, Roku, or a generic PC) with a confidence and a one-click add. Hosts already in the inventory are marked.
-- **A computer's page** shows Wake-on-LAN plus every linked PDU outlet, plug, AMT endpoint, JetKVM and UPS. The device list and each computer's page show live watts, current and energy, with a short chart, from the smart plug, PDU bank, UPS load, or JetKVM DC supply linked to it. The source is named. If nothing metered is linked, the page says so. Devices lists computers and every PDU, AMT endpoint, JetKVM, plug, UPS and Roku, with a type filter. Open a hardware row for its page. Computers and hardware take tags such as #Office and #Lights. Tags are case-insensitive. The search box understands #tag, chips on the cards filter the list, and more than one tag means all of them. Wake tagged and Power off tagged ask you to confirm before they run. The Hardware page is where those records are added and edited. Each has its own username and password. A saved login can be shared from a dropdown. Test checks the settings without saving. A wake test sends the magic packet only after you confirm. Editing a record keeps you on that page, starts from the current values, and leaves the password blank until you type a new one.
+- **A computer's page** shows Wake-on-LAN plus every linked PDU outlet, plug, AMT endpoint, JetKVM and UPS. The device list and each computer's page show live watts, current and energy, with a short chart, from the smart plug, PDU bank, UPS load, or JetKVM DC supply linked to it. The source is named. If nothing metered is linked, the page says so. Devices lists computers and every PDU, AMT endpoint, JetKVM, plug, UPS and Roku, with a type filter. Open a hardware row for its page. Computers and hardware take tags such as #Office and #Lights. Tags are case-insensitive. The search box understands #tag, chips on the cards filter the list, and more than one tag means all of them. Wake tagged and Power off tagged ask you to confirm before they run. The Hardware page is where those records are added and edited. Each has its own username and password. A saved login and the linked computer are chosen from dropdowns, including None. Removing a saved login that is still in use is refused until you confirm, which clears those links. Changing or clearing the UI password signs every browser out. Test checks the settings without saving. A wake test sends the magic packet only after you confirm. Editing a record keeps you on that page, starts from the current values, and leaves the password blank until you type a new one.
 - **Telemetry.** Bank current, plug power and energy, and UPS load and voltages are polled into SQLite. JetKVM DC voltage, current and watts are polled only when that endpoint is set to the DC extension and its metrics toggle is on, because a poll opens a WebRTC session and can take over an open console. The UI shows the latest values and a small chart. Retention and the poll interval are settings.
 
 ## REST API
@@ -136,11 +136,13 @@ rest_command:
     headers:
       Authorization: !secret wakehub_auth
     payload: '{"confirm": true}'
+    timeout: 120
   wakehub_wake_device:
     url: "http://192.168.1.10:8765/api/v1/devices/{{ device_id }}/wake"
     method: POST
     headers:
       Authorization: !secret wakehub_auth
+    timeout: 60
   wakehub_tag_action:
     url: "http://192.168.1.10:8765/api/v1/tags/action"
     method: POST
@@ -148,6 +150,7 @@ rest_command:
     headers:
       Authorization: !secret wakehub_auth
     payload: '{"tags": ["{{ tag }}"], "action": "{{ action }}", "confirm": true}'
+    timeout: 120
 
 script:
   home_away:
@@ -170,6 +173,8 @@ script:
           tag: Lights
           action: "off"
 ```
+
+Home Assistant stops a `rest_command` after 10 seconds. A salvo waits out each step delay before it returns, and a wake waits until the computer answers, so `timeout` has to be longer than those waits added together. Raise it when a salvo's delays exceed two minutes.
 
 Replace the host and the device id. `slug` is the value shown on the salvo card. `tag` is the tag without a leading `#`. `action` for a tag is `wake`, `on`, or `off`. A tag action requires every listed tag to match. The run response looks like `{"slug": "home-away", "results": [{"action": "off", "kind": "plug", "id": 3, "name": "Lamp", "ok": true, "detail": "salvo Home Away"}]}`.
 

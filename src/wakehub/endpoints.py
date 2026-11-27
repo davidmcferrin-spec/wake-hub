@@ -305,7 +305,11 @@ def _resolved_login(hub: Hub, row, username_key: str = "username", secret_key: s
 
     profile_id = row["credential_profile_id"]
     if profile_id:
-        shared = profile_login(hub, int(profile_id))
+        try:
+            shared = profile_login(hub, int(profile_id))
+        except NotFound:
+            # The saved login was removed. The device's own username and password still work.
+            shared = None
         if shared and shared[1]:
             return shared[0] or str(row[username_key] or ""), shared[1]
     return str(row[username_key] or ""), _plain(hub, row[secret_key])
