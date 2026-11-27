@@ -129,20 +129,30 @@ def start_scan(hub: Hub, cidr: str | None = None, discover: Discover | None = No
 
 
 def _save_found_host(hub: Hub, scan_id: int, host: dict[str, Any]) -> None:
+    # A later phase, such as SSDP, can enrich a host that was already written.
+    fields = (
+        host.get("mac"),
+        host.get("hostname") or "",
+        host.get("vendor") or vendor(host.get("mac")),
+        json.dumps(host.get("kinds") or []),
+        json.dumps(host.get("detail") or {}),
+    )
+    existing = hub.query_one(
+        "SELECT id FROM scan_hosts WHERE scan_id = ? AND ip = ?",
+        (scan_id, host.get("ip")),
+    )
+    if existing:
+        hub.write(
+            "UPDATE scan_hosts SET mac = ?, hostname = ?, vendor = ?, kinds = ?, detail = ? WHERE id = ?",
+            (*fields, existing["id"]),
+        )
+        return
     hub.write(
         """
         INSERT INTO scan_hosts (scan_id, ip, mac, hostname, vendor, kinds, detail)
         VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-        (
-            scan_id,
-            host.get("ip"),
-            host.get("mac"),
-            host.get("hostname") or "",
-            host.get("vendor") or vendor(host.get("mac")),
-            json.dumps(host.get("kinds") or []),
-            json.dumps(host.get("detail") or {}),
-        ),
+        (scan_id, host.get("ip"), *fields),
     )
 
 
@@ -405,7 +415,7 @@ def discover_subnet(
     found: dict[str, dict[str, Any]] = {}
     done = 0
 
-    def inspect(ip: str, arp: dict[str, str], names: list[str], answered: bool) -> dict[str, Any] | None:
+    def _inspect_host(ip: str, arp: dict[str, str], names: list[str], answered: bool) -> dict[str, Any] | None:
         if not answered and ip not in arp:
             return None
         mac = arp.get(ip, "")
@@ -438,7 +448,7 @@ def discover_subnet(
                 if done % 16 == 0 or done == total:
                     progress(done, total)
                 continue
-            described = inspect(ip, arp, names_by_ip.get(ip, []), answered or ip in arp)
+            described = _inspect_host(ip, arp, names_by_ip.get(ip, []), answered or ip in arp)
             if described:
                 found[ip] = described
                 if on_found:
@@ -453,7 +463,7 @@ def discover_subnet(
                     continue
             except ValueError:
                 continue
-            described = inspect(ip, arp, names_by_ip.get(ip, []), False)
+            described = _inspect_host(ip, arp, names_by_ip.get(ip, []), False)
             if described:
                 found[ip] = described
                 if on_found:
@@ -475,13 +485,15 @@ def discover_subnet(
                     )
                     found[ip]["kinds"] = kinds
                     found[ip]["detail"] = finger
+                    if on_found:
+                        on_found(found[ip])
                 continue
             try:
                 if ipaddress.ip_address(ip) not in network:
                     continue
             except ValueError:
                 continue
-            described = inspect(ip, arp, own_names, True)
+            described = _inspect_host(ip, arp, own_names, True)
             if described:
                 described["detail"]["suggestion"] = suggest(
                     vendor=described.get("vendor") or "",
