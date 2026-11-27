@@ -384,27 +384,29 @@ def add_device(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
         raise WakeHubError("notes must be 2000 characters or fewer")
     host = _host(payload.get("host"))
     assert_available(hub, "device", host, mac_norm)
-    created = _insert_values(
-        hub,
-        {
-            "name": name,
-            "mac": mac_norm,
-            "host": host,
-            "broadcast": _ipv4(payload.get("broadcast") or "255.255.255.255", "broadcast"),
-            "wol_port": port,
-            "secureon_enc": secureon_enc,
-            "notes": notes,
-            "tags": json.dumps(_tags(hub, list(payload.get("tags") or []))),
-            "enabled": 1 if payload.get("enabled", True) else 0,
-            "reach_mode": reach_mode,
-            "reach_port": reach_port,
-            "reach_timeout": timeout,
-            "reach_timeout_set": timeout_set,
-            "wake_strategy": strategy,
-            "power_method": _power_method(payload.get("power_method")),
-            "methods": json.dumps([{"kind": "wol"}]),
-        },
-    )
+    # The spelling is chosen and stored before the lock is released, so a second create sees it.
+    with hub.transaction():
+        created = _insert_values(
+            hub,
+            {
+                "name": name,
+                "mac": mac_norm,
+                "host": host,
+                "broadcast": _ipv4(payload.get("broadcast") or "255.255.255.255", "broadcast"),
+                "wol_port": port,
+                "secureon_enc": secureon_enc,
+                "notes": notes,
+                "tags": json.dumps(_tags(hub, list(payload.get("tags") or []))),
+                "enabled": 1 if payload.get("enabled", True) else 0,
+                "reach_mode": reach_mode,
+                "reach_port": reach_port,
+                "reach_timeout": timeout,
+                "reach_timeout_set": timeout_set,
+                "wake_strategy": strategy,
+                "power_method": _power_method(payload.get("power_method")),
+                "methods": json.dumps([{"kind": "wol"}]),
+            },
+        )
     if payload.get("methods") is not None:
         return update_device(hub, created["id"], {"methods": payload.get("methods")})
     return created
@@ -455,8 +457,7 @@ def update_device(hub: Hub, device_id: int, payload: dict[str, Any]) -> dict[str
         if len(payload["notes"]) > 2000:
             raise WakeHubError("notes must be 2000 characters or fewer")
         fields["notes"] = payload["notes"]
-    if "tags" in payload and payload["tags"] is not None:
-        fields["tags"] = json.dumps(_tags(hub, list(payload["tags"])))
+    pending_tags = list(payload["tags"]) if "tags" in payload and payload["tags"] is not None else None
     if "enabled" in payload and payload["enabled"] is not None:
         fields["enabled"] = 1 if payload["enabled"] else 0
     if "reach_mode" in payload and payload["reach_mode"] is not None:
@@ -489,6 +490,8 @@ def update_device(hub: Hub, device_id: int, payload: dict[str, Any]) -> dict[str
     assert_available(hub, "device", fields["host"], fields["mac"], exclude_id=device_id)
     try:
         with hub.transaction():
+            if pending_tags is not None:
+                fields["tags"] = json.dumps(_tags(hub, pending_tags))
             if "methods" in payload and payload["methods"] is not None:
                 previous = json.loads(row["methods"] or "[]")
                 synced = sync_device_methods(hub, device_id, fields["name"], payload["methods"], previous)

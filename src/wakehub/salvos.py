@@ -47,18 +47,20 @@ def get_salvo(hub: Hub, salvo: str) -> dict[str, Any]:
 
 def add_salvo(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
     name = _name(payload.get("name"))
-    steps = _steps(hub, payload.get("steps"))
     on_error = _on_error(payload.get("on_error") or "stop")
-    slug = _unique_slug(hub, payload.get("slug") or name, explicit=bool(str(payload.get("slug") or "").strip()))
+    explicit_slug = bool(str(payload.get("slug") or "").strip())
     now = utcnow()
     try:
-        salvo_id = hub.write(
-            """
-            INSERT INTO salvos (name, slug, steps, on_error, schedule, created_at, updated_at)
-            VALUES (?, ?, ?, ?, NULL, ?, ?)
-            """,
-            (name, slug, json.dumps(steps), on_error, now, now),
-        )
+        with hub.transaction():
+            steps = _steps(hub, payload.get("steps"))
+            slug = _unique_slug(hub, payload.get("slug") or name, explicit=explicit_slug)
+            salvo_id = hub.write(
+                """
+                INSERT INTO salvos (name, slug, steps, on_error, schedule, created_at, updated_at)
+                VALUES (?, ?, ?, ?, NULL, ?, ?)
+                """,
+                (name, slug, json.dumps(steps), on_error, now, now),
+            )
     except sqlite3.IntegrityError as exc:
         raise Conflict(f"a salvo named {name} already exists") from exc
     return get_salvo(hub, salvo_id)
@@ -67,17 +69,18 @@ def add_salvo(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
 def update_salvo(hub: Hub, salvo: str, payload: dict[str, Any]) -> dict[str, Any]:
     current = _resolve(hub, salvo)
     name = _name(payload["name"]) if payload.get("name") else current["name"]
-    steps = _steps(hub, payload["steps"]) if "steps" in payload and payload["steps"] is not None else json.loads(current["steps"])
     on_error = _on_error(payload["on_error"]) if payload.get("on_error") else current["on_error"]
     # The slug is the stable path. Renaming the salvo does not change it unless a new slug is sent.
-    slug = current["slug"]
-    if payload.get("slug"):
-        slug = _unique_slug(hub, payload["slug"], exclude_id=current["id"], explicit=True)
     try:
-        hub.write(
-            "UPDATE salvos SET name=?, slug=?, steps=?, on_error=?, updated_at=? WHERE id=?",
-            (name, slug, json.dumps(steps), on_error, utcnow(), current["id"]),
-        )
+        with hub.transaction():
+            steps = _steps(hub, payload["steps"]) if "steps" in payload and payload["steps"] is not None else json.loads(current["steps"])
+            slug = current["slug"]
+            if payload.get("slug"):
+                slug = _unique_slug(hub, payload["slug"], exclude_id=current["id"], explicit=True)
+            hub.write(
+                "UPDATE salvos SET name=?, slug=?, steps=?, on_error=?, updated_at=? WHERE id=?",
+                (name, slug, json.dumps(steps), on_error, utcnow(), current["id"]),
+            )
     except sqlite3.IntegrityError as exc:
         raise Conflict(f"a salvo named {name} already exists") from exc
     return get_salvo(hub, current["id"])

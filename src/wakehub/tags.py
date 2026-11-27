@@ -18,7 +18,8 @@ TABLES = ("devices", "pdus", "amt_endpoints", "jetkvm_endpoints", "plugs", "ups_
 
 
 def tag_key(value: object) -> str:
-    return str(value).strip().lstrip("#").strip().casefold()
+    # Same rule as the page: Unicode lower case, not casefold, so ß stays ß.
+    return str(value).strip().lstrip("#").strip().lower()
 
 
 def normalize_tags(values: list[str] | None, known: dict[str, str] | None = None, *, validate: bool = True) -> list[str]:
@@ -30,7 +31,7 @@ def normalize_tags(values: list[str] | None, known: dict[str, str] | None = None
             text = piece.strip().lstrip("#").strip()
             if not text:
                 continue
-            key = text.casefold()
+            key = text.lower()
             if key in spellings:
                 display = spellings[key]
             else:
@@ -78,8 +79,9 @@ def migrate_tag_case(conn: sqlite3.Connection) -> None:
         if table == "salvos":
             _migrate_salvo(conn, row_id, raw, known)
             continue
-        tags = _load_list(raw, table, row_id)
+        tags = _parse_list(raw)
         if tags is None:
+            log.warning("left unreadable tags on %s %s", table, row_id)
             continue
         cleaned = normalize_tags(tags, known, validate=False)
         _remember(known, cleaned)
@@ -89,7 +91,7 @@ def migrate_tag_case(conn: sqlite3.Connection) -> None:
 
 def _remember(known: dict[str, str], tags: list[str]) -> None:
     for tag in tags:
-        known.setdefault(tag.casefold(), tag)
+        known.setdefault(tag.lower(), tag)
 
 
 def _has_column(conn: sqlite3.Connection, table: str, name: str) -> bool:
@@ -119,32 +121,27 @@ def _tag_rows(conn: sqlite3.Connection) -> list[tuple[str, int, int, str, str]]:
     return found
 
 
-def _load_list(raw: str, table: str, row_id: int) -> list | None:
+def _parse_list(raw: str) -> list | None:
     try:
         value = json.loads(raw or "[]")
     except json.JSONDecodeError:
-        log.warning("left unreadable tags on %s %s", table, row_id)
         return None
     if not isinstance(value, list):
-        log.warning("left non-list tags on %s %s", table, row_id)
         return None
     return value
 
 
 def _tag_lists(table: str, raw: str) -> list[list]:
     if table == "salvos":
-        try:
-            steps = json.loads(raw or "[]")
-        except json.JSONDecodeError:
-            return []
-        if not isinstance(steps, list):
+        steps = _parse_list(raw)
+        if steps is None:
             return []
         return [
             step["tags"]
             for step in steps
             if isinstance(step, dict) and step.get("target_kind") == "tag" and isinstance(step.get("tags"), list)
         ]
-    loaded = _load_list(raw, table, 0)
+    loaded = _parse_list(raw)
     if loaded is None:
         return []
     return [loaded]

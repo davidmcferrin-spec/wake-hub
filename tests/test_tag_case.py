@@ -1,12 +1,16 @@
 import asyncio
 import json
+import logging
+import threading
+
+import httpx
 
 from wakehub.config import Settings
 from wakehub.endpoints import add_pdu, add_plug
 from wakehub.hub import Hub, set_hub
 from wakehub.inventory import add_device
 from wakehub.salvos import add_salvo
-from wakehub.tags import normalize_tags
+from wakehub.tags import normalize_tags, tag_key
 
 
 def _settings(tmp_path) -> Settings:
@@ -29,6 +33,9 @@ def _close(hub: Hub) -> None:
 def test_a_later_spelling_uses_the_one_saved_first():
     assert normalize_tags(["OFFICE", "office"], {"office": "Office"}) == ["Office"]
     assert normalize_tags(["#Office", "office", "#TV"]) == ["Office", "TV"]
+    assert tag_key("Straße") == tag_key("#STRAßE") == "straße"
+    assert tag_key("#strasse") == "strasse"
+    assert tag_key("Straße") != tag_key("strasse")
 
 
 def test_search_api_and_outlet_actions_ignore_case(client, hub, monkeypatch):
@@ -104,6 +111,70 @@ def test_mcp_tag_action_matches_a_different_spelling(client, hub, monkeypatch):
     assert body["matched"] == 1
     assert body["tags"] == ["Office"]
     assert calls == [created.json()["id"]]
+
+
+def test_concurrent_creates_store_one_spelling(live_server, hub):
+    headers = {"Authorization": f"Bearer {hub.token}"}
+    for round_number in range(8):
+        barrier = threading.Barrier(2)
+        found: dict[str, list[str]] = {}
+        errors: list[BaseException] = []
+
+        def create(name: str, tag: str, mac: str, host: str) -> None:
+            try:
+                barrier.wait(timeout=5)
+                response = httpx.post(
+                    f"{live_server}/api/v1/devices",
+                    headers=headers,
+                    json={"name": name, "mac": mac, "host": host, "tags": [tag]},
+                    timeout=10,
+                )
+                response.raise_for_status()
+                found[name] = response.json()["tags"]
+            except BaseException as exc:
+                errors.append(exc)
+
+        suffix = f"{round_number:02d}"
+        left = f"Race {suffix} A"
+        right = f"Race {suffix} B"
+        threads = [
+            threading.Thread(target=create, args=(left, "Race1", f"02:00:00:00:01:{suffix}", f"10.8.0.{round_number}")),
+            threading.Thread(target=create, args=(right, "race1", f"02:00:00:00:02:{suffix}", f"10.8.1.{round_number}")),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert not errors
+        assert found[left] == found[right]
+        assert found[left] == ["Race1"] or found[left] == ["race1"]
+
+
+def test_unreadable_tags_are_logged_once(tmp_path, caplog):
+    hub = Hub.open(_settings(tmp_path))
+    hub.db.execute(
+        """
+        INSERT INTO devices (
+            name, broadcast, wol_port, notes, tags, enabled, reach_mode, reach_timeout,
+            reach_timeout_set, wake_strategy, power_method, methods, created_at, updated_at
+        ) VALUES (
+            'Bad', '255.255.255.255', 9, '', '{', 1, 'icmp', 30,
+            0, 'wol_only', 'auto', '[]', '2020-01-01T00:00:00+00:00', '2020-01-01T00:00:00+00:00'
+        )
+        """
+    )
+    hub.db.commit()
+    _close(hub)
+    caplog.set_level(logging.WARNING, logger="wakehub.tags")
+    again = Hub.open(_settings(tmp_path))
+    try:
+        from wakehub.tags import list_tags
+
+        assert list_tags(again) == []
+        warnings = [record.message for record in caplog.records if "unreadable tags" in record.message]
+        assert warnings == ["left unreadable tags on devices 1"]
+    finally:
+        _close(again)
 
 
 def test_restart_merges_tags_that_differ_only_by_case(tmp_path):

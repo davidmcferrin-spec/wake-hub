@@ -908,7 +908,7 @@ function renderDevices() {
       <button type="button" class="danger delete" id="delete-tagged" data-cap="bulk_remove" data-fields="confirm,tags,targets">Delete tagged</button>
     </div>
     <p class="lede">A device is a machine. Wake-on-LAN, outlets, and plugs are ways to control it. Hardware is where you add a box and set its address.</p>
-    <section id="device-grid" class="grid">${deviceCardsHtml()}</section>
+    <section id="device-grid" class="grid" data-query="${escapeHtml(searchValue())}">${deviceCardsHtml()}</section>
     ${state.metrics && state.metrics.length && typeof sparkline === "function" ? `<div class="card">${sparkline(state.metrics)}</div>` : ""}
     <div id="editor-slot">${state.editing ? editorHtml() : ""}</div>`;
   const filter = $("kind-filter");
@@ -1314,21 +1314,35 @@ function render() {
   });
 }
 
+let deviceGeneration = 0;
+
 async function refreshDevices() {
+  // A slower search must not paint over the one the operator typed next.
+  const generation = ++deviceGeneration;
   const params = new URLSearchParams();
   if (state.deviceQuery) params.set("q", state.deviceQuery);
   if (state.tagFilter && state.tagFilter.length) params.set("tags", state.tagFilter.join(","));
-  state.devices = await api("GET", `/api/v1/devices${params.toString() ? `?${params}` : ""}`);
+  const query = params.toString();
+  const devices = await api("GET", `/api/v1/devices${query ? `?${query}` : ""}`);
+  if (generation !== deviceGeneration) return;
+  state.devices = devices;
   const withEffects = (state.devices || []).find((item) => item.effects);
   if (withEffects) state.effects = withEffects.effects;
   if (typeof refreshPower === "function") await refreshPower();
+  if (generation !== deviceGeneration) return;
   try {
-    state.tags = await api("GET", "/api/v1/tags");
+    const tags = await api("GET", "/api/v1/tags");
+    if (generation !== deviceGeneration) return;
+    state.tags = tags;
   } catch (_error) {
+    if (generation !== deviceGeneration) return;
     state.tags = state.tags || [];
   }
-  state.salvos = await api("GET", "/api/v1/salvos");
+  const salvos = await api("GET", "/api/v1/salvos");
+  if (generation !== deviceGeneration) return;
+  state.salvos = salvos;
   const status = await api("GET", "/api/v1/status");
+  if (generation !== deviceGeneration) return;
   state.status = {};
   status.forEach((item) => { state.status[item.device_id] = item; });
 }
