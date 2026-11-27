@@ -8,15 +8,35 @@ async function refreshScans() {
   if (state.scan) state.scan = await api("GET", `/api/v1/scans/${state.scan.id}`);
 }
 
+let powerLoad = 0;
+
 async function refreshPower() {
-  state.power.pdus = await api("GET", "/api/v1/pdus");
-  state.power.amts = await api("GET", "/api/v1/amt");
-  state.power.jetkvms = await api("GET", "/api/v1/jetkvm");
-  state.power.plugs = await api("GET", "/api/v1/plugs");
-  state.power.ups = await api("GET", "/api/v1/ups");
-  state.power.rokus = await api("GET", "/api/v1/rokus");
-  state.power.profiles = await api("GET", "/api/v1/credential-profiles");
-  state.allDevices = await api("GET", "/api/v1/devices");
+  // An older hardware read must not replace a list a later read already showed.
+  const load = ++powerLoad;
+  const pdus = await api("GET", "/api/v1/pdus");
+  if (load !== powerLoad) return;
+  state.power.pdus = pdus;
+  const amts = await api("GET", "/api/v1/amt");
+  if (load !== powerLoad) return;
+  state.power.amts = amts;
+  const jetkvms = await api("GET", "/api/v1/jetkvm");
+  if (load !== powerLoad) return;
+  state.power.jetkvms = jetkvms;
+  const plugs = await api("GET", "/api/v1/plugs");
+  if (load !== powerLoad) return;
+  state.power.plugs = plugs;
+  const ups = await api("GET", "/api/v1/ups");
+  if (load !== powerLoad) return;
+  state.power.ups = ups;
+  const rokus = await api("GET", "/api/v1/rokus");
+  if (load !== powerLoad) return;
+  state.power.rokus = rokus;
+  const profiles = await api("GET", "/api/v1/credential-profiles");
+  if (load !== powerLoad) return;
+  state.power.profiles = profiles;
+  const allDevices = await api("GET", "/api/v1/devices");
+  if (load !== powerLoad) return;
+  state.allDevices = allDevices;
 }
 
 function formatPairs(names) {
@@ -319,8 +339,8 @@ function renderScan() {
 function outletShown(outlet) {
   const wanted = (typeof state !== "undefined" && state.tagFilter) || [];
   if (!wanted.length) return true;
-  const owned = (outlet.tags || []).map((tag) => String(tag).toLowerCase());
-  return wanted.every((tag) => owned.includes(String(tag).toLowerCase()));
+  const owned = (outlet.tags || []).map((tag) => tagKey(tag));
+  return wanted.every((tag) => owned.includes(tagKey(tag)));
 }
 
 function displayOutletName(name, number) {

@@ -25,14 +25,38 @@ def test_tag_chips_filter_the_device_list(live_server, hub):
         page.wait_for_function("document.querySelector('#device-search').value.includes('#Office')")
         assert "Desk" in page.inner_text("#view")
         assert "Spare" not in page.inner_text("#view")
+        assert page.evaluate("tagKey('#STRAßE')") == "straße"
+        assert page.evaluate("tagKey('Strasse')") == "strasse"
+        page.fill("#device-search", "#office")
+        page.locator("#device-search").press("Enter")
+        page.wait_for_function(
+            """() => {
+              const grid = document.querySelector('#device-grid');
+              if (!grid) return false;
+              const query = (grid.dataset.query || '').toLowerCase();
+              const text = grid.innerText;
+              return query === '#office' && text.includes('Desk') && !text.includes('Spare');
+            }"""
+        )
         page.fill("#device-search", "#Office #TV")
         page.locator("#device-search").press("Enter")
-        page.wait_for_function("!document.body.innerText.includes('Spare')")
-        assert "Desk" in page.inner_text("#view")
-        assert "Den TV" not in page.inner_text("#view")
+        page.wait_for_function(
+            """() => {
+              const grid = document.querySelector('#device-grid');
+              if (!grid) return false;
+              const query = grid.dataset.query || '';
+              const text = grid.innerText;
+              return query.includes('#Office') && query.includes('#TV') && text.includes('Desk') && !text.includes('Den TV');
+            }"""
+        )
         page.fill("#device-search", "")
         page.locator("#filter-form").evaluate("form => form.requestSubmit()")
-        page.wait_for_selector("text=Spare")
+        page.wait_for_function(
+            """() => {
+              const grid = document.querySelector('#device-grid');
+              return Boolean(grid && grid.dataset.query === '' && grid.innerText.includes('Spare'));
+            }"""
+        )
         page.select_option("#kind-filter", "roku")
         page.wait_for_selector("text=Den TV")
         assert "Desk" not in page.inner_text("#view")

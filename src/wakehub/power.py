@@ -22,7 +22,7 @@ from wakehub.endpoints import (
     ups_client,
 )
 from wakehub.errors import ConfirmationRequired, WakeHubError, require_confirm
-from wakehub.tags import has_tags, normalize_tags
+from wakehub.tags import canonical_tags, has_tags
 from wakehub.hub import Hub
 from wakehub.inventory import _get_row, _require_enabled, record_action, wake_device
 
@@ -396,7 +396,7 @@ def roku_power(hub: Hub, roku_id: int, action: str, *, confirm: bool, source: st
 
 
 def tag_action(hub: Hub, tags: list[str], action: str, *, confirm: bool, source: str) -> dict[str, Any]:
-    wanted = normalize_tags(tags)
+    wanted = canonical_tags(hub, tags)
     if not wanted:
         raise WakeHubError("name at least one tag")
     if action not in {"wake", "on", "off"}:

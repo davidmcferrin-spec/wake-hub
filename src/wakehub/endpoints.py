@@ -16,7 +16,7 @@ from wakehub.credentials import remember_profile
 from wakehub.crypto import decrypt, encrypt
 from wakehub.errors import NotFound, UpstreamError, WakeHubError
 from wakehub.identity import assert_available, bind_identity
-from wakehub.tags import normalize_tags
+from wakehub.tags import canonical_tags
 from wakehub.hub import Hub
 from wakehub.inventory import host_for_url, utcnow, validate_host
 
@@ -56,7 +56,9 @@ def _stored_tags(row) -> list[str]:
 def _apply_tags(hub: Hub, table: str, item_id: int, payload: dict[str, Any]) -> None:
     if "tags" not in payload or payload["tags"] is None:
         return
-    hub.write(f"UPDATE {table} SET tags = ? WHERE id = ?", (json.dumps(normalize_tags(payload["tags"])), item_id))
+    with hub.transaction():
+        cleaned = canonical_tags(hub, payload["tags"])
+        hub.write(f"UPDATE {table} SET tags = ? WHERE id = ?", (json.dumps(cleaned), item_id))
 
 
 def _stamp(fields: dict[str, Any]) -> dict[str, Any]:
@@ -446,10 +448,12 @@ def update_pdu_outlet(hub: Hub, pdu_id: int, outlet: int, payload: dict[str, Any
     if row is None:
         raise NotFound(f"outlet {outlet} was not found on PDU {pdu_id}")
     if payload.get("tags") is not None:
-        hub.write(
-            "UPDATE pdu_outlets SET tags = ? WHERE id = ?",
-            (json.dumps(normalize_tags(payload["tags"])), row["id"]),
-        )
+        with hub.transaction():
+            cleaned = canonical_tags(hub, payload["tags"])
+            hub.write(
+                "UPDATE pdu_outlets SET tags = ? WHERE id = ?",
+                (json.dumps(cleaned), row["id"]),
+            )
     saved = hub.query_one("SELECT * FROM pdu_outlets WHERE id = ?", (row["id"],))
     return _outlet_record(saved)
 
@@ -967,17 +971,19 @@ def add_roku(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
             "host": _require_host(payload),
             "port": int(payload.get("port") or 8060),
             "device_id": payload.get("device_id"),
-            "tags": json.dumps(normalize_tags(payload.get("tags"))),
+            "tags": "[]",
         }
     )
     assert_available(hub, "roku", fields["host"])
-    item_id = hub.write(
-        """
-        INSERT INTO rokus (name, host, port, device_id, tags, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        (fields["name"], fields["host"], fields["port"], fields["device_id"], fields["tags"], fields["created_at"], fields["updated_at"]),
-    )
+    with hub.transaction():
+        fields["tags"] = json.dumps(canonical_tags(hub, payload.get("tags")))
+        item_id = hub.write(
+            """
+            INSERT INTO rokus (name, host, port, device_id, tags, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (fields["name"], fields["host"], fields["port"], fields["device_id"], fields["tags"], fields["created_at"], fields["updated_at"]),
+        )
     _link(hub, fields["device_id"], {"kind": "roku", "roku_id": item_id})
     bind_identity(hub, "roku", item_id, fields["host"])
     return public_roku(_row(hub, "roku", item_id))

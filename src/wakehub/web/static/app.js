@@ -175,9 +175,13 @@ window.pollStatus = pollStatus;
 
 function tagChips(tags) {
   return `<div class="tags">${(tags || []).map((tag) => {
-    const active = (state.tagFilter || []).some((item) => item.toLowerCase() === String(tag).toLowerCase());
+    const active = (state.tagFilter || []).some((item) => tagKey(item) === tagKey(tag));
     return `<button type="button" class="tag${active ? " active" : ""}" data-tag="${escapeHtml(tag)}">#${escapeHtml(tag)}</button>`;
   }).join("")}</div>`;
+}
+
+function tagKey(value) {
+  return String(value || "").replace(/^#+/, "").trim().toLowerCase();
 }
 
 function parseSearch(text) {
@@ -775,9 +779,9 @@ function deviceCardsHtml() {
   const wanted = state.tagFilter || [];
   const matches = (item) => {
     const text = !query || `${item.name} ${item.host || ""}`.toLowerCase().includes(query);
-    const owned = (item.tags || []).map((tag) => String(tag).toLowerCase());
-    const outletTags = (item.outlets || []).flatMap((outlet) => outlet.tags || []).map((tag) => String(tag).toLowerCase());
-    const tagged = !wanted.length || wanted.every((tag) => owned.includes(String(tag).toLowerCase()) || outletTags.includes(String(tag).toLowerCase()));
+    const owned = (item.tags || []).map(tagKey);
+    const outletTags = (item.outlets || []).flatMap((outlet) => outlet.tags || []).map(tagKey);
+    const tagged = !wanted.length || wanted.every((tag) => owned.includes(tagKey(tag)) || outletTags.includes(tagKey(tag)));
     return text && tagged;
   };
   const computers = (kind === "all" || kind === "device" ? state.devices.filter(matches) : []).map(deviceCard).join("");
@@ -904,7 +908,7 @@ function renderDevices() {
       <button type="button" class="danger delete" id="delete-tagged" data-cap="bulk_remove" data-fields="confirm,tags,targets">Delete tagged</button>
     </div>
     <p class="lede">A device is a machine. Wake-on-LAN, outlets, and plugs are ways to control it. Hardware is where you add a box and set its address.</p>
-    <section id="device-grid" class="grid">${deviceCardsHtml()}</section>
+    <section id="device-grid" class="grid" data-query="${escapeHtml(searchValue())}">${deviceCardsHtml()}</section>
     ${state.metrics && state.metrics.length && typeof sparkline === "function" ? `<div class="card">${sparkline(state.metrics)}</div>` : ""}
     <div id="editor-slot">${state.editing ? editorHtml() : ""}</div>`;
   const filter = $("kind-filter");
@@ -948,8 +952,8 @@ function suggestTags(input) {
     box.replaceChildren();
     return;
   }
-  const prefix = match[1].toLowerCase();
-  const options = (state.tags || []).filter((tag) => tag.toLowerCase().startsWith(prefix)).slice(0, 8);
+  const prefix = tagKey(match[1]);
+  const options = (state.tags || []).filter((tag) => tagKey(tag).startsWith(prefix)).slice(0, 8);
   box.innerHTML = options.map((tag) => `<button type="button" class="ghost" data-complete-tag="${escapeHtml(tag)}">#${escapeHtml(tag)}</button>`).join("");
 }
 
@@ -1310,21 +1314,35 @@ function render() {
   });
 }
 
+let deviceGeneration = 0;
+
 async function refreshDevices() {
+  // A slower search must not paint over the one the operator typed next.
+  const generation = ++deviceGeneration;
   const params = new URLSearchParams();
   if (state.deviceQuery) params.set("q", state.deviceQuery);
   if (state.tagFilter && state.tagFilter.length) params.set("tags", state.tagFilter.join(","));
-  state.devices = await api("GET", `/api/v1/devices${params.toString() ? `?${params}` : ""}`);
+  const query = params.toString();
+  const devices = await api("GET", `/api/v1/devices${query ? `?${query}` : ""}`);
+  if (generation !== deviceGeneration) return;
+  state.devices = devices;
   const withEffects = (state.devices || []).find((item) => item.effects);
   if (withEffects) state.effects = withEffects.effects;
   if (typeof refreshPower === "function") await refreshPower();
+  if (generation !== deviceGeneration) return;
   try {
-    state.tags = await api("GET", "/api/v1/tags");
+    const tags = await api("GET", "/api/v1/tags");
+    if (generation !== deviceGeneration) return;
+    state.tags = tags;
   } catch (_error) {
+    if (generation !== deviceGeneration) return;
     state.tags = state.tags || [];
   }
-  state.salvos = await api("GET", "/api/v1/salvos");
+  const salvos = await api("GET", "/api/v1/salvos");
+  if (generation !== deviceGeneration) return;
+  state.salvos = salvos;
   const status = await api("GET", "/api/v1/status");
+  if (generation !== deviceGeneration) return;
   state.status = {};
   status.forEach((item) => { state.status[item.device_id] = item; });
 }
@@ -1933,10 +1951,10 @@ document.body.addEventListener("click", (event) => {
   const chip = event.target.closest("[data-tag]");
   if (chip && chip.dataset.tag) {
     const tag = chip.dataset.tag;
-    const key = tag.toLowerCase();
-    const has = (state.tagFilter || []).some((item) => item.toLowerCase() === key);
+    const key = tagKey(tag);
+    const has = (state.tagFilter || []).some((item) => tagKey(item) === key);
     state.tagFilter = has
-      ? state.tagFilter.filter((item) => item.toLowerCase() !== key)
+      ? state.tagFilter.filter((item) => tagKey(item) !== key)
       : [...(state.tagFilter || []), tag];
     refreshDevices().then(() => render()).catch((error) => showBanner(error.message, true, error.existing));
     return;

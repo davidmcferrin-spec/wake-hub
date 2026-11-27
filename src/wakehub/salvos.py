@@ -10,7 +10,7 @@ from typing import Any
 from wakehub.errors import ConfirmationRequired, Conflict, NotFound, WakeHubError
 from wakehub.hub import Hub
 from wakehub.inventory import utcnow
-from wakehub.tags import has_tags, normalize_tags
+from wakehub.tags import canonical_tags, has_tags
 
 ACTIONS = {"wake", "on", "off", "cycle", "shutdown"}
 TARGET_KINDS = {"device", "plug", "roku", "outlet", "tag"}
@@ -47,18 +47,20 @@ def get_salvo(hub: Hub, salvo: str) -> dict[str, Any]:
 
 def add_salvo(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
     name = _name(payload.get("name"))
-    steps = _steps(payload.get("steps"))
     on_error = _on_error(payload.get("on_error") or "stop")
-    slug = _unique_slug(hub, payload.get("slug") or name, explicit=bool(str(payload.get("slug") or "").strip()))
+    explicit_slug = bool(str(payload.get("slug") or "").strip())
     now = utcnow()
     try:
-        salvo_id = hub.write(
-            """
-            INSERT INTO salvos (name, slug, steps, on_error, schedule, created_at, updated_at)
-            VALUES (?, ?, ?, ?, NULL, ?, ?)
-            """,
-            (name, slug, json.dumps(steps), on_error, now, now),
-        )
+        with hub.transaction():
+            steps = _steps(hub, payload.get("steps"))
+            slug = _unique_slug(hub, payload.get("slug") or name, explicit=explicit_slug)
+            salvo_id = hub.write(
+                """
+                INSERT INTO salvos (name, slug, steps, on_error, schedule, created_at, updated_at)
+                VALUES (?, ?, ?, ?, NULL, ?, ?)
+                """,
+                (name, slug, json.dumps(steps), on_error, now, now),
+            )
     except sqlite3.IntegrityError as exc:
         raise Conflict(f"a salvo named {name} already exists") from exc
     return get_salvo(hub, salvo_id)
@@ -67,17 +69,18 @@ def add_salvo(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
 def update_salvo(hub: Hub, salvo: str, payload: dict[str, Any]) -> dict[str, Any]:
     current = _resolve(hub, salvo)
     name = _name(payload["name"]) if payload.get("name") else current["name"]
-    steps = _steps(payload["steps"]) if "steps" in payload and payload["steps"] is not None else json.loads(current["steps"])
     on_error = _on_error(payload["on_error"]) if payload.get("on_error") else current["on_error"]
     # The slug is the stable path. Renaming the salvo does not change it unless a new slug is sent.
-    slug = current["slug"]
-    if payload.get("slug"):
-        slug = _unique_slug(hub, payload["slug"], exclude_id=current["id"], explicit=True)
     try:
-        hub.write(
-            "UPDATE salvos SET name=?, slug=?, steps=?, on_error=?, updated_at=? WHERE id=?",
-            (name, slug, json.dumps(steps), on_error, utcnow(), current["id"]),
-        )
+        with hub.transaction():
+            steps = _steps(hub, payload["steps"]) if "steps" in payload and payload["steps"] is not None else json.loads(current["steps"])
+            slug = current["slug"]
+            if payload.get("slug"):
+                slug = _unique_slug(hub, payload["slug"], exclude_id=current["id"], explicit=True)
+            hub.write(
+                "UPDATE salvos SET name=?, slug=?, steps=?, on_error=?, updated_at=? WHERE id=?",
+                (name, slug, json.dumps(steps), on_error, utcnow(), current["id"]),
+            )
     except sqlite3.IntegrityError as exc:
         raise Conflict(f"a salvo named {name} already exists") from exc
     return get_salvo(hub, current["id"])
@@ -300,15 +303,15 @@ def _on_error(value: object) -> str:
     return text
 
 
-def _steps(value: object) -> list[dict[str, Any]]:
+def _steps(hub: Hub, value: object) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         raise WakeHubError("steps must be a list")
     if len(value) > 50:
         raise WakeHubError("a salvo can have at most 50 steps")
-    return [_step(item, index) for index, item in enumerate(value)]
+    return [_step(hub, item, index) for index, item in enumerate(value)]
 
 
-def _step(item: object, index: int) -> dict[str, Any]:
+def _step(hub: Hub, item: object, index: int) -> dict[str, Any]:
     if not isinstance(item, dict):
         raise WakeHubError(f"step {index + 1} must be an object")
     action = str(item.get("action") or "")
@@ -328,7 +331,7 @@ def _step(item: object, index: int) -> dict[str, Any]:
     target_id = item.get("target_id")
     tags: list[str] = []
     if kind == "tag":
-        tags = normalize_tags(list(item.get("tags") or []))
+        tags = canonical_tags(hub, list(item.get("tags") or []))
         if not tags:
             raise WakeHubError(f"step {index + 1} needs at least one tag")
         target_id = None
