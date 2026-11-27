@@ -3,14 +3,16 @@ from wakehub.mcp_server import build_server
 
 
 def test_every_capability_is_on_the_api_and_in_the_ui(client):
+    from wakehub.api import STATIC
+
     schema = client.get("/openapi.json").json()
-    ui = "\n".join(
-        [
-            client.get("/").text,
-            client.get("/static/app.js").text,
-            client.get("/static/app.css").text,
-        ]
-    )
+    pieces = [client.get("/").text]
+    for path in sorted(STATIC.iterdir()):
+        if path.suffix in {".js", ".css", ".html"}:
+            response = client.get(f"/static/{path.name}")
+            assert response.status_code == 200
+            pieces.append(response.text)
+    ui = "\n".join(pieces)
     missing_api = []
     missing_ui = []
     for cap in CAPABILITIES:

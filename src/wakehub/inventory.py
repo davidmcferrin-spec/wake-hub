@@ -49,14 +49,27 @@ def _tags(values: list[str]) -> list[str]:
 
 
 def normalize_methods(methods: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
-    """PR1 stores Wake-on-LAN only. Other kinds are rejected until their clients exist."""
     if not methods:
         return [{"kind": "wol"}]
     cleaned: list[dict[str, Any]] = []
     for item in methods:
-        if not isinstance(item, dict) or item.get("kind") != "wol":
-            raise WakeHubError("only the wol power method is available")
-        cleaned.append({"kind": "wol"})
+        if not isinstance(item, dict):
+            raise WakeHubError("a power method must be an object")
+        kind = item.get("kind")
+        if kind == "wol":
+            cleaned.append({"kind": "wol"})
+        elif kind == "pdu":
+            cleaned.append({"kind": "pdu", "pdu_id": int(item["pdu_id"]), "outlet": int(item["outlet"])})
+        elif kind == "amt":
+            cleaned.append({"kind": "amt", "amt_id": int(item["amt_id"])})
+        elif kind == "jetkvm":
+            cleaned.append({"kind": "jetkvm", "jetkvm_id": int(item["jetkvm_id"])})
+        elif kind == "plug":
+            cleaned.append({"kind": "plug", "plug_id": int(item["plug_id"])})
+        elif kind == "ups":
+            cleaned.append({"kind": "ups", "ups_id": int(item["ups_id"])})
+        else:
+            raise WakeHubError(f"unknown power method {kind}")
     return cleaned
 
 
@@ -445,7 +458,10 @@ def wake_device(hub: Hub, device_id: int, *, source: str, timeout: float | None 
             target_name=row["name"],
         )
         raise WakeHubError("device has no MAC address")
-    # power_then_wol turns a linked plug or outlet on before the packet. Nothing is linked yet.
+    if row["wake_strategy"] == "power_then_wol":
+        from wakehub.power import power_on_linked
+
+        power_on_linked(hub, row, source)
     packet = build_magic_packet(row["mac"], _secureon_bytes(hub, row))
     try:
         send_magic_packet(packet, row["broadcast"], int(row["wol_port"]))
@@ -498,19 +514,13 @@ def power_action(
     device_id: int,
     *,
     action: str,
-    method: str = "wol",
+    method: str = "auto",
     confirm: bool = False,
     source: str,
 ) -> dict[str, Any]:
-    require_confirm(action, confirm)
-    if method != "wol":
-        raise WakeHubError(f"power method {method} is not available")
-    if action != "on":
-        raise WakeHubError("Wake-on-LAN only supports action on")
-    result = wake_device(hub, device_id, source=source)
-    result["action"] = "on"
-    result["method"] = "wol"
-    return result
+    from wakehub.power import dispatch_device
+
+    return dispatch_device(hub, device_id, action=action, method=method, confirm=confirm, source=source)
 
 
 def probe_device(hub: Hub, device_id: int, *, timeout: float = 2) -> dict[str, Any]:
@@ -561,6 +571,8 @@ def public_settings(hub: Hub) -> dict[str, Any]:
     return {
         "ui_password_set": bool(hub.setting("ui_password")),
         "cors_origins": hub.cors_origins(),
+        "metrics_poll_seconds": int(hub.setting("metrics_poll_seconds", "60") or 60),
+        "metrics_retention_days": int(hub.setting("metrics_retention_days", "30") or 30),
     }
 
 
@@ -572,6 +584,16 @@ def update_settings(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
         if len(password) < 8:
             raise WakeHubError("UI password must be at least 8 characters")
         hub._write_setting("ui_password", hash_password(password))
+    if payload.get("metrics_poll_seconds") is not None:
+        seconds = int(payload["metrics_poll_seconds"])
+        if seconds < 15 or seconds > 3600:
+            raise WakeHubError("metrics poll must be between 15 and 3600 seconds")
+        hub._write_setting("metrics_poll_seconds", str(seconds))
+    if payload.get("metrics_retention_days") is not None:
+        days = int(payload["metrics_retention_days"])
+        if days < 1 or days > 3650:
+            raise WakeHubError("metrics retention must be between 1 and 3650 days")
+        hub._write_setting("metrics_retention_days", str(days))
     if payload.get("cors_origins") is not None:
         origins = payload["cors_origins"]
         if isinstance(origins, str):

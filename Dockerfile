@@ -1,7 +1,10 @@
 FROM python:3.12-slim
 
+# ping is used after the process drops to PUID. File capability is what lets that
+# user send ICMP; cap_add on the container only widens the bounding set.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends iputils-ping adduser \
+    && apt-get install -y --no-install-recommends iputils-ping adduser libcap2-bin \
+    && setcap cap_net_raw+ep /usr/bin/ping \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

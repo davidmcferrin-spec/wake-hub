@@ -45,6 +45,114 @@ CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS pdus (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    host TEXT NOT NULL,
+    port INTEGER NOT NULL DEFAULT 80,
+    use_tls INTEGER NOT NULL DEFAULT 0,
+    username TEXT NOT NULL DEFAULT '',
+    password_enc TEXT,
+    outlet_names TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS amt_endpoints (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    host TEXT NOT NULL,
+    port INTEGER NOT NULL DEFAULT 16992,
+    use_tls INTEGER NOT NULL DEFAULT 0,
+    insecure_tls INTEGER NOT NULL DEFAULT 1,
+    username TEXT NOT NULL DEFAULT 'admin',
+    password_enc TEXT NOT NULL,
+    device_id INTEGER,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS jetkvm_endpoints (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    host TEXT NOT NULL,
+    port INTEGER NOT NULL DEFAULT 80,
+    use_tls INTEGER NOT NULL DEFAULT 0,
+    insecure_tls INTEGER NOT NULL DEFAULT 1,
+    password_enc TEXT,
+    device_id INTEGER,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS plugs (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    host TEXT NOT NULL,
+    port INTEGER NOT NULL DEFAULT 80,
+    username TEXT NOT NULL DEFAULT '',
+    password_enc TEXT,
+    protocol TEXT NOT NULL DEFAULT 'auto',
+    switch_id INTEGER NOT NULL DEFAULT 0,
+    device_id INTEGER,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ups_cards (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    host TEXT NOT NULL,
+    port INTEGER NOT NULL DEFAULT 161,
+    snmp_version TEXT NOT NULL DEFAULT '2c',
+    community_enc TEXT,
+    v3_user TEXT NOT NULL DEFAULT '',
+    v3_auth_proto TEXT NOT NULL DEFAULT 'sha',
+    v3_auth_enc TEXT,
+    v3_priv_proto TEXT NOT NULL DEFAULT 'aes',
+    v3_priv_enc TEXT,
+    device_id INTEGER,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS scans (
+    id INTEGER PRIMARY KEY,
+    cidr TEXT NOT NULL,
+    status TEXT NOT NULL,
+    progress INTEGER NOT NULL DEFAULT 0,
+    total INTEGER NOT NULL DEFAULT 0,
+    message TEXT NOT NULL DEFAULT '',
+    error TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    finished_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS scan_hosts (
+    id INTEGER PRIMARY KEY,
+    scan_id INTEGER NOT NULL,
+    ip TEXT NOT NULL,
+    mac TEXT,
+    hostname TEXT,
+    vendor TEXT,
+    kinds TEXT NOT NULL DEFAULT '[]',
+    detail TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS metric_samples (
+    id INTEGER PRIMARY KEY,
+    recorded_at TEXT NOT NULL,
+    source_kind TEXT NOT NULL,
+    source_id INTEGER NOT NULL,
+    device_id INTEGER,
+    metric TEXT NOT NULL,
+    value REAL NOT NULL,
+    unit TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS metric_lookup ON metric_samples (source_kind, source_id, recorded_at);
 """
 
 

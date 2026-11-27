@@ -120,6 +120,8 @@ class SettingsIn(BaseModel):
     ui_password: str | None = None
     clear_ui_password: bool = False
     cors_origins: list[str] | None = None
+    metrics_poll_seconds: int | None = None
+    metrics_retention_days: int | None = None
 
 
 class LoginIn(BaseModel):
@@ -239,8 +241,14 @@ def create_app(hub: Hub) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        async with mcp_server.session_manager.run():
-            yield
+        from wakehub.metrics import start_poller
+
+        stop_metrics = start_poller(hub)
+        try:
+            async with mcp_server.session_manager.run():
+                yield
+        finally:
+            stop_metrics.set()
 
     app = FastAPI(
         title="Wake Hub",
@@ -259,8 +267,11 @@ def create_app(hub: Hub) -> FastAPI:
     app.add_middleware(DynamicCORS)
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
     app.mount("/mcp", mcp_app)
+    from wakehub.routes_control import control_router
+
     app.include_router(_public_router())
     app.include_router(_api_router())
+    app.include_router(control_router())
 
     @app.get("/", include_in_schema=False)
     def index() -> FileResponse:

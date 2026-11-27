@@ -234,4 +234,7 @@ def build_server() -> MCPServer:
         password_set = bool(hub.setting("ui_password"))
         return {"password_required": True, "setup_required": not password_set}
 
+    from wakehub.mcp_extra import register
+
+    register(server)
     return server

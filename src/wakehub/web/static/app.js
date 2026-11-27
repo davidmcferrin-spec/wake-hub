@@ -10,6 +10,8 @@ const state = {
 
 const titles = {
   devices: ["Inventory", "Devices"],
+  scan: ["Discovery", "Scan"],
+  power: ["Control", "Power"],
   history: ["Log", "History"],
   settings: ["Access", "Settings"],
 };
@@ -74,6 +76,7 @@ function deviceCard(device) {
         <button type="button" class="ghost" data-cap="power_action" data-id="${device.id}">Power on</button>
         <button type="button" class="ghost" data-cap="device_status" data-id="${device.id}">Status</button>
         <button type="button" class="ghost" data-cap="get_device" data-id="${device.id}">Edit</button>
+        <button type="button" class="ghost" data-cap="device_metrics" data-id="${device.id}">Metrics</button>
         <button type="button" class="ghost" data-cap="set_device_enabled" data-id="${device.id}" data-enabled="${device.enabled ? "0" : "1"}">${device.enabled ? "Disable" : "Enable"}</button>
       </div>
     </article>`;
@@ -162,6 +165,7 @@ function renderDevices() {
       <button type="button" class="ghost" data-cap="list_status">Refresh status</button>
     </div>
     <section class="grid">${cards}</section>
+    ${state.metrics && state.metrics.length && typeof sparkline === "function" ? `<div class="card">${sparkline(state.metrics)}</div>` : ""}
     <div id="editor-slot">${state.editing ? editorHtml() : ""}</div>`;
 }
 
@@ -198,6 +202,10 @@ function renderSettings() {
       <input id="cors" name="cors" value="${escapeHtml(settings.cors_origins.join(", "))}">
       <label for="new-password">UI password ${settings.ui_password_set ? "(one is set)" : "(required, at least 8 characters)"}</label>
       <input id="new-password" name="ui_password" type="password" autocomplete="new-password" placeholder="leave blank to keep">
+      <label for="poll">Metrics poll seconds</label>
+      <input id="poll" name="metrics_poll_seconds" type="number" value="${settings.metrics_poll_seconds || 60}">
+      <label for="retention">Metrics retention days</label>
+      <input id="retention" name="metrics_retention_days" type="number" value="${settings.metrics_retention_days || 30}">
       <label class="check"><input type="checkbox" name="clear_ui_password"> Remove the UI password</label>
       <div class="row-actions" style="margin-top:0.8rem">
         <button type="submit" data-cap="update_settings">Save settings</button>
@@ -213,6 +221,8 @@ function render() {
     button.setAttribute("aria-current", button.dataset.page === state.page ? "page" : "false");
   });
   if (state.page === "devices") renderDevices();
+  if (state.page === "scan") renderScan();
+  if (state.page === "power") renderPower();
   if (state.page === "history") renderHistory();
   if (state.page === "settings") renderSettings();
 }
@@ -239,6 +249,8 @@ async function show(page) {
   showBanner("");
   try {
     if (page === "devices") await refreshDevices();
+    if (page === "scan") await refreshScans();
+    if (page === "power") await refreshPower();
     if (page === "history") await refreshActions();
     if (page === "settings") await refreshSettings();
   } catch (error) {
@@ -295,6 +307,7 @@ async function onClick(event) {
   }
   const button = event.target.closest("[data-cap]");
   if (!button || button.type === "submit") return;
+  if (window.handlePowerCap && await window.handlePowerCap(button)) return;
   const id = Number(button.dataset.id);
   try {
     if (button.dataset.cap === "wake_device") {
@@ -319,6 +332,10 @@ async function onClick(event) {
       await api("DELETE", `/api/v1/devices/${id}`);
       state.editing = null;
       await refreshDevices();
+    } else if (button.dataset.cap === "device_metrics") {
+      const rows = await api("GET", `/api/v1/devices/${id}/metrics?limit=80`);
+      state.metrics = rows;
+      showBanner(rows.length ? `${rows.length} samples` : "No samples yet");
     } else if (button.dataset.cap === "list_status") {
       await refreshDevices();
     } else if (button.dataset.cap === "rotate_token") {
@@ -399,6 +416,8 @@ async function onSubmit(event) {
     const payload = {
       cors_origins: data.cors.split(",").map((item) => item.trim()).filter(Boolean),
       clear_ui_password: Boolean(form.elements.clear_ui_password.checked),
+      metrics_poll_seconds: Number(data.metrics_poll_seconds || 60),
+      metrics_retention_days: Number(data.metrics_retention_days || 30),
     };
     if (data.ui_password) payload.ui_password = data.ui_password;
     try {
