@@ -22,6 +22,7 @@ from wakehub.endpoints import (
     public_jetkvm,
     remove_amt,
     remove_jetkvm,
+    pdu_name_diagnostics,
     refresh_pdu_outlet_names,
     remove_pdu,
     remove_plug,
@@ -376,6 +377,10 @@ def control_router() -> APIRouter:
     @router.post("/pdus/{pdu_id}/outlet-names", tags=["pdu"])
     def refresh_outlet_names(pdu_id: int) -> dict[str, Any]:
         return refresh_pdu_outlet_names(get_hub(), pdu_id)
+
+    @router.get("/pdus/{pdu_id}/name-diagnostics", tags=["pdu"])
+    def name_diagnostics(pdu_id: int) -> dict[str, Any]:
+        return pdu_name_diagnostics(get_hub(), pdu_id)
 
     @router.get("/pdus/{pdu_id}/outlets", tags=["pdu"])
     def outlets(pdu_id: int) -> dict[str, Any]:

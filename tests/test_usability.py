@@ -211,6 +211,49 @@ def test_reread_keeps_a_name_set_in_wake_hub_and_records_a_failed_read(client, h
     assert again[2] == "Work HP"
 
 
+def test_outlet_status_does_not_read_names_or_rewrite_a_repeat_failure(client, hub, monkeypatch):
+    from wakehub.clients.synaccess import parse_status
+    from wakehub.errors import UpstreamError
+
+    calls = {"names": 0, "status": 0}
+
+    def names(self):
+        calls["names"] += 1
+        self.name_pages = [{"path": "/outlets.htm", "status": 200, "content_type": "text/html", "body": "secret-pass and Authorization: Basic abc cookie: sid=1"}]
+        raise UpstreamError("Couldn't read outlet names from the PDU (/outlets.htm HTTP 200: plain)")
+
+    def status(self, labels=None):
+        calls["status"] += 1
+        return parse_status("1,0.20,22", labels)
+
+    monkeypatch.setattr("wakehub.clients.synaccess.SynaccessClient.read_outlet_names", names)
+    monkeypatch.setattr("wakehub.clients.synaccess.SynaccessClient.status", status)
+    created = client.post("/api/v1/pdus", json={"name": "NP", "host": "192.168.0.8", "password": "secret-pass"})
+    assert created.status_code == 201, created.text
+    pdu_id = created.json()["id"]
+    assert calls["names"] >= 1
+    calls["names"] = 0
+    calls["status"] = 0
+    listed = client.get(f"/api/v1/pdus/{pdu_id}/outlets")
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["outlets"][0]["on"] is True
+    assert calls["names"] == 0
+    assert calls["status"] == 1
+    client.get(f"/api/v1/pdus/{pdu_id}/outlets")
+    assert calls["names"] == 0
+    stamp = hub.query_one("SELECT updated_at FROM pdus WHERE id = ?", (pdu_id,))["updated_at"]
+    again = client.post(f"/api/v1/pdus/{pdu_id}/outlet-names")
+    assert again.status_code == 200, again.text
+    assert hub.query_one("SELECT updated_at FROM pdus WHERE id = ?", (pdu_id,))["updated_at"] == stamp
+    downloaded = client.get(f"/api/v1/pdus/{pdu_id}/name-diagnostics")
+    assert downloaded.status_code == 200
+    body = downloaded.text
+    assert "secret-pass" not in body
+    assert "Basic abc" not in body
+    assert "sid=1" not in body
+    assert "/outlets.htm" in body
+
+
 def test_credential_profile_is_stored_encrypted_and_selectable(client):
     created = client.post("/api/v1/credential-profiles", json={"name": "rack", "username": "admin", "password": "secret-pw"})
     assert created.status_code == 201

@@ -43,8 +43,14 @@ def register(server) -> None:
     @server.tool()
     @expose
     def list_pdu_outlets(pdu_id: int) -> dict[str, Any]:
-        """List outlet names and on/off state. Current is per inlet bank, not per outlet, on an NP-1601DU. Names are read from the PDU when it answers; a local override wins."""
+        """List outlet names and on/off state from the status command. Current is per inlet bank, not per outlet, on an NP-1601DU. This does not read names from the web UI."""
         return actions.list_pdu_outlets(get_hub(), pdu_id)
+
+    @server.tool()
+    @expose
+    def pdu_name_diagnostics(pdu_id: int) -> dict[str, Any]:
+        """Status code, content type and the first 8 KB of each page from the last outlet-name read. Credentials and cookies are redacted."""
+        return ends.pdu_name_diagnostics(get_hub(), pdu_id)
 
     @server.tool()
     @expose

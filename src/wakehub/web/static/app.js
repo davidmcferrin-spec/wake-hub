@@ -143,9 +143,12 @@ function applyDevicePills() {
   });
 }
 
-async function pollStatus() {
-  if (state.confirming || document.hidden || !state.token) return;
+async function pollStatus(force) {
+  if (state.pollInFlight || state.confirming || document.hidden || !state.token) return;
+  if (!force && Date.now() < (state.pollHold || 0)) return;
   if (state.page !== "devices" && state.page !== "power") return;
+  state.pollInFlight = true;
+  state.pollHold = Date.now() + 400;
   try {
     if (state.page === "devices") {
       const status = await api("GET", "/api/v1/status");
@@ -153,10 +156,13 @@ async function pollStatus() {
       status.forEach((item) => { state.status[item.device_id] = item; });
       applyDevicePills();
     }
-    if (window.loadOperateStatus) await window.loadOperateStatus();
     if (window.loadLivePdus) await window.loadLivePdus();
+    if (window.loadOperateStatus) await window.loadOperateStatus();
+    if (window.pollAmt) window.pollAmt();
   } catch (_error) {
     /* a status poll leaves the page where the operator left it */
+  } finally {
+    state.pollInFlight = false;
   }
 }
 
@@ -1251,6 +1257,7 @@ function render() {
   }
   restoreTransient(transient);
   if (window.bindOutlets) window.bindOutlets();
+  if (window.pollAmt && (state.page === "devices" || state.page === "power")) window.pollAmt();
   Object.entries(state.amtAvailable || {}).forEach(([id, available]) => {
     if (typeof applyAmtAvailable === "function") applyAmtAvailable(id, available);
   });

@@ -335,6 +335,26 @@ def sync_pdu_outlets(hub: Hub, pdu_id: int, count: int, names: dict[int, str]) -
             hub.write("UPDATE pdu_outlets SET name = ? WHERE id = ?", (chosen, existing["id"]))
 
 
+_NAME_PAGES: dict[int, list[dict[str, object]]] = {}
+
+
+def remember_name_pages(pdu_id: int, pages: list[dict[str, object]]) -> None:
+    _NAME_PAGES[pdu_id] = pages
+
+
+def pdu_name_diagnostics(hub: Hub, pdu_id: int) -> dict[str, Any]:
+    from wakehub.clients.synaccess import redact_diagnostics
+
+    row = _row(hub, "pdu", pdu_id)
+    _username, secret = _resolved_login(hub, row)
+    pages = []
+    for page in _NAME_PAGES.get(pdu_id, []):
+        cleaned = dict(page)
+        cleaned["body"] = redact_diagnostics(str(page.get("body") or ""), secret)
+        pages.append(cleaned)
+    return {"pdu_id": pdu_id, "pages": pages}
+
+
 def refresh_pdu_outlet_names(hub: Hub, pdu_id: int, *, timeout: float | None = None) -> dict[str, Any]:
     _current, client = pdu_client(hub, pdu_id, timeout=timeout)
     names: dict[int, str] = {}
@@ -351,6 +371,7 @@ def refresh_pdu_outlet_names(hub: Hub, pdu_id: int, *, timeout: float | None = N
         except Exception:
             count = max(names) if names else 0
     finally:
+        remember_name_pages(pdu_id, list(getattr(client, "name_pages", [])))
         client.close()
     if not names and count == 0:
         message = _names_failure(names_error)
@@ -359,12 +380,15 @@ def refresh_pdu_outlet_names(hub: Hub, pdu_id: int, *, timeout: float | None = N
     # Sync while device_outlet_names is still the previous read, so a name
     # the user changed is not treated as the device's last name.
     sync_pdu_outlets(hub, pdu_id, count or (max(names) if names else 0), names)
+    current = _row(hub, "pdu", pdu_id)
     if names:
         stored = {str(number): label for number, label in sorted(names.items())}
-        hub.write(
-            "UPDATE pdus SET device_outlet_names = ?, outlet_names_error = '', updated_at = ? WHERE id = ?",
-            (json.dumps(stored), utcnow(), pdu_id),
-        )
+        previous = json.loads(current["device_outlet_names"] or "{}")
+        if previous != stored or (current["outlet_names_error"] or ""):
+            hub.write(
+                "UPDATE pdus SET device_outlet_names = ?, outlet_names_error = '', updated_at = ? WHERE id = ?",
+                (json.dumps(stored), utcnow(), pdu_id),
+            )
     elif names_error:
         _store_names_error(hub, pdu_id, _names_failure(names_error))
     body = public_pdu(_row(hub, "pdu", pdu_id), hub)
@@ -374,13 +398,18 @@ def refresh_pdu_outlet_names(hub: Hub, pdu_id: int, *, timeout: float | None = N
 
 
 def _names_failure(detail: str) -> str:
+    from wakehub.clients.synaccess import LOGIN_MESSAGE
+
     text = (detail or "the PDU did not return outlet names").strip()
-    if text.startswith("Couldn't read outlet names from the PDU"):
+    if text == LOGIN_MESSAGE or text.startswith("Couldn't read outlet names from the PDU"):
         return text
     return f"Couldn't read outlet names from the PDU ({text})"
 
 
 def _store_names_error(hub: Hub, pdu_id: int, message: str) -> None:
+    current = _row(hub, "pdu", pdu_id)
+    if (current["outlet_names_error"] or "") == message:
+        return
     hub.write(
         "UPDATE pdus SET outlet_names_error = ?, updated_at = ? WHERE id = ?",
         (message, utcnow(), pdu_id),

@@ -86,55 +86,66 @@ def test_netbooter_setup_page_and_challenge_are_recognized():
     assert not synaccess_http({"Server": "nginx"}, "<title>Router</title>", 401)
 
 
-NP1601_NAMES = (
-    "Attic POE",
-    "HDMI Streaming",
-    "Home PC",
-    "Internet Fiber Jack",
-    "Network Gear",
-    "Work HP",
-    "Work Peplink",
-)
+def _input_name_page() -> str:
+    labels = ("Attic POE", "HDMI Streaming", "Home PC", "Internet Fiber Jack", "Network Gear", "Work HP", "Work Peplink")
+    inputs = "".join(f'<input type="text" name="oName{index}" value="{label}">' for index, label in enumerate(labels, start=1))
+    return f"<html><body><form>{inputs}</form></body></html>"
 
 
-def _np1601_setup_page() -> str:
-    inputs = "".join(
-        f'<input type="text" name="oName{index}" value="{label}">' for index, label in enumerate(NP1601_NAMES, start=1)
+def _status_table_page() -> str:
+    rows = (
+        ("1", "Attic POE"),
+        ("2", "It's HDMI"),
+        ("3", "Work (HP)"),
+        ("4", "Rack]"),
     )
-    return f"<html><title>netBooter NP-1601DU</title><body><h1>Outlet Setup</h1><form>{inputs}</form></body></html>"
+    body = "".join(f"<tr><td>{number}</td><td>{label}</td><td>ON</td></tr>" for number, label in rows)
+    return "<html><table><tr><th>No.</th><th>Name</th><th>State</th></tr>" + body + "</table></html>"
 
 
-def test_np1601_setup_page_names_are_not_in_the_status_command(monkeypatch):
+def test_outlet_name_fixtures_match_their_format(monkeypatch):
     monkeypatch.undo()
     assert parse_outlet_names("$A5\n1111111111111111,0.42,0.18,27") == {}
-    assert parse_outlet_names(_np1601_setup_page()) == {index: label for index, label in enumerate(NP1601_NAMES, start=1)}
-    quoted = ",".join(f'"{label}"' for label in NP1601_NAMES)
-    assert parse_outlet_names(f"<script>var olName = new Array({quoted});</script>")[1] == "Attic POE"
-    assert parse_outlet_names(f"<script>var olName = new Array({quoted});</script>")[7] == "Work Peplink"
+    inputs = parse_outlet_names(_input_name_page())
+    assert inputs[1] == "Attic POE"
+    assert inputs[4] == "Internet Fiber Jack"
+    table = parse_outlet_names(_status_table_page())
+    assert table == {1: "Attic POE", 2: "It's HDMI", 3: "Work (HP)", 4: "Rack]"}
+    script = 'var olName = new Array("It\'s Attic", "Work (HP)", "Rack]");'
+    assert parse_outlet_names(f"<script>{script}</script>") == {1: "It's Attic", 2: "Work (HP)", 3: "Rack]"}
+    mixed = """var outletname = ["It's", 'say "hi"', "end]"];"""
+    assert parse_outlet_names(mixed) == {1: "It's", 2: 'say "hi"', 3: "end]"}
 
     def handler(request):
         if request.url.path == "/outletsetup.htm":
-            return httpx.Response(200, text=_np1601_setup_page())
-        if request.url.path == "/cmd.cgi":
-            return httpx.Response(200, text="1111111111111111,0.42,0.18,27")
-        return httpx.Response(404, text="missing")
+            return httpx.Response(404, text="missing")
+        if request.url.path == "/outlets.htm":
+            return httpx.Response(200, text=_status_table_page(), headers={"content-type": "text/html"})
+        return httpx.Response(404, text="later")
 
-    client = SynaccessClient("192.168.0.8", "admin", "admin", http=httpx.Client(transport=httpx.MockTransport(handler)))
-    assert client.read_outlet_names()[3] == "Home PC"
-    assert client.read_outlet_names()[4] == "Internet Fiber Jack"
+    client = SynaccessClient("192.168.0.8", "admin", "secret-pass", http=httpx.Client(transport=httpx.MockTransport(handler)))
+    assert client.read_outlet_names()[2] == "It's HDMI"
+    assert client.name_pages[0]["status"] == 404
+    assert client.name_pages[1]["path"] == "/outlets.htm"
+    assert "secret-pass" not in str(client.name_pages)
     client.close()
 
 
-def test_np1601_name_read_logs_the_response_when_the_page_has_no_names(monkeypatch, caplog):
+def test_name_read_reports_the_first_non_404_and_a_login_page(monkeypatch, caplog):
     import logging
 
+    from wakehub.clients.synaccess import LOGIN_MESSAGE
+
     monkeypatch.undo()
-    body = "<html><title>netBooter NP-1601DU</title><body>Please login</body></html>" + ("x" * 600)
 
-    def handler(_request):
-        return httpx.Response(200, text=body)
+    def login_handler(request):
+        if request.url.path == "/outletsetup.htm":
+            return httpx.Response(404, text="last-must-not-win")
+        if request.url.path == "/outlets.htm":
+            return httpx.Response(200, text="<html><body>Please login<form><input type='password'></form></body></html>")
+        return httpx.Response(404, text="last-must-not-win")
 
-    client = SynaccessClient("192.168.0.8", "admin", "admin", http=httpx.Client(transport=httpx.MockTransport(handler)))
+    client = SynaccessClient("192.168.0.8", "admin", "secret-pass", http=httpx.Client(transport=httpx.MockTransport(login_handler)))
     with caplog.at_level(logging.INFO, logger="wakehub.synaccess"):
         try:
             client.read_outlet_names()
@@ -143,10 +154,28 @@ def test_np1601_name_read_logs_the_response_when_the_page_has_no_names(monkeypat
         else:
             message = ""
     client.close()
-    assert message.startswith("Couldn't read outlet names from the PDU")
-    assert "HTTP 200" in caplog.text
-    assert "Please login" in caplog.text
-    assert "x" * 500 not in caplog.text
+    assert message == LOGIN_MESSAGE
+    assert "last-must-not-win" not in message
+    assert caplog.text.count("PDU outlet names") == 1
+
+    def plain_handler(request):
+        if request.url.path == "/outletsetup.htm":
+            return httpx.Response(404, text="skip")
+        if request.url.path == "/outlets.htm":
+            return httpx.Response(200, text="<html><body>no names TOKEN</body></html>")
+        return httpx.Response(401, text="later-login")
+
+    client = SynaccessClient("192.168.0.9", "admin", "secret-pass", http=httpx.Client(transport=httpx.MockTransport(plain_handler)))
+    try:
+        client.read_outlet_names()
+    except Exception as exc:
+        message = str(exc)
+    else:
+        message = ""
+    client.close()
+    assert "/outlets.htm" in message
+    assert "TOKEN" in message
+    assert "later-login" not in message
 
 
 def test_amt_wsman_round_trip():

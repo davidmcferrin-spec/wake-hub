@@ -131,7 +131,7 @@ window.hardwareEditor = function (kind, record) {
   const cap = { pdu: "update_pdu", amt: "update_amt", jetkvm: "update_jetkvm", plug: "update_plug", ups: "update_ups", roku: "update_roku" }[kind];
   const path = { pdu: "pdus", amt: "amt", jetkvm: "jetkvm", plug: "plugs", ups: "ups", roku: "rokus" }[kind];
   const reread = kind === "pdu"
-    ? `<button type="button" data-cap="refresh_pdu_outlet_names" data-fields="" data-id="${record.id}">Re-read from device</button>`
+    ? `<button type="button" data-cap="refresh_pdu_outlet_names" data-fields="" data-id="${record.id}">Re-read from device</button><button type="button" data-cap="pdu_name_diagnostics" data-fields="" data-id="${record.id}">Download PDU diagnostics</button>`
     : "";
   return `<form class="hardware-edit hardware-form editor">
     ${hardwareFields(kind, record)}
@@ -314,13 +314,25 @@ window.bindOutlets = function (root) {
   });
 };
 
+function setLivePill(key, label, tone) {
+  const node = document.querySelector(`[data-live-status="${key}"]`);
+  if (!node || (node.textContent === label && node.className === tone)) return;
+  node.textContent = label;
+  node.className = tone;
+}
+
 window.loadLivePdus = async function () {
   const nodes = [...document.querySelectorAll("[data-pdu-live]")];
+  const now = Date.now();
   await Promise.all(nodes.map(async (node) => {
     const id = node.dataset.pduLive;
+    state.pduQuietUntil = state.pduQuietUntil || {};
+    if (state.pduQuietUntil[id] && now < state.pduQuietUntil[id]) return;
     const bank = document.getElementById(`pdu-bank-${id}`);
     try {
       const data = await api("GET", `/api/v1/pdus/${id}/outlets`);
+      delete state.pduQuietUntil[id];
+      setLivePill(`pdu-${id}`, "Online", "pill up");
       if (bank) bank.textContent = `Bank current ${(data.bank_amps || []).map((value) => `${value} A`).join(", ") || "unknown"}.`;
       const shown = (data.outlets || []).filter(outletShown);
       const rows = [...node.querySelectorAll("[data-outlet-row]")];
@@ -344,6 +356,8 @@ window.loadLivePdus = async function () {
         if (window.bindOutlets) window.bindOutlets(node);
       }
     } catch (error) {
+      state.pduQuietUntil[id] = Date.now() + 60000;
+      setLivePill(`pdu-${id}`, "Unreachable", "pill bad");
       if (bank) bank.textContent = error.message;
     }
   }));
@@ -443,11 +457,21 @@ window.hardwareControls = function (kind, item, full) {
   return "";
 };
 
+const AMT_POLL_MS = 30000;
+
+function paintLive(node, label) {
+  const tone = label === "On" || label === "Ready" || label === "Online" ? "pill up" : label === "Off" ? "pill down" : label === "Standby" ? "pill off" : "pill bad";
+  if (node.textContent === label && node.className === tone) return;
+  node.textContent = label;
+  node.className = tone;
+}
+
 window.loadOperateStatus = async function () {
   const nodes = [...document.querySelectorAll("[data-live-status]")];
   await Promise.all(nodes.map(async (node) => {
     const [kind, id] = String(node.dataset.liveStatus).split("-");
-    const path = { roku: "rokus", plug: "plugs", ups: "ups", amt: "amt", jetkvm: "jetkvm" }[kind];
+    if (kind === "amt" || kind === "pdu") return;
+    const path = { roku: "rokus", plug: "plugs", ups: "ups", jetkvm: "jetkvm" }[kind];
     if (!path) return;
     try {
       const data = await api("GET", `/api/v1/${path}/${id}/status`);
@@ -456,13 +480,33 @@ window.loadOperateStatus = async function () {
         const mode = data.power_mode || "";
         label = mode === "PowerOn" ? "On" : mode === "DisplayOff" || mode === "Ready" ? "Standby" : mode === "Suspend" || mode === "Headless" ? "Off" : "Unreachable";
       } else if (kind === "plug") label = data.on ? "On" : "Off";
-      node.textContent = label;
-      node.className = label === "On" || label === "Ready" ? "pill up" : label === "Off" ? "pill down" : label === "Standby" ? "pill off" : "pill bad";
+      paintLive(node, label);
     } catch (_error) {
-      node.textContent = "Unreachable";
-      node.className = "pill bad";
+      if (node.textContent === "Checking") paintLive(node, "Unreachable");
     }
   }));
+};
+
+window.pollAmt = function () {
+  if (state.amtPollInFlight) return;
+  const now = Date.now();
+  const nodes = [...document.querySelectorAll("[data-live-status]")].filter((node) => String(node.dataset.liveStatus).startsWith("amt-"));
+  const due = nodes.filter((node) => now - Number(node.dataset.amtPolled || 0) >= AMT_POLL_MS);
+  if (!due.length) return;
+  state.amtPollInFlight = true;
+  Promise.all(due.map(async (node) => {
+    const id = String(node.dataset.liveStatus).slice(4);
+    node.dataset.amtPolled = String(Date.now());
+    try {
+      const data = await api("GET", `/api/v1/amt/${id}/power`);
+      const name = data.power_name || "";
+      const label = name === "on" ? "On" : name === "off" ? "Off" : name || "Ready";
+      paintLive(node, label);
+    } catch (_error) {
+      if (node.dataset.amtFresh === "1" || node.textContent !== "Checking") return;
+      paintLive(node, "Unreachable");
+    }
+  })).finally(() => { state.amtPollInFlight = false; });
 };
 
 function renderPower() {
@@ -786,7 +830,7 @@ function jetVerb(action) {
 window.handlePowerCap = async function handlePowerCap(button) {
   const cap = button.dataset.cap;
   const id = Number(button.dataset.id);
-  const known = ["scan_results", "add_from_scan", "delete_scan", "clear_scans", "rescan", "list_pdu_outlets", "set_pdu_outlet", "update_pdu_outlet", "refresh_pdu_outlet_names", "update_pdu", "remove_pdu", "amt_power_state", "amt_power", "update_amt", "remove_amt", "jetkvm_status", "jetkvm_power", "update_jetkvm", "remove_jetkvm", "plug_status", "plug_power", "update_plug", "remove_plug", "ups_status", "ups_action", "update_ups", "remove_ups", "roku_status", "roku_power", "update_roku", "remove_roku", "list_metrics"];
+  const known = ["scan_results", "add_from_scan", "delete_scan", "clear_scans", "rescan", "list_pdu_outlets", "set_pdu_outlet", "update_pdu_outlet", "refresh_pdu_outlet_names", "pdu_name_diagnostics", "update_pdu", "remove_pdu", "amt_power_state", "amt_power", "update_amt", "remove_amt", "jetkvm_status", "jetkvm_power", "update_jetkvm", "remove_jetkvm", "plug_status", "plug_power", "update_plug", "remove_plug", "ups_status", "ups_action", "update_ups", "remove_ups", "roku_status", "roku_power", "update_roku", "remove_roku", "list_metrics"];
   if (!known.includes(cap)) return false;
   try {
     if (cap === "scan_results") {
@@ -859,7 +903,8 @@ window.handlePowerCap = async function handlePowerCap(button) {
       const outletPrompt = action === "off" ? `Turn off ${outletName} on ${pduName}?` : `Cycle ${outletName} on ${pduName}?`;
       if ((action === "off" || action === "reboot" || action === "cycle") && !window.confirm(outletPrompt)) return true;
       await api("POST", `/api/v1/pdus/${button.dataset.pdu}/outlets/${button.dataset.outlet}`, { action, confirm: action !== "on" });
-      if (window.pollStatus) await window.pollStatus();
+      if (state.pduQuietUntil) delete state.pduQuietUntil[button.dataset.pdu];
+      if (window.pollStatus) window.pollStatus(true);
       return true;
     } else if (cap === "remove_pdu" || cap === "remove_amt" || cap === "remove_jetkvm" || cap === "remove_plug" || cap === "remove_ups" || cap === "remove_roku") {
       const kind = { remove_pdu: "pdu", remove_amt: "amt", remove_jetkvm: "jetkvm", remove_plug: "plug", remove_ups: "ups", remove_roku: "roku" }[cap];
@@ -870,7 +915,11 @@ window.handlePowerCap = async function handlePowerCap(button) {
       try {
         const data = await api("GET", `/api/v1/amt/${id}/power`);
         const text = `${data.name || "AMT"} is ${data.power_name || "unknown"}`;
-        if (slot) slot.textContent = text;
+        if (slot) {
+          slot.textContent = text;
+          slot.dataset.amtFresh = "1";
+          slot.dataset.amtPolled = String(Date.now());
+        }
         applyAmtAvailable(id, data.available || []);
         showBanner(text);
       } catch (error) {
@@ -926,6 +975,18 @@ window.handlePowerCap = async function handlePowerCap(button) {
       const action = button.dataset.action;
       if (!window.confirm(`This can drop every load on ${hardwareName("ups", id, "the UPS")}. Confirm ${action}?`)) return true;
       await api("POST", `/api/v1/ups/${id}/action`, { action, confirm: true });
+    } else if (cap === "pdu_name_diagnostics") {
+      const data = await api("GET", `/api/v1/pdus/${id}/name-diagnostics`);
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `pdu-${id}-diagnostics.json`;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      return true;
     } else if (cap === "refresh_pdu_outlet_names") {
       const data = await api("POST", `/api/v1/pdus/${id}/outlet-names`);
       await refreshPower();
@@ -938,7 +999,7 @@ window.handlePowerCap = async function handlePowerCap(button) {
       } else {
         if (alert) alert.textContent = "";
         if (!note && state.page === "power") renderPower();
-        else if (!note && state.page === "devices" && window.pollStatus) await window.pollStatus();
+        else if (!note && state.page === "devices" && window.pollStatus) window.pollStatus(true);
         showBanner("Outlet names read from the PDU");
       }
       return true;
@@ -1051,6 +1112,7 @@ window.CONTROL_HANDLERS = {
   remove_pdu(el) { return window.handlePowerCap(el); },
   list_pdu_outlets(el) { return window.handlePowerCap(el); },
   refresh_pdu_outlet_names(el) { return window.handlePowerCap(el); },
+  pdu_name_diagnostics(el) { return window.handlePowerCap(el); },
   set_pdu_outlet(el) { return window.handlePowerCap(el); },
   list_amt() { return show("power"); },
   add_amt() { return show("power"); },
@@ -1132,7 +1194,7 @@ async function sendPower(el) {
   if (destructive && !window.confirm(powerConfirm(device, action, method))) return;
   const result = await api("POST", `/api/v1/devices/${id}/power`, { action, method, confirm: destructive });
   showBanner(reachText(result));
-  if (window.pollStatus) await window.pollStatus();
+  if (window.pollStatus) window.pollStatus(true);
 }
 
 async function sendUps(el) {
