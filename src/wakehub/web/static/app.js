@@ -51,6 +51,26 @@ async function api(method, path, body) {
   return data;
 }
 
+function powerBlock(device) {
+  const power = device.power;
+  if (!power || !power.metered) {
+    return `<p class="sub">No metered source is linked. A smart plug, PDU, UPS, or JetKVM DC supply would show watts here.</p>`;
+  }
+  const bits = [];
+  if (power.watts != null) bits.push(`${power.watts} W`);
+  if (power.current_a != null) bits.push(`${power.current_a} A`);
+  if (power.energy_wh != null) bits.push(`${power.energy_wh} Wh`);
+  const source = power.source ? power.source.label : "meter";
+  if (!bits.length) {
+    return `<p class="sub">${escapeHtml(power.message || `${source} has not reported yet.`)}</p>`;
+  }
+  const history = power.history || [];
+  const unit = history.some((point) => point.watts != null) ? "W" : "A";
+  const series = history.slice().reverse().map((point) => ({ value: point.watts != null ? point.watts : point.current_a })).filter((row) => row.value != null);
+  const chart = series.length && typeof sparkline === "function" ? `<p class="sub">Recent ${unit}</p>${sparkline(series)}` : "";
+  return `<p class="sub">${bits.join(" · ")} from ${escapeHtml(source)}</p>${chart}`;
+}
+
 function deviceLinks(device) {
   const hardware = state.power || { pdus: [], amts: [], jetkvms: [], plugs: [], ups: [] };
   const lines = [];
@@ -96,6 +116,7 @@ function deviceCard(device) {
         ${pill(device)}
       </header>
       <p class="meta">${escapeHtml(device.host || "no host")} · ${escapeHtml(device.mac || "no MAC")}</p>
+      ${powerBlock(device)}
       <p class="sub">Broadcast ${escapeHtml(device.broadcast)}:${device.wol_port}. Wake-on-LAN, and any PDU outlet, plug, AMT, JetKVM or UPS linked below, are controlled from this computer.</p>
       ${deviceLinks(device)}
       <div class="tags">${tags}</div>

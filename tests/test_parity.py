@@ -111,6 +111,43 @@ def test_every_api_operation_is_a_capability(client):
     assert extra == []
 
 
+def test_device_lists_include_power_for_the_api_and_mcp(client, hub):
+    import json
+
+    from wakehub.endpoints import add_plug
+    from wakehub.hub import set_hub
+    from wakehub.metrics import record
+
+    set_hub(hub)
+    created = client.post("/api/v1/devices", json={"name": "Metered", "mac": "AA:BB:CC:DD:EE:21", "host": "10.9.0.2"}).json()
+    bare = client.post("/api/v1/devices", json={"name": "Plain", "mac": "AA:BB:CC:DD:EE:22", "host": "10.9.0.3"}).json()
+    plug = add_plug(hub, {"name": "Desk lamp", "kind": "shelly", "host": "10.9.0.9", "device_id": created["id"]})
+    record(hub, "plug", plug["id"], created["id"], [("power_w", 18.5, "W"), ("current_a", 0.16, "A"), ("energy_wh", 42, "Wh")])
+    listed = {item["name"]: item for item in client.get("/api/v1/devices").json()}
+    fetched = client.get(f"/api/v1/devices/{created['id']}").json()
+    assert listed["Plain"]["power"]["metered"] is False
+    assert "No metered source" in listed["Plain"]["power"]["message"]
+    assert listed["Metered"]["power"]["watts"] == 18.5
+    assert listed["Metered"]["power"]["source"]["label"] == "Smart plug Desk lamp"
+    assert fetched["power"]["current_a"] == 0.16
+    assert fetched["power"]["energy_wh"] == 42
+    assert fetched["power"]["history"]
+    server = build_server()
+    result = asyncio.run(server.call_tool("get_device", {"device_id": created["id"]}))
+    body = json.loads(result.content[0].text)
+    assert body["power"]["watts"] == fetched["power"]["watts"]
+    assert body["power"]["source"]["kind"] == "plug"
+    listed_tool = asyncio.run(server.call_tool("list_devices", {}))
+    rows = []
+    for block in listed_tool.content:
+        if not getattr(block, "text", None):
+            continue
+        parsed = json.loads(block.text)
+        rows.extend(parsed if isinstance(parsed, list) else [parsed])
+    assert {item["name"] for item in rows} >= {"Metered", "Plain"}
+    assert all(item["power"]["metered"] is (item["name"] == "Metered") for item in rows)
+
+
 def test_mcp_tool_names_match_the_registry():
     server = build_server()
     tools = asyncio.run(server.list_tools())

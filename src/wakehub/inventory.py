@@ -154,7 +154,7 @@ def _get_row(hub: Hub, device_id: int) -> Any:
 
 def list_devices(hub: Hub, *, tag: str | None = None, q: str | None = None) -> list[dict[str, Any]]:
     rows = hub.query("SELECT * FROM devices ORDER BY name COLLATE NOCASE")
-    devices = [public_device(row) for row in rows]
+    devices = [_with_power(hub, public_device(row)) for row in rows]
     if tag:
         devices = [item for item in devices if tag in item["tags"]]
     if q:
@@ -170,7 +170,14 @@ def list_devices(hub: Hub, *, tag: str | None = None, q: str | None = None) -> l
 
 
 def get_device(hub: Hub, device_id: int) -> dict[str, Any]:
-    return public_device(_get_row(hub, device_id))
+    return _with_power(hub, public_device(_get_row(hub, device_id)))
+
+
+def _with_power(hub: Hub, device: dict[str, Any]) -> dict[str, Any]:
+    from wakehub.metrics import power_snapshot
+
+    device["power"] = power_snapshot(hub, device)
+    return device
 
 
 def _insert_values(hub: Hub, fields: dict[str, Any]) -> dict[str, Any]:
