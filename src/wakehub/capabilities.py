@@ -83,6 +83,7 @@ CAPABILITIES: tuple[Capability, ...] = (
     Capability("scan_subnet", "Start a subnet scan", "POST", "/api/v1/scans", "scan_subnet"),
     Capability("list_scans", "List scans", "GET", "/api/v1/scans", "list_scans"),
     Capability("scan_results", "Read one scan and its hosts", "GET", "/api/v1/scans/{scan_id}", "scan_results"),
+    Capability("bulk_remove", "Delete several records", "POST", "/api/v1/inventory/remove", "bulk_remove"),
     Capability("delete_scan", "Delete one scan", "DELETE", "/api/v1/scans/{scan_id}", "delete_scan"),
     Capability("clear_scans", "Clear scan history", "POST", "/api/v1/scans/clear", "clear_scans"),
     Capability("rescan", "Run a scan again", "POST", "/api/v1/scans/{scan_id}/rescan", "rescan"),

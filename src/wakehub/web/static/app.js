@@ -14,6 +14,7 @@ const state = {
   salvos: [],
   salvoDraft: null,
   salvoReplace: false,
+  selection: [],
 };
 
 const titles = {
@@ -155,8 +156,10 @@ function deviceCard(device) {
   return `
     <article class="card">
       <header>
+        <label class="check"><input type="checkbox" class="select-record" data-kind="device" data-id="${device.id}" ${isSelected("device", device.id) ? "checked" : ""} aria-label="Select ${escapeHtml(device.name)}"></label>
         <h2>${escapeHtml(device.name)}</h2>
         ${pill(device)}
+        <button type="button" class="danger delete" data-cap="remove_device" data-fields="" data-id="${device.id}">Delete</button>
       </header>
       <p class="meta">${escapeHtml(device.host || "no host")} · ${escapeHtml(device.mac || "no MAC")}</p>
       ${powerBlock(device)}
@@ -273,7 +276,7 @@ function editorHtml() {
         ${device
           ? `<button type="submit" data-cap="update_device" data-fields="broadcast,enabled,host,mac,methods,name,notes,reach_mode,reach_port,reach_timeout,secureon,tags,wake_strategy,wol_port">Save</button>`
           : `<button type="submit" data-cap="add_device" data-fields="broadcast,enabled,host,mac,methods,name,notes,reach_mode,reach_port,reach_timeout,secureon,tags,wake_strategy,wol_port">Add device</button>`}
-        ${device ? `<button type="button" class="danger" data-cap="remove_device" data-fields="" data-id="${device.id}">Remove</button>` : ""}
+        ${device ? `<button type="button" class="danger delete" data-cap="remove_device" data-fields="" data-id="${device.id}">Delete ${escapeHtml(device.name)}</button>` : ""}
         <button type="button" class="ghost" id="close-editor">Close</button>
       </div>
     </form>`;
@@ -291,13 +294,31 @@ function hardwareInventory() {
   ];
 }
 
+function isSelected(kind, id) {
+  return (state.selection || []).some((item) => item.kind === kind && Number(item.id) === Number(id));
+}
+
+function removeCap(kind) {
+  return {
+    device: "remove_device",
+    pdu: "remove_pdu",
+    amt: "remove_amt",
+    jetkvm: "remove_jetkvm",
+    plug: "remove_plug",
+    ups: "remove_ups",
+    roku: "remove_roku",
+  }[kind] || "remove_device";
+}
+
 function hardwareInventoryCard(entry) {
   const item = entry.item;
   return `
     <article class="card" data-kind="${entry.kind}">
       <header>
+        <label class="check"><input type="checkbox" class="select-record" data-kind="${entry.kind}" data-id="${item.id}" ${isSelected(entry.kind, item.id) ? "checked" : ""} aria-label="Select ${escapeHtml(item.name)}"></label>
         <h2>${escapeHtml(item.name)}</h2>
         <span class="pill">${entry.label}</span>
+        <button type="button" class="danger delete" data-cap="${removeCap(entry.kind)}" data-fields="" data-id="${item.id}">Delete</button>
       </header>
       <p class="meta">${escapeHtml(item.host || "no host")}${item.port ? `:${item.port}` : ""}</p>
       ${tagChips(item.tags)}
@@ -503,7 +524,7 @@ function renderDevices() {
   if (state.focus && window.hardwareEditor && window.findHardware) {
     const record = window.findHardware(state.focus.kind, state.focus.id);
     $("view").innerHTML = record
-      ? `<div class="row-actions"><button type="button" class="ghost" id="back-inventory">Back</button></div>${window.hardwareEditor(state.focus.kind, record)}`
+      ? `<div class="row-actions"><button type="button" class="ghost" id="back-inventory">Back</button><button type="button" class="danger delete" data-cap="${removeCap(state.focus.kind)}" data-fields="" data-id="${record.id}">Delete ${escapeHtml(record.name)}</button></div>${window.hardwareEditor(state.focus.kind, record)}`
       : `<div class="row-actions"><button type="button" class="ghost" id="back-inventory">Back</button></div><div class="empty">That hardware record is gone.</div>`;
     return;
   }
@@ -531,6 +552,8 @@ function renderDevices() {
       <div id="tag-suggest" class="row-actions"></div>
       <button type="button" data-cap="tag_action" data-fields="action,confirm,tags" data-action="wake">Wake tagged</button>
       <button type="button" class="danger" data-cap="tag_action" data-fields="action,confirm,tags" data-action="off">Power off tagged</button>
+      <button type="button" class="danger delete" id="delete-selected" data-cap="bulk_remove" data-fields="confirm,tags,targets">Delete selected</button>
+      <button type="button" class="danger delete" id="delete-tagged" data-cap="bulk_remove" data-fields="confirm,tags,targets">Delete tagged</button>
       <label class="sub">Type
         <select id="kind-filter" aria-label="Type">
           <option value="all">All</option>
@@ -782,10 +805,7 @@ async function onClick(event) {
       await api("POST", `/api/v1/devices/${id}/enabled`, { enabled: button.dataset.enabled === "1" });
       await refreshDevices();
     } else if (button.dataset.cap === "remove_device") {
-      if (!window.confirm("Remove this device?")) return;
-      await api("DELETE", `/api/v1/devices/${id}`);
-      state.editing = null;
-      await refreshDevices();
+      await window.confirmDelete([{ kind: "device", id }], []);
     } else if (button.dataset.cap === "device_metrics") {
       const rows = await api("GET", `/api/v1/devices/${id}/metrics?limit=80`);
       state.metrics = rows;
@@ -1007,6 +1027,33 @@ document.addEventListener("submit", (event) => {
   // A form submit reloads the page, and boot opens Devices.
   event.preventDefault();
 }, true);
+window.confirmDelete = async function (targets, tags) {
+  const preview = await api("POST", "/api/v1/inventory/remove", { confirm: false, targets: targets || [], tags: tags || [] });
+  const names = (preview.targets || []).map((item) => item.name);
+  if (!names.length) {
+    showBanner(tags && tags.length ? "Nothing has those tags." : "Select a record first.", true);
+    return;
+  }
+  const listed = names.length > 8 ? `${names.slice(0, 8).join(", ")} and ${names.length - 8} more` : names.join(", ");
+  const salvos = preview.salvos || [];
+  const warning = salvos.length ? ` Salvos that will lose a step: ${salvos.join(", ")}.` : "";
+  const prompt = names.length === 1 ? `Delete ${listed}?` : `Delete ${names.length} records (${listed})?`;
+  if (!window.confirm(`${prompt}${warning}`)) return;
+  await api("POST", "/api/v1/inventory/remove", {
+    confirm: true,
+    targets: preview.targets.map((item) => ({ kind: item.kind, id: item.id })),
+    tags: [],
+  });
+  state.selection = [];
+  state.editing = null;
+  state.focus = null;
+  await refreshDevices();
+  if (typeof refreshPower === "function") await refreshPower();
+  if (state.page === "power") renderPower();
+  else render();
+  showBanner(`Deleted ${listed}`);
+};
+
 window.runTagAction = async function (el) {
   const tags = state.tagFilter || [];
   if (!tags.length) {
@@ -1022,6 +1069,14 @@ window.runTagAction = async function (el) {
   await refreshDevices();
   render();
 };
+
+document.body.addEventListener("change", (event) => {
+  const box = event.target.closest && event.target.closest(".select-record");
+  if (!box) return;
+  const item = { kind: box.dataset.kind, id: Number(box.dataset.id) };
+  state.selection = (state.selection || []).filter((row) => !(row.kind === item.kind && Number(row.id) === item.id));
+  if (box.checked) state.selection.push(item);
+});
 
 document.body.addEventListener("click", (event) => {
   const completion = event.target.closest("[data-complete-tag]");

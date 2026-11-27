@@ -122,6 +122,7 @@ window.hardwareEditor = function (kind, record) {
     ${hardwareFields(kind, record)}
     <div class="row-actions">
       <button type="button" data-save="1" data-cap="${cap}" data-fields="${HARDWARE_FIELDS[kind]}" data-id="${record.id}" data-path="${path}">Save</button>
+      <button type="button" class="danger delete" data-cap="${{ pdu: "remove_pdu", amt: "remove_amt", jetkvm: "remove_jetkvm", plug: "remove_plug", ups: "remove_ups", roku: "remove_roku" }[kind]}" data-fields="" data-id="${record.id}">Delete ${escapeHtml(record.name)}</button>
       ${reread}
     </div>
   </form>`;
@@ -246,31 +247,38 @@ function renderPower() {
     </article>`).join("");
   const pduCards = state.power.pdus.map((pdu) => `
     <article class="card">
-      <h2>${escapeHtml(pdu.name)}</h2>
+      <header>
+        <h2>${escapeHtml(pdu.name)}</h2>
+        <button type="button" class="danger delete" data-cap="remove_pdu" data-fields="" data-id="${pdu.id}">Delete</button>
+      </header>
       <p class="meta">${escapeHtml(pdu.host)}</p>
       ${tagChips(pdu.tags)}
       <div class="row-actions">
         <button type="button" data-cap="list_pdu_outlets" data-fields="" data-id="${pdu.id}">Outlets</button>
         <button type="button" data-cap="refresh_pdu_outlet_names" data-fields="" data-id="${pdu.id}">Re-read from device</button>
         <button type="button" data-cap="update_pdu" data-fields="credential_profile_id,host,insecure_tls,name,outlet_names,password,port,tags,use_tls,username" data-id="${pdu.id}">Edit</button>
-        <button type="button" class="danger" data-cap="remove_pdu" data-fields="" data-id="${pdu.id}">Remove</button>
       </div>
       <div id="pdu-${pdu.id}"></div>
     </article>`).join("");
   const amtCards = state.power.amts.map((item) => `
     <article class="card">
-      <h2>${escapeHtml(item.name)}</h2>
+      <header>
+        <h2>${escapeHtml(item.name)}</h2>
+        <button type="button" class="danger delete" data-cap="remove_amt" data-fields="" data-id="${item.id}">Delete</button>
+      </header>
       <p class="meta">${escapeHtml(item.host)}:${item.port}</p>
       ${tagChips(item.tags)}
       <div class="row-actions">
         <button type="button" data-cap="amt_power_state" data-fields="" data-id="${item.id}">Power state</button>
         <button type="button" data-cap="update_amt" data-fields="credential_profile_id,device_id,host,insecure_tls,name,password,port,tags,use_tls,username" data-id="${item.id}">Edit</button>
-        <button type="button" class="danger" data-cap="remove_amt" data-fields="" data-id="${item.id}">Remove</button>
       </div>
     </article>`).join("");
   const jetCards = state.power.jetkvms.map((item) => `
     <article class="card">
-      <h2>${escapeHtml(item.name)}</h2>
+      <header>
+        <h2>${escapeHtml(item.name)}</h2>
+        <button type="button" class="danger delete" data-cap="remove_jetkvm" data-fields="" data-id="${item.id}">Delete</button>
+      </header>
       <p class="meta">${escapeHtml(item.host)}</p>
       ${tagChips(item.tags)}
       <div class="row-actions">
@@ -282,12 +290,14 @@ function renderPower() {
         <button type="button" class="danger" data-cap="jetkvm_power" data-fields="action,confirm,extension" data-id="${item.id}" data-action="dc-off" data-extension="dc-power">DC off</button>
         <a class="ghost" data-cap="jetkvm_console" data-fields="" href="${escapeHtml(item.console_url)}" target="_blank" rel="noopener">Open console</a>
         <button type="button" data-cap="update_jetkvm" data-fields="credential_profile_id,device_id,extension,host,insecure_tls,name,password,poll_metrics,port,tags,use_tls,username" data-id="${item.id}">Edit</button>
-        <button type="button" class="danger" data-cap="remove_jetkvm" data-fields="" data-id="${item.id}">Remove</button>
       </div>
     </article>`).join("");
   const plugCards = state.power.plugs.map((item) => `
     <article class="card">
-      <h2>${escapeHtml(item.name)}</h2>
+      <header>
+        <h2>${escapeHtml(item.name)}</h2>
+        <button type="button" class="danger delete" data-cap="remove_plug" data-fields="" data-id="${item.id}">Delete</button>
+      </header>
       <p class="meta">${escapeHtml(item.kind)} · ${escapeHtml(item.host)}</p>
       ${tagChips(item.tags)}
       <div class="row-actions">
@@ -297,12 +307,14 @@ function renderPower() {
         <button type="button" data-cap="plug_power" data-fields="action,confirm,cycle_seconds" data-id="${item.id}" data-action="toggle">Toggle</button>
         <button type="button" class="danger" data-cap="plug_power" data-fields="action,confirm,cycle_seconds" data-id="${item.id}" data-action="cycle">Cycle</button>
         <button type="button" data-cap="update_plug" data-fields="credential_profile_id,device_id,host,insecure_tls,kind,name,password,port,protocol,switch_id,tags,username" data-id="${item.id}">Edit</button>
-        <button type="button" class="danger" data-cap="remove_plug" data-fields="" data-id="${item.id}">Remove</button>
       </div>
     </article>`).join("");
   const upsCards = state.power.ups.map((item) => `
     <article class="card">
-      <h2>${escapeHtml(item.name)}</h2>
+      <header>
+        <h2>${escapeHtml(item.name)}</h2>
+        <button type="button" class="danger delete" data-cap="remove_ups" data-fields="" data-id="${item.id}">Delete</button>
+      </header>
       <p class="meta">SNMP ${escapeHtml(item.snmp_version)} · ${escapeHtml(item.host)}</p>
       ${tagChips(item.tags)}
       <p class="sub">Shutdown, reboot and outlet off drop power to everything on this UPS.</p>
@@ -319,12 +331,14 @@ function renderPower() {
         <button type="button" data-cap="ups_action" data-fields="action,confirm,delay_seconds,outlet" data-id="${item.id}" data-action="outlet_on">Bank on</button>
         <button type="button" class="danger" data-cap="ups_action" data-fields="action,confirm,delay_seconds,outlet" data-id="${item.id}" data-action="outlet_off">Bank off</button>
         <button type="button" data-cap="update_ups" data-fields="community,credential_profile_id,device_id,host,name,port,snmp_version,tags,v3_auth,v3_auth_proto,v3_priv,v3_priv_proto,v3_user" data-id="${item.id}">Edit</button>
-        <button type="button" class="danger" data-cap="remove_ups" data-fields="" data-id="${item.id}">Remove</button>
       </div>
     </article>`).join("");
   const rokuCards = (state.power.rokus || []).map((item) => `
     <article class="card">
-      <h2>${escapeHtml(item.name)}</h2>
+      <header>
+        <h2>${escapeHtml(item.name)}</h2>
+        <button type="button" class="danger delete" data-cap="remove_roku" data-fields="" data-id="${item.id}">Delete</button>
+      </header>
       <p class="meta">${escapeHtml(item.host)}:${item.port}</p>
       ${tagChips(item.tags)}
       <div class="row-actions">
@@ -333,7 +347,6 @@ function renderPower() {
         <button type="button" class="danger" data-cap="roku_power" data-fields="action,confirm" data-id="${item.id}" data-action="off">Power off</button>
         <button type="button" class="danger" data-cap="roku_power" data-fields="action,confirm" data-id="${item.id}" data-action="toggle">Power</button>
         <button type="button" data-cap="update_roku" data-fields="device_id,host,name,port,tags" data-id="${item.id}">Edit</button>
-        <button type="button" class="danger" data-cap="remove_roku" data-fields="" data-id="${item.id}">Remove</button>
       </div>
     </article>`).join("");
   $("view").innerHTML = `
@@ -496,11 +509,10 @@ window.handlePowerCap = async function handlePowerCap(button) {
       const action = button.dataset.action;
       if ((action === "off" || action === "reboot") && !window.confirm(`Confirm outlet ${action}?`)) return true;
       await api("POST", `/api/v1/pdus/${button.dataset.pdu}/outlets/${button.dataset.outlet}`, { action, confirm: action !== "on" });
-    } else if (cap === "remove_pdu" || cap === "remove_amt" || cap === "remove_jetkvm" || cap === "remove_plug" || cap === "remove_ups") {
-      if (!window.confirm("Remove this record?")) return true;
-      const path = { remove_pdu: "pdus", remove_amt: "amt", remove_jetkvm: "jetkvm", remove_plug: "plugs", remove_ups: "ups", remove_roku: "rokus" }[cap];
-      await api("DELETE", `/api/v1/${path}/${id}`);
-      await refreshPower();
+    } else if (cap === "remove_pdu" || cap === "remove_amt" || cap === "remove_jetkvm" || cap === "remove_plug" || cap === "remove_ups" || cap === "remove_roku") {
+      const kind = { remove_pdu: "pdu", remove_amt: "amt", remove_jetkvm: "jetkvm", remove_plug: "plug", remove_ups: "ups", remove_roku: "roku" }[cap];
+      await window.confirmDelete([{ kind, id }], []);
+      return true;
     } else if (cap === "amt_power_state") {
       const data = await api("GET", `/api/v1/amt/${id}/power`);
       showBanner(`${data.power_name}`);
@@ -619,6 +631,14 @@ window.CONTROL_HANDLERS = {
   add_device() { state.editing = "new"; render(); },
   update_device(el) { state.editing = Number(el.dataset.id); render(); },
   remove_device(el) { return onClick({ target: el }); },
+  bulk_remove(el) {
+    if (el.id === "delete-tagged") return window.confirmDelete([], state.tagFilter || []);
+    const checked = [...document.querySelectorAll(".select-record:checked")].map((box) => ({
+      kind: box.dataset.kind,
+      id: Number(box.dataset.id),
+    }));
+    return window.confirmDelete(checked.length ? checked : (state.selection || []), []);
+  },
   set_device_enabled(el) { return onClick({ target: el }); },
   wake_device(el) { return onClick({ target: el }); },
   power_action(el) { return sendPower(el); },

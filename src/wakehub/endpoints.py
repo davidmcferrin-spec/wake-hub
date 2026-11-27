@@ -294,6 +294,9 @@ def refresh_pdu_outlet_names(hub: Hub, pdu_id: int) -> dict[str, Any]:
 
 def remove_pdu(hub: Hub, pdu_id: int) -> None:
     _row(hub, "pdu", pdu_id)
+    from wakehub.removal import detach
+
+    detach(hub, "pdu", pdu_id)
     hub.write("DELETE FROM pdus WHERE id = ?", (pdu_id,))
 
 
@@ -402,6 +405,9 @@ def update_amt(hub: Hub, amt_id: int, payload: dict[str, Any]) -> dict[str, Any]
 
 def remove_amt(hub: Hub, amt_id: int) -> None:
     _row(hub, "amt", amt_id)
+    from wakehub.removal import detach
+
+    detach(hub, "amt", amt_id)
     hub.write("DELETE FROM amt_endpoints WHERE id = ?", (amt_id,))
 
 
@@ -503,6 +509,9 @@ def update_jetkvm(hub: Hub, jetkvm_id: int, payload: dict[str, Any]) -> dict[str
 
 def remove_jetkvm(hub: Hub, jetkvm_id: int) -> None:
     _row(hub, "jetkvm", jetkvm_id)
+    from wakehub.removal import detach
+
+    detach(hub, "jetkvm", jetkvm_id)
     hub.write("DELETE FROM jetkvm_endpoints WHERE id = ?", (jetkvm_id,))
 
 
@@ -611,6 +620,9 @@ def update_plug(hub: Hub, plug_id: int, payload: dict[str, Any]) -> dict[str, An
 
 def remove_plug(hub: Hub, plug_id: int) -> None:
     _row(hub, "plug", plug_id)
+    from wakehub.removal import detach
+
+    detach(hub, "plug", plug_id)
     hub.write("DELETE FROM plugs WHERE id = ?", (plug_id,))
 
 
@@ -725,6 +737,9 @@ def update_ups(hub: Hub, ups_id: int, payload: dict[str, Any]) -> dict[str, Any]
 
 def remove_ups(hub: Hub, ups_id: int) -> None:
     _row(hub, "ups", ups_id)
+    from wakehub.removal import detach
+
+    detach(hub, "ups", ups_id)
     hub.write("DELETE FROM ups_cards WHERE id = ?", (ups_id,))
 
 
@@ -822,6 +837,9 @@ def update_roku(hub: Hub, roku_id: int, payload: dict[str, Any]) -> dict[str, An
 
 def remove_roku(hub: Hub, roku_id: int) -> None:
     _row(hub, "roku", roku_id)
+    from wakehub.removal import detach
+
+    detach(hub, "roku", roku_id)
     hub.write("DELETE FROM rokus WHERE id = ?", (roku_id,))
 
 

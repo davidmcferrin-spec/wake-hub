@@ -384,6 +384,9 @@ def update_device(hub: Hub, device_id: int, payload: dict[str, Any]) -> dict[str
 
 def remove_device(hub: Hub, device_id: int) -> None:
     _get_row(hub, device_id)
+    from wakehub.removal import detach
+
+    detach(hub, "device", device_id)
     hub.write_many(
         [
             ("UPDATE actions SET device_id = NULL WHERE device_id = ?", (device_id,)),

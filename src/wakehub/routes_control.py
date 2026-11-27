@@ -284,6 +284,17 @@ class ScanIn(BaseModel):
     replace: bool = False
 
 
+class BulkTarget(BaseModel):
+    kind: str
+    id: int
+
+
+class BulkRemoveIn(BaseModel):
+    confirm: bool = False
+    targets: list[BulkTarget] = []
+    tags: list[str] = []
+
+
 class ClearScansIn(BaseModel):
     confirm: bool = False
 
@@ -600,6 +611,17 @@ def control_router() -> APIRouter:
 
         remove_profile(get_hub(), profile_id)
         return Response(status_code=204)
+
+    @router.post("/inventory/remove", tags=["inventory"])
+    def bulk_remove_records(body: BulkRemoveIn) -> dict[str, Any]:
+        from wakehub.removal import bulk_remove
+
+        return bulk_remove(
+            get_hub(),
+            confirm=body.confirm,
+            targets=[item.model_dump() for item in body.targets],
+            tags=body.tags,
+        )
 
     @router.post("/scans/clear", tags=["scan"])
     def clear_scan_history(body: ClearScansIn) -> dict[str, Any]:

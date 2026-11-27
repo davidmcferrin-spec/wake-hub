@@ -114,6 +114,13 @@ button[type="submit"], .primary, .ghost, .danger {
   border-color: #e4c4c4;
 }
 
+.delete {
+  background: var(--bad);
+  color: #fff;
+  border-color: transparent;
+  font-weight: 650;
+}
+
 .shell {
   display: grid;
   grid-template-columns: 230px 1fr;

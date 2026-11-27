@@ -331,6 +331,14 @@ def register(server) -> None:
 
     @server.tool()
     @expose
+    def bulk_remove(confirm: bool = False, targets: list[dict] | None = None, tags: list[str] | None = None) -> dict[str, Any]:
+        """Delete devices and hardware by id or by tag. confirm=false lists what would be deleted, including salvos that would lose a step, and changes nothing. confirm=true deletes them, unlinks plug and PDU outlet mappings, and drops salvo steps that targeted them. Tags must all match. Inventory is not affected by scan deletion; this tool is the one that deletes records."""
+        from wakehub.removal import bulk_remove as remove
+
+        return remove(get_hub(), confirm=confirm, targets=targets or [], tags=tags or [])
+
+    @server.tool()
+    @expose
     def delete_scan(scan_id: int) -> dict[str, Any]:
         """Delete one finished scan and its discovered hosts. Inventory devices are not removed. A running scan cannot be deleted."""
         return scansvc.delete_scan(get_hub(), scan_id)
