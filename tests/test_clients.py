@@ -117,16 +117,16 @@ def test_outlet_name_fixtures_match_their_format(monkeypatch):
     assert parse_outlet_names(mixed) == {1: "It's", 2: 'say "hi"', 3: "end]"}
 
     def handler(request):
-        if request.url.path == "/outletsetup.htm":
+        if request.url.path == "/pwr.htm":
             return httpx.Response(404, text="missing")
-        if request.url.path == "/outlets.htm":
+        if request.url.path == "/":
             return httpx.Response(200, text=_status_table_page(), headers={"content-type": "text/html"})
         return httpx.Response(404, text="later")
 
     client = SynaccessClient("192.168.0.8", "admin", "secret-pass", http=httpx.Client(transport=httpx.MockTransport(handler)))
     assert client.read_outlet_names()[2] == "It's HDMI"
-    assert client.name_pages[0]["status"] == 404
-    assert client.name_pages[1]["path"] == "/outlets.htm"
+    assert client.name_pages[0]["path"] == "/pwr.htm"
+    assert client.name_pages[1]["path"] == "/"
     assert "secret-pass" not in str(client.name_pages)
     client.close()
 
@@ -156,6 +156,180 @@ def test_status_table_ignores_a_missing_tr_and_the_next_table():
     assert 3 not in names
     assert "3" not in names.values()
     assert "Outlet List" not in names.values()
+
+
+_NP_REAL = {
+    1: "Internet Fiber J",
+    2: "Network Gear",
+    3: "Atic POE",
+    6: "Home PC",
+    7: "Work HP",
+    8: "Peplink",
+    9: "HDMI-Streaming",
+}
+
+
+def _np_label(number: int) -> str:
+    return _NP_REAL.get(number, f"Outlet{number}")
+
+
+def _operation_status_page() -> str:
+    rows = []
+    for number in range(1, 17):
+        index = number - 1
+        prefix = "\n\r\n\t\t\t\t\t" if number == 10 else ""
+        rows.append(
+            f"{prefix}<tr><td>{number} </td>\n"
+            f"\t\t<td><a onclick=\"ajxCmd('cmd.cgi?rly={index}');\">\n"
+            f"\t\t<img src=\"btn.gif\"/></a></td>\n"
+            f"\t\t<td><a onclick=\"ajxCmd('cmd.cgi?rb={index}');\">\n"
+            f"\t\t<img src=\"btn.gif\" /></a></td>\n"
+            f"\t\t<td id=\"rly{index}\"></td>\n"
+            f"\t\t<td>{_np_label(number)}</td>\n"
+            "\t\t<td> </td></tr>"
+        )
+    page = (
+        '<div class="subttl">Power Outlet Status</div>\r\n'
+        '\t<span class="errstr" id="err1"></span>\r\n'
+        "\t\t<table>\r\n"
+        "\t\t\t<tr><td>Outlet</td><td>On/Off</td><td>Reboot</td><td>Status</td><td>Name</td><td>Reservation</td></td></tr>\r\n"
+        "\r\n\t\t\t\t\t"
+        + "".join(rows)
+        + "\n \r\n\t\t\t \r\n\r\n\t\t</table>"
+        "<table><tr><td></td><td>On</td><td>Off</td><td>Reboot</td><td>Outlet List</td></tr>"
+        "<tr>\t<td>Group 1</td><td>a</td><td>b</td><td>c</td><td>1,2,3</td></tr></table>"
+    )
+    return ("x" * 9000) + page
+
+
+def _outlet_setup_page() -> str:
+    rows = []
+    for index in range(16):
+        rows.append(
+            f"<tr><td>{index + 1}</td>\n"
+            f'\t\t<td><input type="text" name="ON{index}" value="{_np_label(index + 1)}" size="22" maxlength="16"  /></td>\n'
+            f'\t\t<td><input type="checkbox" value="{index}" name="drch"    /></td>\n'
+            f'\t\t<td><input type="text" name="DR{index}" value="02:00" size="6" maxlength="5"  /></td>\n'
+            f'\t\t<td><input type="text" name="DB{index}" value="20" size="6" maxlength="5"  /></td>\n'
+            f'\t\t<td><select name="ri{index}"><option value="0">Prev State</option>'
+            '<option value="1" selected="SELECTED">ON</option></select></td>\r\n</tr>'
+        )
+    return (
+        '<form class="synform"  method="post" action="pwr.htm" name="config">\r\n'
+        "\t<table>\r\n\t\t<tr>\r\n"
+        "\t\t\t<th>Outlet</th>\r\n\t\t\t<th>Name</th>\r\n"
+        "\t\t\t<th>Enable Daily<br />Power Recycle</th>\r\n"
+        "\t\t</tr>\r\n"
+        + "".join(rows)
+        + "</table>"
+        '<input type="text" name="wkS0" value="skip">'
+        '<input type="checkbox" name="gst0">'
+        '<input name="odly" value="1">'
+        '<input name="tcH" value=45>'
+        "</form>"
+    )
+
+
+def _status_xml() -> str:
+    relays = "".join(f"<rly{index}>1</rly{index}>\n" for index in range(8))
+    relays += "\n" + "".join(f"<rly{index}>1</rly{index}>\n" for index in range(8, 16))
+    empty = "".join(f"<ac{index}> </ac{index}>\n" for index in range(2, 31))
+    return (
+        "<response>\n"
+        + relays
+        + "<rly16>0</rly16>\n\n"
+        + "<ac0>1.90 - 2.64</ac0>\n<ac1>1.76 - 2.53</ac1>\n"
+        + empty
+        + "\n<tcp1>X</tcp1>\n<tcp2>X</tcp2>\n\n"
+        + "<tp0>20/68</tp0>\n<tp1>31/87</tp1>\n<tp2>13/55</tp2>\n"
+        + "<tp3>Time: 01/10/2011-10:00:00 UpTime: 0169:20:15:53    </tp3>\n"
+        + "<apa30>39411/40447</apa30>\n<err1>.</err1>\n</response>"
+    )
+
+
+def test_np1601_pages_and_status_xml(monkeypatch, caplog):
+    import logging
+
+    from wakehub.clients.synaccess import parse_status_xml
+
+    monkeypatch.undo()
+    assert parse_outlet_names(_operation_status_page()) == _NP_REAL
+    assert "Group 1" not in parse_outlet_names(_operation_status_page()).values()
+    assert "1,2,3" not in parse_outlet_names(_operation_status_page()).values()
+    assert parse_outlet_names(_outlet_setup_page()) == _NP_REAL
+    parsed = parse_status_xml(_status_xml(), {1: "Internet Fiber J"})
+    assert len(parsed.outlets) == 16
+    assert all(item.on for item in parsed.outlets)
+    assert parsed.outlets[0].name == "Internet Fiber J"
+    assert all(item.number <= 16 for item in parsed.outlets)
+    assert parsed.bank_ranges == ("1.90 - 2.64", "1.76 - 2.53")
+    assert parsed.temperature_c == 20
+    assert parsed.temperature_text == "20°C / 68°F"
+
+    seen = []
+
+    def setup(request):
+        seen.append(request.url.path)
+        if request.url.path == "/pwr.htm":
+            return httpx.Response(200, text=_outlet_setup_page())
+        return httpx.Response(404, text="404: File not found")
+
+    client = SynaccessClient("192.168.0.8", "admin", "secret", http=httpx.Client(transport=httpx.MockTransport(setup)))
+    assert client.read_outlet_names() == _NP_REAL
+    assert client.outlet_count == 16
+    assert seen == ["/pwr.htm"]
+    assert len(client.name_pages[0]["body"]) <= 8192
+    client.close()
+
+    seen.clear()
+
+    def fallback(request):
+        seen.append(request.url.path)
+        if request.url.path == "/":
+            return httpx.Response(200, text=_operation_status_page(), headers={"content-type": "text/html"})
+        return httpx.Response(404, text="404: File not found")
+
+    client = SynaccessClient("192.168.0.8", "admin", "secret", http=httpx.Client(transport=httpx.MockTransport(fallback)))
+    assert client.read_outlet_names() == _NP_REAL
+    assert seen == ["/pwr.htm", "/"]
+    client.close()
+
+    seen.clear()
+
+    def live(request):
+        seen.append(request.url.path)
+        if request.url.path == "/status.xml":
+            return httpx.Response(200, text=_status_xml(), headers={"content-type": "text/xml"})
+        raise AssertionError(request.url.path)
+
+    client = SynaccessClient("192.168.0.8", "admin", "secret", http=httpx.Client(transport=httpx.MockTransport(live)))
+    state = client.status({1: "Internet Fiber J"})
+    assert len(state.outlets) == 16
+    assert seen == ["/status.xml"]
+    assert client.status_pages[0]["path"] == "/status.xml"
+    client.close()
+
+    seen.clear()
+
+    def legacy(request):
+        seen.append(request.url.path)
+        if request.url.path == "/status.xml":
+            return httpx.Response(404, text="missing")
+        return httpx.Response(200, text="<html>raw-a5-body</html>")
+
+    client = SynaccessClient("192.168.0.11", "admin", "secret", http=httpx.Client(transport=httpx.MockTransport(legacy)))
+    with caplog.at_level(logging.INFO, logger="wakehub.synaccess"):
+        try:
+            client.status()
+        except Exception:
+            pass
+        try:
+            client.status()
+        except Exception:
+            pass
+    client.close()
+    assert seen[:2] == ["/status.xml", "/cmd.cgi"]
+    assert caplog.text.count("raw-a5-body") == 1
 
 
 def test_diagnostics_redact_every_form_of_the_password():
@@ -200,9 +374,9 @@ def test_name_read_reports_the_first_non_404_and_a_login_page(monkeypatch, caplo
     monkeypatch.undo()
 
     def login_handler(request):
-        if request.url.path == "/outletsetup.htm":
+        if request.url.path == "/pwr.htm":
             return httpx.Response(404, text="last-must-not-win")
-        if request.url.path == "/outlets.htm":
+        if request.url.path == "/":
             return httpx.Response(200, text="<html><body>Please login<form><input type='password'></form></body></html>")
         return httpx.Response(404, text="last-must-not-win")
 
@@ -220,9 +394,9 @@ def test_name_read_reports_the_first_non_404_and_a_login_page(monkeypatch, caplo
     assert caplog.text.count("PDU outlet names") == 1
 
     def plain_handler(request):
-        if request.url.path == "/outletsetup.htm":
+        if request.url.path == "/pwr.htm":
             return httpx.Response(404, text="skip")
-        if request.url.path == "/outlets.htm":
+        if request.url.path == "/":
             return httpx.Response(200, text="<html><body>no names TOKEN</body></html>")
         return httpx.Response(401, text="later-login")
 
@@ -234,12 +408,12 @@ def test_name_read_reports_the_first_non_404_and_a_login_page(monkeypatch, caplo
     else:
         message = ""
     client.close()
-    assert "/outlets.htm" in message
+    assert "/ HTTP 200" in message
     assert "TOKEN" in message
     assert "later-login" not in message
 
     def rejected(request):
-        if request.url.path == "/outletsetup.htm":
+        if request.url.path == "/pwr.htm":
             return httpx.Response(401, text="denied")
         return httpx.Response(404, text="later")
 

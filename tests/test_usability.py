@@ -254,6 +254,37 @@ def test_outlet_status_does_not_read_names_or_rewrite_a_repeat_failure(client, h
     assert "/outlets.htm" in body
 
 
+def test_name_refresh_does_not_also_read_status_when_the_page_lists_every_outlet(client, monkeypatch):
+    calls = []
+
+    class Recording:
+        def __init__(self, *args, **kwargs):
+            self.outlet_count = 0
+            self.name_pages = []
+
+        def read_outlet_names(self):
+            calls.append("names")
+            self.outlet_count = 16
+            self.name_pages = [{"path": "/pwr.htm", "status": 200, "content_type": "text/html", "body": "Internet Fiber J"}]
+            return {1: "Internet Fiber J", 2: "Network Gear"}
+
+        def status(self, *args, **kwargs):
+            calls.append("status")
+            raise AssertionError("name refresh should not read status.xml")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("wakehub.endpoints.SynaccessClient", Recording)
+    created = client.post("/api/v1/pdus", json={"name": "NP", "host": "192.168.0.18", "outlet_names": {"2": "Work HP"}})
+    assert created.status_code == 201, created.text
+    outlets = {item["number"]: item["name"] for item in created.json()["outlets"]}
+    assert outlets[1] == "Internet Fiber J"
+    assert outlets[2] == "Work HP"
+    assert outlets[4] == "Outlet 4"
+    assert calls == ["names"]
+
+
 def test_credential_profile_is_stored_encrypted_and_selectable(client):
     created = client.post("/api/v1/credential-profiles", json={"name": "rack", "username": "admin", "password": "secret-pw"})
     assert created.status_code == 201

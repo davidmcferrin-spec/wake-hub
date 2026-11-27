@@ -17,6 +17,7 @@ from wakehub.endpoints import (
     outlet_labels,
     pdu_client,
     plug_client,
+    remember_status_pages,
     roku_client,
     ups_client,
 )
@@ -308,31 +309,50 @@ def set_pdu_outlet(hub: Hub, pdu_id: int, outlet: int, action: str, *, confirm: 
             client.reboot_outlet(outlet)
         detail = "ok"
         ok = True
+        try:
+            # The web UI's rly= link toggles. This command already set the outlet; status.xml confirms it.
+            checked = client.status()
+            match = next((item for item in checked.outlets if item.number == outlet), None)
+            if match is not None:
+                detail = "on" if match.on else "off"
+        except Exception:
+            checked = None
     except Exception as exc:
         detail = str(exc)
         ok = False
         record_action(hub, source=source, action=f"pdu_{action}", ok=False, detail=detail, target_kind="pdu", target_id=pdu_id, target_name=row["name"])
         client.close()
         raise
+    pages = list(getattr(client, "status_pages", []) or [])
+    if pages:
+        remember_status_pages(pdu_id, pages)
     client.close()
     record_action(hub, source=source, action=f"pdu_{action}", ok=ok, detail=detail, target_kind="pdu", target_id=pdu_id, target_name=f"{row['name']} outlet {outlet}")
-    return {"pdu_id": pdu_id, "outlet": outlet, "action": action, "ok": ok}
+    result = {"pdu_id": pdu_id, "outlet": outlet, "action": action, "ok": ok}
+    if detail in {"on", "off"}:
+        result["on"] = detail == "on"
+    return result
 
 
 def list_pdu_outlets(hub: Hub, pdu_id: int) -> dict[str, Any]:
-    # The status poll calls this. $A5 only, and a short timeout so a dead PDU cannot stall the page.
+    # One status.xml read per poll. $A5 is only used when that page is missing.
     row, client = pdu_client(hub, pdu_id, timeout=2)
     from wakehub.endpoints import list_outlet_records
 
     stored = {item["number"]: item for item in list_outlet_records(hub, pdu_id)}
     try:
+        if stored:
+            client._relay_limit = max(stored)
         status = client.status(outlet_labels(row))
     finally:
+        remember_status_pages(pdu_id, list(getattr(client, "status_pages", [])))
         client.close()
     return {
         "pdu_id": pdu_id,
         "bank_amps": list(status.bank_amps),
+        "bank_ranges": list(status.bank_ranges),
         "temperature_c": status.temperature_c,
+        "temperature_text": status.temperature_text,
         "per_outlet_current": False,
         "outlets": [
             {

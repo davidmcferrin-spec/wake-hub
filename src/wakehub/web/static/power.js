@@ -88,7 +88,8 @@ function hardwareFields(kind, record) {
     const saveTags = editing
       ? `<button type="button" data-cap="update_pdu_outlet" data-fields="tags" data-pdu="${current.id}" data-outlet="1">Save tags</button>`
       : "";
-    return `${name}${hostPort}${tls}${login}${fromDevice}${namesError}<label>Local outlet names<input name="outlet_names" value="${names}" placeholder="1=NAS, 2=Desk"></label>${outletTags}${saveTags}${saved}${tagsField}`;
+    const limit = `<p class="sub">A netBooter keeps only the first 16 characters of an outlet name.</p>`;
+    return `${name}${hostPort}${tls}${login}${fromDevice}${namesError}${limit}<label>Local outlet names<input name="outlet_names" value="${names}" placeholder="1=NAS, 2=Desk"></label>${outletTags}${saveTags}${saved}${tagsField}`;
   }
   if (kind === "roku") {
     const help = editing ? "" : `<button type="button" class="ghost icon-button" id="roku-help" aria-expanded="false" aria-controls="roku-help-text">Info</button><p id="roku-help-text" class="sub hidden">Control by mobile apps must be enabled on the TV. Some models need network standby turned on to power back on.</p>`;
@@ -314,6 +315,16 @@ window.bindOutlets = function (root) {
   });
 };
 
+function pduMeterText(data) {
+  const ranges = (data.bank_ranges || []).filter((value) => String(value).trim());
+  const banks = ranges.length ? ranges : (data.bank_amps || []);
+  const bits = [];
+  if (banks.length) bits.push(`Banks ${banks.map((value) => `${value} A`).join(", ")}`);
+  if (data.temperature_text) bits.push(data.temperature_text);
+  else if (data.temperature_c != null) bits.push(`${data.temperature_c}°C`);
+  return bits.join(" · ");
+}
+
 function setLivePill(key, label, tone) {
   const node = document.querySelector(`[data-live-status="${key}"]`);
   if (!node || (node.textContent === label && node.className === tone)) return;
@@ -333,7 +344,9 @@ window.loadLivePdus = async function () {
       const data = await api("GET", `/api/v1/pdus/${id}/outlets`);
       delete state.pduQuietUntil[id];
       setLivePill(`pdu-${id}`, "Online", "pill up");
-      if (bank) bank.textContent = `Bank current ${(data.bank_amps || []).map((value) => `${value} A`).join(", ") || "unknown"}.`;
+      const meter = document.getElementById(`pdu-meter-${id}`);
+      if (meter) meter.textContent = pduMeterText(data);
+      if (bank) bank.textContent = pduMeterText(data) || "Bank current unknown.";
       const shown = (data.outlets || []).filter(outletShown);
       const rows = [...node.querySelectorAll("[data-outlet-row]")];
       const sameShape = rows.length === shown.length && rows.every((row, index) => row.dataset.outletRow === String(shown[index].number));
@@ -392,6 +405,7 @@ window.hardwareControls = function (kind, item, full) {
     })() ? "open" : "";
     return `
       ${statusPill(`pdu-${id}`, "Checking")}
+      <p class="sub pdu-meter" id="pdu-meter-${id}"></p>
       <details class="outlets" id="pdu-${id}" data-pdu-live="${id}" ${open}>
         <summary>Outlets</summary>
         ${rows || `<p class="sub">No outlets stored yet.</p>`}

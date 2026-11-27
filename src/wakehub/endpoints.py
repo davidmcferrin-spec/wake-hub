@@ -313,17 +313,20 @@ def sync_pdu_outlets(hub: Hub, pdu_id: int, count: int, names: dict[int, str]) -
     for number in range(1, max(int(count or 0), max(names) if names else 0, 0) + 1):
         existing = current.get(number)
         device_name = names.get(number) or ""
-        if device_name.lower() in {"0", "1", "on", "off", "true", "false"}:
+        if device_name.lower() in {"0", "1", "on", "off", "true", "false"} or _device_placeholder(device_name, number):
             device_name = ""
+        kept = ""
+        if existing and existing["name"] and not _device_placeholder(existing["name"], number):
+            kept = existing["name"]
         if number in user:
             chosen = user[number]
-        elif existing and existing["name"] not in {"", f"Outlet {number}", previous.get(number, "")}:
+        elif kept and kept not in {"", f"Outlet {number}", previous.get(number, "")}:
             # A name typed in Wake Hub stays when the PDU is read again.
-            chosen = existing["name"]
+            chosen = kept
         elif device_name:
             chosen = device_name
-        elif existing and existing["name"]:
-            chosen = existing["name"]
+        elif kept:
+            chosen = kept
         else:
             chosen = f"Outlet {number}"
         if existing is None:
@@ -336,10 +339,15 @@ def sync_pdu_outlets(hub: Hub, pdu_id: int, count: int, names: dict[int, str]) -
 
 
 _NAME_PAGES: dict[int, list[dict[str, object]]] = {}
+_STATUS_PAGES: dict[int, list[dict[str, object]]] = {}
 
 
 def remember_name_pages(pdu_id: int, pages: list[dict[str, object]]) -> None:
     _NAME_PAGES[pdu_id] = pages
+
+
+def remember_status_pages(pdu_id: int, pages: list[dict[str, object]]) -> None:
+    _STATUS_PAGES[pdu_id] = pages
 
 
 def pdu_name_diagnostics(hub: Hub, pdu_id: int) -> dict[str, Any]:
@@ -352,7 +360,12 @@ def pdu_name_diagnostics(hub: Hub, pdu_id: int) -> dict[str, Any]:
         cleaned = dict(page)
         cleaned["body"] = redact_diagnostics(str(page.get("body") or ""), secret, username)
         pages.append(cleaned)
-    return {"pdu_id": pdu_id, "pages": pages}
+    status = []
+    for page in _STATUS_PAGES.get(pdu_id, []):
+        cleaned = dict(page)
+        cleaned["body"] = redact_diagnostics(str(page.get("body") or ""), secret, username)
+        status.append(cleaned)
+    return {"pdu_id": pdu_id, "pages": pages, "status": status}
 
 
 def refresh_pdu_outlet_names(hub: Hub, pdu_id: int, *, timeout: float | None = None) -> dict[str, Any]:
@@ -366,10 +379,12 @@ def refresh_pdu_outlet_names(hub: Hub, pdu_id: int, *, timeout: float | None = N
         except UpstreamError as exc:
             names_error = str(exc)
             names = {}
-        try:
-            count = len(client.status().outlets)
-        except Exception:
-            count = max(names) if names else 0
+        count = int(getattr(client, "outlet_count", 0) or 0)
+        if not count:
+            try:
+                count = len(client.status().outlets)
+            except Exception:
+                count = max(names) if names else 0
     finally:
         remember_name_pages(pdu_id, list(getattr(client, "name_pages", [])))
         client.close()
@@ -395,6 +410,12 @@ def refresh_pdu_outlet_names(hub: Hub, pdu_id: int, *, timeout: float | None = N
     if body.get("outlet_names_error"):
         body["names_error"] = body["outlet_names_error"]
     return body
+
+
+def _device_placeholder(label: str, number: int) -> bool:
+    from wakehub.clients.synaccess import firmware_default_name
+
+    return firmware_default_name(label, number)
 
 
 def _names_failure(detail: str) -> str:
