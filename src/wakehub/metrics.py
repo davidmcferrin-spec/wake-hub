@@ -206,11 +206,21 @@ def _round(value: float | None) -> float | None:
 
 
 def collect_once(hub: Hub) -> int:
+    if hub.stopping():
+        return 0
     written = 0
     written += _collect_pdus(hub)
+    if hub.stopping():
+        return written
     written += _collect_plugs(hub)
+    if hub.stopping():
+        return written
     written += _collect_ups(hub)
+    if hub.stopping():
+        return written
     written += _collect_jetkvm(hub)
+    if hub.stopping():
+        return written
     _purge(hub)
     return written
 
@@ -319,17 +329,27 @@ def _purge(hub: Hub) -> None:
 
 
 def start_poller(hub: Hub) -> threading.Event:
-    stop = threading.Event()
+    stop = hub._background_stop
 
     def loop() -> None:
         while not stop.is_set():
             try:
+                if stop.is_set():
+                    return
                 collect_once(hub)
             except Exception:
                 log.exception("metric collection failed")
+            if stop.is_set():
+                return
             from wakehub.inventory import public_settings
 
-            stop.wait(public_settings(hub)["metrics_poll_seconds"])
+            # Read the interval only while this thread is still meant to run.
+            seconds = 60 if stop.is_set() else public_settings(hub)["metrics_poll_seconds"]
+            if stop.is_set():
+                return
+            stop.wait(seconds)
 
-    threading.Thread(target=loop, name="wakehub-metrics", daemon=True).start()
+    thread = threading.Thread(target=loop, name="wakehub-metrics", daemon=True)
+    hub.track_background(thread)
+    thread.start()
     return stop

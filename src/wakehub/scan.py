@@ -122,17 +122,24 @@ def start_scan(hub: Hub, cidr: str | None = None, discover: Discover | None = No
     )
     worker = discover or discover_subnet
     thread = threading.Thread(target=_run, args=(hub, scan_id, str(network), worker), daemon=True)
+    hub.track_background(thread)
     thread.start()
     return get_scan(hub, scan_id)
 
 
 def _run(hub: Hub, scan_id: int, cidr: str, discover: Discover) -> None:
     def progress(done: int, total: int) -> None:
+        if hub.stopping():
+            return
         hub.write("UPDATE scans SET progress = ?, total = ? WHERE id = ?", (done, total, scan_id))
 
     try:
         hosts = discover(cidr, progress)
+        if hub.stopping():
+            return
         for host in hosts:
+            if hub.stopping():
+                return
             hub.write(
                 """
                 INSERT INTO scan_hosts (scan_id, ip, mac, hostname, vendor, kinds, detail)
@@ -148,16 +155,21 @@ def _run(hub: Hub, scan_id: int, cidr: str, discover: Discover) -> None:
                     json.dumps(host.get("detail") or {}),
                 ),
             )
+        if hub.stopping():
+            return
         hub.write(
             "UPDATE scans SET status = 'done', progress = total, finished_at = ?, message = ? WHERE id = ?",
             (utcnow(), f"{len(hosts)} hosts", scan_id),
         )
     except Exception as exc:
-        hub.write(
-            "UPDATE scans SET status = 'error', error = ?, finished_at = ? WHERE id = ?",
-            (str(exc), utcnow(), scan_id),
-        )
-    prune_scans(hub)
+        if not hub.stopping():
+            hub.write(
+                "UPDATE scans SET status = 'error', error = ?, finished_at = ? WHERE id = ?",
+                (str(exc), utcnow(), scan_id),
+            )
+        return
+    if not hub.stopping():
+        prune_scans(hub)
 
 
 def delete_scan(hub: Hub, scan_id: int) -> dict[str, Any]:
