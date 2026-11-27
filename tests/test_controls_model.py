@@ -109,6 +109,19 @@ def test_meter_plug_does_not_outrank_wol(client, hub, monkeypatch):
     assert [item["kind"] for item in kept["methods"]] == ["plug", "wol"]
 
 
+def test_pdu_cannot_shut_a_machine_down(client):
+    device = client.post("/api/v1/devices", json={"name": "UNRAID", "mac": "02:00:00:00:00:61", "host": "10.8.8.1"}).json()
+    pdu = client.post("/api/v1/pdus", json={"name": "Rack", "host": "10.8.8.2", "password": "secret"}).json()
+    saved = client.patch(
+        f"/api/v1/devices/{device['id']}",
+        json={"methods": [{"kind": "pdu", "pdu_id": pdu["id"], "outlet": 1}, {"kind": "wol"}]},
+    )
+    assert saved.status_code == 200, saved.text
+    refused = client.post(f"/api/v1/devices/{device['id']}/power", json={"action": "shutdown", "method": "pdu", "confirm": True})
+    assert refused.status_code == 400
+    assert refused.json()["error"]["message"] == "PDU outlet can't shut down UNRAID"
+
+
 def test_off_prefers_amt_over_a_meter_plug(client, hub, monkeypatch):
     device = client.post("/api/v1/devices", json={"name": "Office PC", "mac": "02:00:00:00:00:44", "host": "192.168.0.44"}).json()
     amt = client.post("/api/v1/amt", json={"name": "Office AMT", "host": "192.168.0.45", "password": "secret-amt", "device_id": device["id"]}).json()
@@ -380,6 +393,22 @@ def test_after_commit_stays_with_the_request_that_registered_it(hub):
     right.join(3)
     assert finished.count("a") == 1
     assert finished.count("b") == 1
+
+
+def test_an_interrupted_transaction_does_not_leak_into_the_next_commit(hub):
+    class Stop(BaseException):
+        pass
+
+    before = hub.setting("cors_origins")
+    try:
+        with hub.transaction():
+            hub.write("UPDATE settings SET value = ? WHERE key = ?", ("https://example.test", "cors_origins"))
+            raise Stop()
+    except Stop:
+        pass
+    assert hub.setting("cors_origins") == before
+    hub.write("UPDATE settings SET value = value WHERE key = ?", ("cors_origins",))
+    assert hub.setting("cors_origins") == before
 
 
 def test_scan_offers_add_amt_to_the_matching_device(hub):

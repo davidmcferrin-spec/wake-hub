@@ -219,7 +219,7 @@ class Hub:
                         self.db.commit()
                         callbacks = list(local.callbacks)
                         local.callbacks = []
-                except Exception:
+                except BaseException:
                     if local.depth == 1:
                         self.db.rollback()
                         local.callbacks = []

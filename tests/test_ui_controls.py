@@ -45,7 +45,6 @@ def test_every_hardware_type_shows_its_controls(live_server, hub):
         for label in labels:
             assert card.locator("button", has_text=label).count() >= 1, f"{name} missing {label}"
 
-    amt = ["Power on", "Off graceful", "Off hard", "Reset", "Power cycle", "Status"]
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         page = browser.new_page()
@@ -68,7 +67,7 @@ def test_every_hardware_type_shows_its_controls(live_server, hub):
         bare.locator(".more-toggle").click()
         bare.locator("button", has_text="Open").click()
         page.wait_for_selector("#back-inventory")
-        for label in ["Power on", "Off", "Reset", "Off hard", "Power cycle", "Read status"]:
+        for label in ["Power on", "Off", "Reset", "Shut down", "Power cycle", "Read status"]:
             assert page.locator("button", has_text=label).count() >= 1
         page.click("button[data-cap=amt_power_state]")
         page.wait_for_selector("#banner:not(.hidden)")
@@ -84,9 +83,93 @@ def test_every_hardware_type_shows_its_controls(live_server, hub):
         browser.close()
 
 
+def test_amt_card_hint_clears_after_an_action_and_a_failed_read(live_server, hub):
+    import json
+
+    from playwright.sync_api import sync_playwright
+
+    ui_setup(hub, hub.token, "correct horse", client="browser")
+    headers = {"Authorization": f"Bearer {hub.token}"}
+    created = httpx.post(
+        live_server + "/api/v1/amt",
+        headers=headers,
+        json={"name": "Bare AMT", "host": "10.4.0.3", "password": "secret-amt"},
+    ).json()
+    body = json.dumps({"name": "Bare AMT", "power_state": 2, "power_name": "on", "available": [2, 8, 10], "amt_id": created["id"]})
+    mode = {"get": "ok"}
+
+    def fulfill(route):
+        if not route.request.url.rstrip("/").endswith("/power"):
+            route.fallback()
+            return
+        if route.request.method == "POST":
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({"action": "off", "power_state": 8, "name": "Bare AMT", "amt_id": created["id"]}),
+            )
+            return
+        if mode["get"] == "fail":
+            route.fulfill(status=502, content_type="application/json", body=json.dumps({"error": {"message": "AMT request failed: timed out"}}))
+            return
+        route.fulfill(status=200, content_type="application/json", body=body)
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        page.route("**/power", fulfill)
+        page.goto(live_server + "/")
+        page.fill("#ui-password", "correct horse")
+        page.click("button[data-cap=ui_login]")
+        page.wait_for_selector("#device-search")
+        card = _card(page, "Bare AMT")
+        card.locator(".more-toggle").click()
+        card.locator("button", has_text="Open").click()
+        page.wait_for_selector("#back-inventory")
+        off = page.locator("button[data-cap=amt_power][data-action=off]")
+        shutdown = page.locator("button[data-cap=amt_power][data-action=shutdown]")
+        assert off.count() >= 1
+        assert shutdown.count() >= 1
+        assert page.locator("button[data-action=off_hard]").count() == 0
+        page.on("dialog", lambda dialog: dialog.accept())
+        page.click("button[data-cap=amt_power_state]")
+        page.wait_for_function("() => document.querySelector('button[data-action=shutdown]').title.includes('firmware')")
+        assert off.first.is_enabled()
+        assert shutdown.first.is_enabled()
+        page.locator("button[data-cap=amt_power][data-action=off]").click()
+        page.wait_for_function("() => !document.querySelector('button[data-action=shutdown]').title")
+        mode["get"] = "ok"
+        page.click("button[data-cap=amt_power_state]")
+        page.wait_for_function("() => document.querySelector('button[data-action=shutdown]').title.includes('firmware')")
+        mode["get"] = "fail"
+        page.click("button[data-cap=amt_power_state]")
+        page.wait_for_function("() => !document.querySelector('button[data-action=shutdown]').title")
+        browser.close()
+
+
+def test_refused_amt_shutdown_is_logged(client, hub, monkeypatch):
+    created = client.post("/api/v1/amt", json={"name": "Bench", "host": "10.4.1.2", "password": "secret-amt"}).json()
+
+    class Fake:
+        def request_power(self, action):
+            from wakehub.clients.amt import parse_method_return
+
+            parse_method_return("<ReturnValue>2</ReturnValue>", action=action)
+
+    monkeypatch.setattr("wakehub.power.amt_client", lambda _hub, amt_id: (hub.query_one("SELECT * FROM amt_endpoints WHERE id = ?", (amt_id,)), Fake()))
+    refused = client.post(f"/api/v1/amt/{created['id']}/power", json={"action": "shutdown", "confirm": True})
+    assert refused.status_code == 502
+    assert refused.json()["error"]["message"] == "AMT refused graceful shutdown (needs the Intel LMS/OS agent running); use Off"
+    logged = [row for row in client.get("/api/v1/actions").json() if row["action"] == "amt_shutdown"]
+    assert logged and logged[0]["ok"] is False
+
+
 def test_amt_power_requires_confirm(client):
     created = client.post("/api/v1/amt", json={"name": "Bench", "host": "10.4.1.2", "password": "secret-amt"})
     assert created.status_code == 201, created.text
-    refused = client.post(f"/api/v1/amt/{created.json()['id']}/power", json={"action": "off_hard", "confirm": False})
+    refused = client.post(f"/api/v1/amt/{created.json()['id']}/power", json={"action": "off", "confirm": False})
     assert refused.status_code == 409
     assert refused.json()["error"]["code"] == "confirmation_required"
+    retired = client.post(f"/api/v1/amt/{created.json()['id']}/power", json={"action": "off_hard", "confirm": True})
+    assert retired.status_code == 400
+    assert retired.json()["error"]["message"] == "use off"

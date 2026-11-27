@@ -257,11 +257,13 @@ function outletRow(pduId, outlet) {
   if (!outletShown(outlet)) return "";
   const stateText = outlet.on === true ? "on" : outlet.on === false ? "off" : "state unknown";
   const tags = (outlet.tags || []).join(" ");
+  const pdu = ((state.power && state.power.pdus) || []).find((row) => Number(row.id) === Number(pduId));
+  const pduName = pdu && pdu.name ? pdu.name : "PDU";
   return `<div class="row-actions outlet-line" data-outlet-row="${outlet.number}">
     <span>${escapeHtml(outlet.name)} · ${escapeHtml(stateText)}</span>
-    <button type="button" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${pduId}" data-outlet="${outlet.number}" data-action="on">On</button>
-    <button type="button" class="danger" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${pduId}" data-outlet="${outlet.number}" data-action="off">Off</button>
-    <button type="button" class="danger" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${pduId}" data-outlet="${outlet.number}" data-action="cycle">Cycle</button>
+    <button type="button" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${pduId}" data-pdu-name="${escapeHtml(pduName)}" data-outlet="${outlet.number}" data-outlet-name="${escapeHtml(outlet.name)}" data-action="on">On</button>
+    <button type="button" class="danger" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${pduId}" data-pdu-name="${escapeHtml(pduName)}" data-outlet="${outlet.number}" data-outlet-name="${escapeHtml(outlet.name)}" data-action="off">Off</button>
+    <button type="button" class="danger" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${pduId}" data-pdu-name="${escapeHtml(pduName)}" data-outlet="${outlet.number}" data-outlet-name="${escapeHtml(outlet.name)}" data-action="cycle">Cycle</button>
     <input class="outlet-tags" value="${escapeHtml(tags)}" aria-label="Tags for ${escapeHtml(outlet.name)}">
     <button type="button" data-cap="update_pdu_outlet" data-fields="tags" data-pdu="${pduId}" data-outlet="${outlet.number}">Save tags</button>
   </div>`;
@@ -296,18 +298,18 @@ function statusPill(key, label) {
 window.hardwareControls = function (kind, item, full) {
   const id = item.id;
   if (kind === "amt") {
-    const more = full ? `
-        <button type="button" class="danger" data-cap="amt_power" data-fields="action,confirm" data-id="${id}" data-action="off_hard">Off hard</button>
-        <button type="button" class="danger" data-cap="amt_power" data-fields="action,confirm" data-id="${id}" data-action="cycle">Power cycle</button>
-        <button type="button" class="ghost" data-cap="amt_power_state" data-fields="" data-id="${id}">Read status</button>` : `
-        <button type="button" class="ghost" data-cap="amt_power_state" data-fields="" data-id="${id}">Status</button>`;
+    const status = full
+      ? `<button type="button" class="ghost" data-cap="amt_power_state" data-fields="" data-id="${id}">Read status</button>`
+      : `<button type="button" class="ghost" data-cap="amt_power_state" data-fields="" data-id="${id}">Status</button>`;
     return `
       ${statusPill(`amt-${id}`, "Checking")}
-      <div class="row-actions">
-        <button type="button" class="primary" data-cap="amt_power" data-fields="action,confirm" data-id="${id}" data-action="on">Power on</button>
-        <button type="button" class="danger" data-cap="amt_power" data-fields="action,confirm" data-id="${id}" data-action="shutdown">Off</button>
-        <button type="button" class="danger" data-cap="amt_power" data-fields="action,confirm" data-id="${id}" data-action="reboot">Reset</button>
-        ${more}
+      <div class="row-actions" data-amt-actions="${id}">
+        <button type="button" class="primary" data-cap="amt_power" data-fields="action,confirm" data-id="${id}" data-action="on" data-amt-code="2">Power on</button>
+        <button type="button" class="danger" data-cap="amt_power" data-fields="action,confirm" data-id="${id}" data-action="off" data-amt-code="8">Off</button>
+        <button type="button" class="danger" data-cap="amt_power" data-fields="action,confirm" data-id="${id}" data-action="reboot" data-amt-code="10">Reset</button>
+        <button type="button" class="danger" data-cap="amt_power" data-fields="action,confirm" data-id="${id}" data-action="shutdown" data-amt-code="12">Shut down</button>
+        <button type="button" class="danger" data-cap="amt_power" data-fields="action,confirm" data-id="${id}" data-action="cycle" data-amt-code="5">Power cycle</button>
+        ${status}
       </div>`;
   }
   if (kind === "pdu") {
@@ -662,6 +664,63 @@ function sparkline(rows) {
   return `<svg viewBox="0 0 240 56" width="240" height="56"><polyline fill="none" stroke="#0e6b4f" stroke-width="2" points="${points}"></polyline></svg>`;
 }
 
+function hardwareName(kind, id, fallback) {
+  const rows = {
+    pdu: state.power && state.power.pdus,
+    amt: state.power && state.power.amts,
+    jetkvm: state.power && state.power.jetkvms,
+    plug: state.power && state.power.plugs,
+    ups: state.power && state.power.ups,
+    roku: state.power && state.power.rokus,
+  }[kind] || [];
+  const found = rows.find((row) => Number(row.id) === Number(id));
+  return found && found.name ? found.name : fallback;
+}
+
+function amtConfirm(id, action) {
+  const name = hardwareName("amt", id, "AMT");
+  const verb = { shutdown: "Shut down", off: "Turn off", reboot: "Reset", cycle: "Power cycle" }[action] || action;
+  const note = typeof effectNote === "function" ? effectNote("amt", action) : "";
+  return note ? `${verb} ${name} via AMT (${note})?` : `${verb} ${name} via AMT?`;
+}
+
+const AMT_HINT = "firmware doesn't list this right now";
+
+function clearAmtHints(id) {
+  if (state.amtAvailable) delete state.amtAvailable[id];
+  document.querySelectorAll(`button[data-cap=amt_power][data-id="${id}"]`).forEach((button) => {
+    button.disabled = false;
+    if (button.dataset.amtHint === "1") {
+      button.removeAttribute("title");
+      delete button.dataset.amtHint;
+    }
+  });
+}
+
+function applyAmtAvailable(id, available) {
+  const listed = Array.isArray(available) ? available.map(Number) : [];
+  if (!listed.length) {
+    clearAmtHints(id);
+    return;
+  }
+  state.amtAvailable = state.amtAvailable || {};
+  state.amtAvailable[id] = listed;
+  document.querySelectorAll(`button[data-cap=amt_power][data-id="${id}"]`).forEach((button) => {
+    button.disabled = false;
+    if (!listed.includes(Number(button.dataset.amtCode))) {
+      button.title = AMT_HINT;
+      button.dataset.amtHint = "1";
+    } else if (button.dataset.amtHint === "1") {
+      button.removeAttribute("title");
+      delete button.dataset.amtHint;
+    }
+  });
+}
+
+function jetVerb(action) {
+  return { "power-long": "Force off", reset: "Reset", "dc-off": "Turn off" }[action] || action;
+}
+
 window.handlePowerCap = async function handlePowerCap(button) {
   const cap = button.dataset.cap;
   const id = Number(button.dataset.id);
@@ -709,9 +768,9 @@ window.handlePowerCap = async function handlePowerCap(button) {
         slot.innerHTML = data.outlets.map((outlet) => `
           <div class="row-actions">
             <span>${escapeHtml(outlet.name)} ${outlet.on ? "on" : "off"}</span>
-            <button type="button" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${id}" data-outlet="${outlet.number}" data-action="on">On</button>
-            <button type="button" class="danger" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${id}" data-outlet="${outlet.number}" data-action="off">Off</button>
-            <button type="button" class="danger" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${id}" data-outlet="${outlet.number}" data-action="reboot">Reboot</button>
+            <button type="button" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${id}" data-pdu-name="${escapeHtml(hardwareName("pdu", id, "PDU"))}" data-outlet="${outlet.number}" data-outlet-name="${escapeHtml(outlet.name)}" data-action="on">On</button>
+            <button type="button" class="danger" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${id}" data-pdu-name="${escapeHtml(hardwareName("pdu", id, "PDU"))}" data-outlet="${outlet.number}" data-outlet-name="${escapeHtml(outlet.name)}" data-action="off">Off</button>
+            <button type="button" class="danger" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${id}" data-pdu-name="${escapeHtml(hardwareName("pdu", id, "PDU"))}" data-outlet="${outlet.number}" data-outlet-name="${escapeHtml(outlet.name)}" data-action="reboot">Reboot</button>
           </div>`).join("") + `<p class="sub">Bank current ${escapeHtml((data.bank_amps || []).join(" A, "))} A. Not per outlet.</p>`;
       }
       return true;
@@ -724,7 +783,10 @@ window.handlePowerCap = async function handlePowerCap(button) {
       return true;
     } else if (cap === "set_pdu_outlet") {
       const action = button.dataset.action;
-      if ((action === "off" || action === "reboot" || action === "cycle") && !window.confirm(action === "off" ? "Turn this outlet off?" : "Cycle this outlet?")) return true;
+      const outletName = button.dataset.outletName || `outlet ${button.dataset.outlet}`;
+      const pduName = button.dataset.pduName || hardwareName("pdu", button.dataset.pdu, "the PDU");
+      const outletPrompt = action === "off" ? `Turn off ${outletName} on ${pduName}?` : `Cycle ${outletName} on ${pduName}?`;
+      if ((action === "off" || action === "reboot" || action === "cycle") && !window.confirm(outletPrompt)) return true;
       await api("POST", `/api/v1/pdus/${button.dataset.pdu}/outlets/${button.dataset.outlet}`, { action, confirm: action !== "on" });
     } else if (cap === "remove_pdu" || cap === "remove_amt" || cap === "remove_jetkvm" || cap === "remove_plug" || cap === "remove_ups" || cap === "remove_roku") {
       const kind = { remove_pdu: "pdu", remove_amt: "amt", remove_jetkvm: "jetkvm", remove_plug: "plug", remove_ups: "ups", remove_roku: "roku" }[cap];
@@ -736,8 +798,10 @@ window.handlePowerCap = async function handlePowerCap(button) {
         const data = await api("GET", `/api/v1/amt/${id}/power`);
         const text = `${data.name || "AMT"} is ${data.power_name || "unknown"}`;
         if (slot) slot.textContent = text;
+        applyAmtAvailable(id, data.available || []);
         showBanner(text);
       } catch (error) {
+        clearAmtHints(id);
         if (slot) slot.textContent = error.message;
         throw error;
       }
@@ -745,10 +809,15 @@ window.handlePowerCap = async function handlePowerCap(button) {
     } else if (cap === "amt_power") {
       const action = button.dataset.action;
       const destructive = action !== "on";
-      if (destructive && !window.confirm(`Confirm AMT ${action}?`)) return true;
-      const data = await api("POST", `/api/v1/amt/${id}/power`, { action, confirm: destructive });
+      if (destructive && !window.confirm(amtConfirm(id, action))) return true;
+      let data;
+      try {
+        data = await api("POST", `/api/v1/amt/${id}/power`, { action, confirm: destructive });
+      } finally {
+        clearAmtHints(id);
+      }
       const slot = document.getElementById(`amt-status-${id}`);
-      const text = `${data.name || "AMT"} ${action}`;
+      const text = data.reason ? `${data.name || "AMT"}: ${data.reason}` : `${data.name || "AMT"} ${action}`;
       if (slot) slot.textContent = text;
       showBanner(text);
       return true;
@@ -758,14 +827,14 @@ window.handlePowerCap = async function handlePowerCap(button) {
     } else if (cap === "jetkvm_power") {
       const action = button.dataset.action;
       const destructive = action === "power-long" || action === "reset" || action === "dc-off";
-      if (destructive && !window.confirm("Confirm JetKVM " + action + "?")) return true;
+      if (destructive && !window.confirm(`${jetVerb(action)} ${hardwareName("jetkvm", id, "JetKVM")} via JetKVM?`)) return true;
       await api("POST", `/api/v1/jetkvm/${id}/power`, { action, confirm: destructive, extension: button.dataset.extension || "auto" });
     } else if (cap === "plug_status") {
       const data = await api("GET", `/api/v1/plugs/${id}/status`);
       showBanner(data.on ? "Plug on" : "Plug off");
     } else if (cap === "plug_power") {
       const action = button.dataset.action;
-      if ((action === "off" || action === "cycle") && !window.confirm("Confirm plug " + action + "?")) return true;
+      if ((action === "off" || action === "cycle") && !window.confirm(`${action === "off" ? "Turn off" : "Cycle"} ${hardwareName("plug", id, "plug")}?`)) return true;
       await api("POST", `/api/v1/plugs/${id}/power`, { action, confirm: action === "off" || action === "cycle" });
     } else if (cap === "ups_status") {
       const data = await api("GET", `/api/v1/ups/${id}/status`);
@@ -776,12 +845,13 @@ window.handlePowerCap = async function handlePowerCap(button) {
     } else if (cap === "roku_power") {
       const action = button.dataset.action;
       const destructive = action === "off" || action === "toggle";
-      if (destructive && !window.confirm(action === "toggle" ? "Power can turn the Roku off. Confirm?" : "Turn the Roku off?")) return true;
+      const rokuName = hardwareName("roku", id, "Roku");
+      if (destructive && !window.confirm(action === "toggle" ? `Power can turn ${rokuName} off. Confirm?` : `Turn off ${rokuName}?`)) return true;
       const data = await api("POST", `/api/v1/rokus/${id}/power`, { action, confirm: destructive });
       showBanner(`${data.name || "Roku"} is ${data.power_mode || action}`);
     } else if (cap === "ups_action") {
       const action = button.dataset.action;
-      if (!window.confirm("This can drop every load on the UPS. Confirm " + action + "?")) return true;
+      if (!window.confirm(`This can drop every load on ${hardwareName("ups", id, "the UPS")}. Confirm ${action}?`)) return true;
       await api("POST", `/api/v1/ups/${id}/action`, { action, confirm: true });
     } else if (cap === "refresh_pdu_outlet_names") {
       const data = await api("POST", `/api/v1/pdus/${id}/outlet-names`);
@@ -955,23 +1025,33 @@ window.CONTROL_HANDLERS = {
 };
 
 function powerConfirm(device, action, method) {
-  const verb = { off: "Shut down", shutdown: "Shut down", reboot: "Reset", cycle: "Power cycle" }[action] || action;
+  const verb = { off: "Turn off", shutdown: "Shut down", reboot: "Reset", cycle: "Power cycle" }[action] || action;
   const name = device && device.name ? device.name : "this device";
   const chosen = method && method !== "auto" ? method : ((typeof methodForAction === "function" && methodForAction(device, action)) || {}).kind;
-  const via = chosen ? ` via ${chosen === "wol" ? "WOL" : (typeof methodName === "function" ? methodName(chosen) : chosen)}` : "";
+  const via = chosen ? ` via ${(typeof methodName === "function" ? methodName(chosen) : chosen)}` : "";
+  const note = chosen && typeof effectNote === "function" ? effectNote(chosen, action) : "";
+  if (note && (action === "off" || action === "shutdown")) return `${verb} ${name}${via} (${note})?`;
   return `${verb} ${name}${via}?`;
+}
+
+function chosenMethod(article, device, action) {
+  const pick = article && article.querySelector(`.action-method[data-action="${action}"]`);
+  const stored = device && state.methodPicks ? state.methodPicks[`${device.id}:${action}`] : "";
+  const method = (pick && pick.value) || stored || "auto";
+  const allowed = typeof methodsForAction === "function" ? methodsForAction(device, action) : null;
+  if (method !== "auto" && allowed && !allowed.includes(method)) return "auto";
+  return method;
 }
 
 async function sendPower(el) {
   const id = Number(el.dataset.id);
   const action = el.dataset.action || "on";
   const device = (state.devices || []).find((item) => item.id === id);
-  const pick = el.closest("article") && el.closest("article").querySelector(".action-method");
-  const method = (pick && pick.value) || "auto";
+  const method = chosenMethod(el.closest("article"), device, action);
   const destructive = action !== "on";
   if (destructive && !window.confirm(powerConfirm(device, action, method))) return;
   const result = await api("POST", `/api/v1/devices/${id}/power`, { action, method, confirm: destructive });
-  showBanner(result.noop ? result.reason : reachText(result));
+  showBanner(reachText(result));
   await refreshDevices();
   render();
 }
@@ -982,7 +1062,7 @@ async function sendUps(el) {
   const delay = card.querySelector(".ups-delay").value;
   const outlet = card.querySelector(".ups-outlet").value;
   const destructive = !["turn_on", "outlet_on"].includes(action);
-  if (destructive && !window.confirm("This can drop every load on the UPS. Confirm " + action + "?")) return;
+  if (destructive && !window.confirm(`This can drop every load on ${hardwareName("ups", el.dataset.id, "the UPS")}. Confirm ${action}?`)) return;
   const body = { action, confirm: destructive };
   if (delay) body.delay_seconds = Number(delay);
   if (outlet) body.outlet = Number(outlet);

@@ -15,6 +15,9 @@ const state = {
   salvoDraft: null,
   salvoReplace: false,
   selection: [],
+  methodPicks: {},
+  effects: null,
+  amtAvailable: {},
 };
 
 const titles = {
@@ -95,11 +98,12 @@ function deviceLinks(device) {
     const item = (hardware.pdus || []).find((row) => row.id === method.pdu_id);
     const outlet = (item && item.outlets || []).find((row) => row.number === method.outlet);
     const label = outlet ? outlet.name : `Outlet ${method.outlet}`;
+    const pduName = item ? item.name : "PDU";
     lines.push(`<div class="row-actions">
-      <span class="meta">${escapeHtml(item ? item.name : "PDU")} ${escapeHtml(label)}</span>
-      <button type="button" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${method.pdu_id}" data-outlet="${method.outlet}" data-action="on">On</button>
-      <button type="button" class="danger" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${method.pdu_id}" data-outlet="${method.outlet}" data-action="off">Off</button>
-      <button type="button" class="danger" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${method.pdu_id}" data-outlet="${method.outlet}" data-action="cycle">Cycle</button>
+      <span class="meta">${escapeHtml(pduName)} ${escapeHtml(label)}</span>
+      <button type="button" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${method.pdu_id}" data-pdu-name="${escapeHtml(pduName)}" data-outlet="${method.outlet}" data-outlet-name="${escapeHtml(label)}" data-action="on">On</button>
+      <button type="button" class="danger" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${method.pdu_id}" data-pdu-name="${escapeHtml(pduName)}" data-outlet="${method.outlet}" data-outlet-name="${escapeHtml(label)}" data-action="off">Off</button>
+      <button type="button" class="danger" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${method.pdu_id}" data-pdu-name="${escapeHtml(pduName)}" data-outlet="${method.outlet}" data-outlet-name="${escapeHtml(label)}" data-action="cycle">Cycle</button>
     </div>`);
   }
   return lines.join("");
@@ -139,15 +143,48 @@ function methodName(kind) {
   return { wol: "Wake-on-LAN", amt: "AMT", pdu: "PDU outlet", plug: "plug", jetkvm: "JetKVM", ups: "UPS", roku: "Roku" }[kind] || kind;
 }
 
+function methodShort(kind) {
+  return { wol: "WOL", amt: "AMT", pdu: "PDU", plug: "plug", jetkvm: "JetKVM", ups: "UPS", roku: "Roku" }[kind] || methodName(kind);
+}
+
+function effectNote(kind, action) {
+  const table = state.effects && state.effects[kind];
+  return (table && table[action]) || "";
+}
+
+function storedPick(device, action) {
+  const value = (state.methodPicks || {})[`${device.id}:${action}`];
+  if (!value || value === "auto") return "auto";
+  return methodsForAction(device, action).includes(value) ? value : "auto";
+}
+
+function activeKind(device, action) {
+  const stored = storedPick(device, action);
+  if (stored !== "auto") return stored;
+  return (methodForAction(device, action) || {}).kind;
+}
+
+const ACTION_KINDS = {
+  on: ["wol", "plug", "pdu", "amt", "ups", "jetkvm", "roku"],
+  off: ["plug", "pdu", "amt", "ups", "jetkvm", "roku"],
+  reboot: ["amt", "plug", "pdu", "ups", "jetkvm"],
+  cycle: ["plug", "pdu", "amt", "ups", "jetkvm"],
+  shutdown: ["amt", "ups", "jetkvm"],
+};
+
+function methodsForAction(device, action) {
+  const can = ACTION_KINDS[action] || [];
+  const seen = [];
+  ((device && device.methods) || [{ kind: "wol" }]).forEach((item) => {
+    const kind = item && item.kind;
+    if (!kind || seen.includes(kind) || !can.includes(kind)) return;
+    seen.push(kind);
+  });
+  return seen;
+}
+
 function methodForAction(device, action) {
-  const can = {
-    on: ["wol", "plug", "pdu", "amt", "ups", "jetkvm", "roku"],
-    off: ["plug", "pdu", "amt", "ups", "jetkvm", "roku"],
-    reboot: ["amt", "plug", "pdu", "ups", "jetkvm"],
-    cycle: ["plug", "pdu", "amt", "ups", "jetkvm"],
-    shutdown: ["amt", "ups", "jetkvm"],
-  }[action] || [];
-  const capable = ((device && device.methods) || [{ kind: "wol" }]).filter((item) => can.includes(item.kind));
+  const capable = ((device && device.methods) || [{ kind: "wol" }]).filter((item) => methodsForAction(device, action).includes(item.kind));
   if (action === "off" || action === "reboot") {
     const gentle = capable.find((item) => !["plug", "pdu", "ups"].includes(item.kind));
     if (gentle) return gentle;
@@ -155,16 +192,36 @@ function methodForAction(device, action) {
   return capable[0] || null;
 }
 
+function methodSelect(device, action, label) {
+  if (!methodForAction(device, action)) return "";
+  const selected = storedPick(device, action);
+  const choices = ["auto", ...methodsForAction(device, action)].map((kind) => {
+    const text = kind === "auto" ? "Auto" : methodName(kind);
+    const mark = kind === selected ? " selected" : "";
+    return `<option value="${escapeHtml(kind)}"${mark}>${escapeHtml(text)}</option>`;
+  }).join("");
+  return `<label class="method-pick"><span>${escapeHtml(label)}</span><select class="action-method" data-action="${action}" aria-label="${escapeHtml(label)} method">${choices}</select></label>`;
+}
+
+function actionTitle(verb, kind, action) {
+  const full = methodName(kind);
+  const note = effectNote(kind, action);
+  if (note && (action === "off" || action === "shutdown")) return `${verb} via ${full} (${note})`;
+  return `${verb} via ${full}`;
+}
+
 function actionButton(device, action, verb, tone) {
   if (!methodForAction(device, action)) return "";
-  return `<button type="button" class="${tone}" data-cap="power_action" data-fields="action,confirm,method" data-action="${action}" data-id="${device.id}">${escapeHtml(via(device, action, verb))}</button>`;
+  const kind = activeKind(device, action);
+  const label = kind ? `${verb} via ${methodShort(kind)}` : verb;
+  const title = kind ? actionTitle(verb, kind, action) : verb;
+  return `<button type="button" class="${tone}" data-cap="power_action" data-fields="action,confirm,method" data-action="${action}" data-verb="${escapeHtml(verb)}" data-id="${device.id}" title="${escapeHtml(title)}">${escapeHtml(label)}</button>`;
 }
 
 function via(device, action, verb) {
-  const method = methodForAction(device, action);
-  if (!method) return verb;
-  const name = method.kind === "wol" ? "WOL" : methodName(method.kind);
-  return `${verb} via ${name}`;
+  const kind = activeKind(device, action);
+  if (!kind) return verb;
+  return `${verb} via ${methodShort(kind)}`;
 }
 
 function recordCard(spec) {
@@ -197,7 +254,6 @@ function recordCard(spec) {
 window.recordCard = recordCard;
 
 function deviceCard(device) {
-  const choices = ((device.methods || [{ kind: "wol" }])).map((item) => `<option value="${escapeHtml(item.kind)}">${escapeHtml(methodName(item.kind))}</option>`).join("");
   return recordCard({
     kind: "device",
     id: device.id,
@@ -208,7 +264,13 @@ function deviceCard(device) {
     body: `${powerBlock(device)}${tagChips(device.tags)}`,
     primary: `${actionButton(device, "on", "Wake", "primary")}${actionButton(device, "off", "Off", "danger")}${actionButton(device, "reboot", "Reset", "danger")}`,
     more: `
-      <label>Use <select class="action-method" aria-label="Method for the next action"><option value="auto">Auto</option>${choices}</select></label>
+      <div class="method-picks">
+        ${methodSelect(device, "on", "Wake")}
+        ${methodSelect(device, "off", "Off")}
+        ${methodSelect(device, "reboot", "Reset")}
+        ${methodSelect(device, "cycle", "Cycle")}
+        ${methodSelect(device, "shutdown", "Shutdown")}
+      </div>
       <button type="button" class="ghost" data-open-kind="device" data-id="${device.id}">Open</button>
       <button type="button" class="ghost" data-cap="get_device" data-fields="" data-id="${device.id}" aria-label="Edit ${escapeHtml(device.name)}">Edit</button>
       ${actionButton(device, "cycle", "Cycle", "danger")}
@@ -635,7 +697,8 @@ window.runSalvo = async function (el) {
   const lines = [];
   (preview.steps || []).forEach((step) => {
     const wait = step.delay_seconds ? ` after ${step.delay_seconds}s` : "";
-    (step.targets || []).forEach((target) => lines.push(`${step.action} ${target.name}${wait}`));
+    const via = step.method && step.method !== "auto" ? ` via ${methodName(step.method)}` : "";
+    (step.targets || []).forEach((target) => lines.push(`${step.action} ${target.name}${via}${wait}`));
   });
   if (!lines.length) {
     showBanner(`${preview.name} does not match any devices.`, true);
@@ -969,7 +1032,17 @@ function writeRoute(page, slug) {
   if (location.hash !== next) history.replaceState(null, "", next);
 }
 
+function rememberPicks() {
+  document.querySelectorAll("article.card .action-method").forEach((select) => {
+    const card = select.closest("article.card");
+    const marked = card && card.querySelector("[data-id]");
+    if (!marked || !select.dataset.action) return;
+    state.methodPicks[`${marked.dataset.id}:${select.dataset.action}`] = select.value;
+  });
+}
+
 function captureTransient() {
+  rememberPicks();
   const menus = [...document.querySelectorAll("article.card .more .menu:not(.hidden)")].map((node) => {
     const card = node.closest("article.card");
     const marked = card && card.querySelector("[data-id]");
@@ -1023,6 +1096,7 @@ function placeMenu(wrap) {
   const anchor = toggle.getBoundingClientRect();
   const bounds = contentBounds();
   menu.style.maxWidth = `${Math.max(120, bounds.right - bounds.left)}px`;
+  menu.style.maxHeight = `${Math.max(160, bounds.bottom - bounds.top)}px`;
   const width = Math.min(menu.offsetWidth, bounds.right - bounds.left);
   const height = menu.offsetHeight;
   const roomRight = bounds.right - anchor.left;
@@ -1127,6 +1201,9 @@ function render() {
     }
   }
   restoreTransient(transient);
+  Object.entries(state.amtAvailable || {}).forEach(([id, available]) => {
+    if (typeof applyAmtAvailable === "function") applyAmtAvailable(id, available);
+  });
 }
 
 async function refreshDevices() {
@@ -1134,6 +1211,8 @@ async function refreshDevices() {
   if (state.deviceQuery) params.set("q", state.deviceQuery);
   if (state.tagFilter && state.tagFilter.length) params.set("tags", state.tagFilter.join(","));
   state.devices = await api("GET", `/api/v1/devices${params.toString() ? `?${params}` : ""}`);
+  const withEffects = (state.devices || []).find((item) => item.effects);
+  if (withEffects) state.effects = withEffects.effects;
   if (typeof refreshPower === "function") await refreshPower();
   try {
     state.tags = await api("GET", "/api/v1/tags");
@@ -1347,9 +1426,13 @@ async function onClick(event) {
 }
 
 function reachText(result) {
-  if (result.reachable === true) return `${result.name} answered in ${result.elapsed_s}s`;
-  if (result.reachable === false) return `${result.name}: packet sent, host did not answer`;
-  return `${result.name}: packet sent (no host to probe)`;
+  const name = (result && result.name) || "This device";
+  if (result && result.reason) return `${name}: ${result.reason}`;
+  if (result && result.amt_id != null) return `${name}: AMT command sent`;
+  if (result && result.reachable === true) return `${name} answered in ${result.elapsed_s}s`;
+  if (result && result.reachable === false) return `${name}: packet sent, host did not answer`;
+  if (result && result.sent) return `${name}: packet sent (no host to probe)`;
+  return `${name}: command sent`;
 }
 
 async function onSubmit(event) {
@@ -1695,6 +1778,22 @@ document.addEventListener("keydown", (event) => {
   const toggle = menu.parentElement.querySelector(".more-toggle");
   closeMenus();
   if (toggle) toggle.focus();
+});
+
+document.body.addEventListener("change", (event) => {
+  const select = event.target.closest && event.target.closest("select.action-method");
+  if (!select) return;
+  rememberPicks();
+  const card = select.closest("article");
+  const action = select.dataset.action;
+  const button = card && [...card.querySelectorAll("button[data-cap=power_action]")].find((node) => node.dataset.action === action);
+  if (!button) return;
+  const device = (state.devices || []).find((item) => item.id === Number(button.dataset.id));
+  const verb = button.dataset.verb || "Wake";
+  const kind = select.value !== "auto" ? select.value : (methodForAction(device, action) || {}).kind;
+  if (!kind) return;
+  button.textContent = `${verb} via ${methodShort(kind)}`;
+  button.title = actionTitle(verb, kind, action);
 });
 
 document.body.addEventListener("click", (event) => {

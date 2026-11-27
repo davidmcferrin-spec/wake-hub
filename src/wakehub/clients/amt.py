@@ -6,18 +6,21 @@ Self-signed certificates are allowed when the endpoint says so.
 
 from __future__ import annotations
 
+import errno
+import socket
 import ssl
+import urllib.error
 import uuid
 import xml.etree.ElementTree as ET
 from urllib.request import HTTPDigestAuthHandler, HTTPPasswordMgrWithDefaultRealm, Request, build_opener
 
-from wakehub.errors import UpstreamError, WakeHubError
+from wakehub.errors import AmtUnreachable, UpstreamError, WakeHubError
 from wakehub.inventory import host_for_url
 
+# CIM RequestPowerStateChange values Intel AMT actually accepts. 8 is the hard off. 12 is graceful.
 POWER_COMMANDS = {
     "on": 2,
     "cycle": 5,
-    "off_hard": 6,
     "off": 8,
     "reboot": 10,
     "shutdown": 12,
@@ -28,7 +31,6 @@ POWER_NAMES = {
     3: "sleep_light",
     4: "sleep_deep",
     5: "power_cycle",
-    6: "off_hard",
     7: "hibernate",
     8: "off",
     9: "power_cycle_hard",
@@ -116,14 +118,25 @@ def parse_power_state(body: str) -> dict:
     }
 
 
-def parse_method_return(body: str) -> int:
+# 1 Not Supported and 2 Unspecified are what graceful shutdown returns when the OS agent is absent.
+_LMS_RETURNS = {1, 2}
+
+
+def return_error(action: str | None, value: int) -> str:
+    if action == "shutdown" and value in _LMS_RETURNS:
+        return "AMT refused graceful shutdown (needs the Intel LMS/OS agent running); use Off"
+    name = action or "power change"
+    return f"AMT refused {name} (return {value})"
+
+
+def parse_method_return(body: str, action: str | None = None) -> int:
     root = _root(body)
     value = _first_int(root, "ReturnValue")
     if value is None:
         fault = _first_text(root, "Text") or _first_text(root, "Reason")
         raise UpstreamError(fault or "AMT did not return a method result")
     if value != 0:
-        raise UpstreamError(f"AMT RequestPowerStateChange returned {value}")
+        raise UpstreamError(return_error(action, value))
     return value
 
 
@@ -191,15 +204,32 @@ class AmtClient:
         return parse_power_state(body)
 
     def request_power(self, action: str) -> dict:
+        if action == "off_hard":
+            raise WakeHubError("use off")
         if action not in POWER_COMMANDS:
-            raise WakeHubError("AMT action must be on, off, off_hard, cycle, reboot, or shutdown")
+            raise WakeHubError("AMT action must be on, off, cycle, reboot, or shutdown")
         code = POWER_COMMANDS[action]
-        if action == "shutdown":
+        current = None
+        try:
             current = self.power_state()
-            if current["available"] and 12 not in current["available"]:
-                raise WakeHubError("this AMT firmware does not advertise graceful shutdown")
+        except AmtUnreachable:
+            # One timeout is enough. A second command would wait the full timeout again.
+            raise
+        except Exception:
+            # A status read that got an HTTP answer must not block the command.
+            current = None
+        if current:
+            state = current.get("power_state")
+            available = current.get("available") or []
+            # The advertised list is relative to the current state, so "on" is absent while the host is already on.
+            if action == "on" and state == POWER_COMMANDS["on"]:
+                return {"action": action, "power_state": state, "noop": True, "reason": "already on", "return_value": 0}
+            if action in {"off", "shutdown"} and state == POWER_COMMANDS["off"]:
+                return {"action": action, "power_state": state, "noop": True, "reason": "already off", "return_value": 0}
+            if action == "shutdown" and available and code not in available:
+                raise WakeHubError(f"AMT does not advertise {action} (power-state {code})")
         self._post(build_power_change(self.uri, code))
-        parsed = parse_method_return(self._last_body)
+        parsed = parse_method_return(self._last_body, action)
         return {"action": action, "power_state": code, "return_value": parsed}
 
     def _post(self, payload: str) -> str:
@@ -216,6 +246,16 @@ class AmtClient:
                 with self._opener.open(request, timeout=self._timeout) as response:
                     status = response.status
                     body = response.read().decode("utf-8", errors="replace")
+            except urllib.error.HTTPError as exc:
+                # HTTPError is an OSError. Catching it here keeps a 401 or 500 from looking like a dead host.
+                status = exc.code
+                body = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
+            except urllib.error.URLError as exc:
+                if _connection_failure(exc.reason):
+                    raise AmtUnreachable(f"AMT unreachable: {exc.reason}") from exc
+                raise UpstreamError(f"AMT request failed: {exc}") from exc
+            except (TimeoutError, socket.timeout, ConnectionError) as exc:
+                raise AmtUnreachable(f"AMT unreachable: {exc}") from exc
             except OSError as exc:
                 raise UpstreamError(f"AMT request failed: {exc}") from exc
         self._last_body = body
@@ -224,3 +264,11 @@ class AmtClient:
         if status >= 400:
             raise UpstreamError(f"AMT HTTP {status}")
         return body
+
+
+def _connection_failure(reason: object) -> bool:
+    if isinstance(reason, (TimeoutError, socket.timeout, ConnectionError, socket.gaierror)):
+        return True
+    if isinstance(reason, OSError) and reason.errno in {errno.ECONNREFUSED, errno.ETIMEDOUT, errno.EHOSTUNREACH, errno.ENETUNREACH}:
+        return True
+    return isinstance(reason, str) and "timed out" in reason.lower()

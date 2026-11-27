@@ -66,6 +66,10 @@ h1 {
 
 .lede { color: var(--muted); line-height: 1.45; }
 
+.salvo-layout { padding: var(--s4); }
+
+.salvo-layout > .lede { margin-top: 0; }
+
 .gate {
   min-height: 100vh;
   display: grid;
@@ -317,7 +321,20 @@ button.sr-only {
 
 .card .actions { flex-wrap: wrap; }
 
-.card .actions > button { max-width: 100%; }
+.card .actions > button { max-width: 100%; white-space: nowrap; }
+
+.method-picks {
+  display: grid;
+  grid-template-columns: 4.8rem minmax(0, 1fr);
+  gap: 0.15rem 0.35rem;
+  align-items: center;
+}
+
+.method-picks .method-pick { display: contents; margin: 0; }
+
+.method-picks span { font-size: 0.82rem; color: var(--muted); }
+
+.method-picks select { height: 2rem; width: 100%; }
 
 .card.detail h3 { margin: 0.45rem 0 0.15rem; font-size: 1rem; }
 
@@ -356,7 +373,6 @@ button.sr-only {
 
 .more .menu {
   position: fixed;
-  z-index: 30;
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -367,10 +383,19 @@ button.sr-only {
   border: 1px solid var(--line);
   border-radius: 12px;
   box-shadow: var(--shadow);
+  max-height: calc(100vh - 1rem);
+  overflow: auto;
+  z-index: 50;
 }
 
+.more .menu > * { flex-shrink: 0; }
+
 .more .menu button,
-.more .menu label { justify-content: flex-start; }
+.more .menu label { justify-content: flex-start; margin: 0; flex-shrink: 0; }
+
+body:has(.more .menu:not(.hidden)) .banner {
+  display: none;
+}
 
 .outlet-line { display: grid; grid-template-columns: minmax(6rem, 1fr) auto auto auto; gap: var(--s2); align-items: center; }
 

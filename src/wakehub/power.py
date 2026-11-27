@@ -45,7 +45,7 @@ def dispatch_device(
     require_confirm(action, confirm)
     row = _get_row(hub, device_id)
     _require_enabled(hub, row, source, action)
-    chosen = _select_method(json.loads(row["methods"]), method, action)
+    chosen = _select_method(json.loads(row["methods"]), method, action, device_name=row["name"])
     if chosen["kind"] == "wol":
         if action != "on":
             raise WakeHubError("Wake-on-LAN only supports action on")
@@ -69,7 +69,18 @@ def dispatch_device(
             raise WakeHubError(f"a plug cannot {action}")
         return plug_power(hub, chosen["plug_id"], mapped, confirm=confirm, source=source)
     if chosen["kind"] == "amt":
-        return amt_power(hub, chosen["amt_id"], action, confirm=confirm, source=source)
+        try:
+            result = amt_power(hub, chosen["amt_id"], action, confirm=confirm, source=source)
+        except Exception as exc:
+            if method not in {None, "", "auto"} or action != "on" or not _amt_unreachable(exc):
+                raise
+            fallback = _fallback_from_amt(hub, row, source)
+            if fallback is None:
+                raise
+            return fallback
+        if isinstance(result, dict):
+            result["name"] = row["name"]
+        return result
     if chosen["kind"] == "jetkvm":
         endpoint, client = jetkvm_client(hub, chosen["jetkvm_id"])
         client.close()
@@ -104,6 +115,36 @@ def dispatch_device(
     raise WakeHubError(f"unknown power method {chosen['kind']}")
 
 
+def _amt_unreachable(exc: Exception) -> bool:
+    from wakehub.errors import AmtUnreachable
+
+    return isinstance(exc, AmtUnreachable)
+
+
+def _fallback_from_amt(hub: Hub, row, source: str) -> dict[str, Any] | None:
+    methods = json.loads(row["methods"] or "[]")
+    passed = False
+    for item in methods:
+        kind = item.get("kind")
+        if kind == "amt":
+            passed = True
+            continue
+        if not passed or kind not in _ACTION_KINDS["on"]:
+            continue
+        if kind == "wol":
+            from wakehub.inventory import send_wake_packet
+
+            result = send_wake_packet(hub, int(row["id"]), source=source)
+            result["method"] = "wol"
+            result["reason"] = "AMT unreachable, sent WOL"
+            return result
+        result = dispatch_device(hub, int(row["id"]), action="on", method=str(kind), confirm=False, source=source)
+        if isinstance(result, dict):
+            result["reason"] = f"AMT unreachable, sent {kind}"
+        return result
+    return None
+
+
 # Order in the device's methods list is the priority. A kind is skipped when it cannot do the action.
 _ACTION_KINDS = {
     "on": {"wol", "plug", "pdu", "amt", "ups", "jetkvm", "roku"},
@@ -117,7 +158,113 @@ _ACTION_KINDS = {
 _POWER_CUT = {"plug", "pdu", "ups"}
 
 
-def _select_method(methods: list[dict[str, Any]], requested: str, action: str) -> dict[str, Any]:
+_METHOD_LABEL = {
+    "wol": "Wake-on-LAN",
+    "amt": "AMT",
+    "pdu": "PDU outlet",
+    "plug": "plug",
+    "jetkvm": "JetKVM",
+    "ups": "UPS",
+    "roku": "Roku",
+}
+
+_ACTION_PHRASE = {
+    "on": "wake",
+    "off": "turn off",
+    "reboot": "reset",
+    "cycle": "power cycle",
+    "shutdown": "shut down",
+}
+
+
+def client_command(kind: str, action: str) -> dict[str, Any]:
+    """The command this method's client sends. Notes are classified from this, not from the action name."""
+    if kind == "amt":
+        from wakehub.clients.amt import POWER_COMMANDS
+
+        if action not in POWER_COMMANDS:
+            raise WakeHubError(f"AMT cannot {action}")
+        return {"code": POWER_COMMANDS[action]}
+    if kind == "ups":
+        from wakehub.clients.ups import command_set
+
+        mapped = {"off": "turn_off", "shutdown": "shutdown", "reboot": "reboot", "cycle": "reboot", "on": "turn_on"}[action]
+        sets = command_set(mapped)
+        return {"oids": [oid for oid, _value, _asn in sets], "values": [value for _oid, value, _asn in sets]}
+    if kind == "jetkvm":
+        from wakehub.clients.jetkvm import ATX_ACTIONS
+
+        wire = {"on": "power-short", "off": "power-long", "shutdown": "power-short", "reboot": "reset", "cycle": "reset"}[action]
+        if wire not in ATX_ACTIONS:
+            raise WakeHubError(f"JetKVM cannot {action}")
+        return {"atx": wire}
+    if kind == "pdu":
+        mapped = {"on": "on", "off": "off", "cycle": "reboot", "reboot": "reboot"}[action]
+        if mapped == "reboot":
+            return {"command": "$A4"}
+        return {"command": "$A3", "on": mapped == "on"}
+    if kind == "plug":
+        if action == "on":
+            return {"set_on": True, "cycle": False}
+        if action == "off":
+            return {"set_on": False, "cycle": False}
+        if action in {"cycle", "reboot"}:
+            return {"set_on": False, "cycle": True}
+        raise WakeHubError(f"a plug cannot {action}")
+    if kind == "roku":
+        from wakehub.clients.roku import KEYS
+
+        if action not in KEYS:
+            raise WakeHubError(f"a Roku cannot {action}")
+        return {"key": KEYS[action]}
+    if kind == "wol":
+        if action != "on":
+            raise WakeHubError("Wake-on-LAN only supports action on")
+        return {"packet": "magic"}
+    raise WakeHubError(f"unknown power method {kind}")
+
+
+def effect_note(kind: str, action: str) -> str:
+    """Short phrase for the command client_command reports."""
+    command = client_command(kind, action)
+    if kind == "amt":
+        # 2 on, 5 power cycle, 8 hard off, 10 reset, 12 graceful shutdown.
+        return {2: "power on", 5: "power cycle", 8: "hard power off", 10: "reset", 12: "soft graceful off"}[command["code"]]
+    if kind == "ups":
+        from wakehub.clients.ups import OIDS
+
+        oids = command["oids"]
+        if OIDS["ups_off"] in oids:
+            return "cuts power"
+        if OIDS["reboot"] in oids:
+            return "reboots the UPS"
+        if OIDS["turn_on"] in oids:
+            return "turns the UPS on"
+        raise WakeHubError("unclassified UPS command")
+    if kind == "jetkvm":
+        return {"power-long": "holds the power button", "power-short": "presses the power button", "reset": "reset"}[command["atx"]]
+    if kind == "pdu":
+        if command["command"] == "$A4":
+            return "power cycle"
+        return "turns the outlet on" if command.get("on") else "cuts power"
+    if kind == "plug":
+        if command["cycle"]:
+            return "power cycle"
+        return "turns the plug on" if command["set_on"] else "cuts power"
+    if kind == "roku":
+        return f"{command['key']} key"
+    return "magic packet"
+
+
+def effect_table() -> dict[str, dict[str, str]]:
+    table: dict[str, dict[str, str]] = {}
+    for action, kinds in _ACTION_KINDS.items():
+        for kind in kinds:
+            table.setdefault(kind, {})[action] = effect_note(kind, action)
+    return table
+
+
+def _select_method(methods: list[dict[str, Any]], requested: str, action: str, *, device_name: str = "this device") -> dict[str, Any]:
     capable = [item for item in methods if item.get("kind") in _ACTION_KINDS.get(action, set())]
     if requested in {None, "", "auto"}:
         if not capable:
@@ -128,8 +275,12 @@ def _select_method(methods: list[dict[str, Any]], requested: str, action: str) -
                 return gentle[0]
         return capable[0]
     found = next((item for item in methods if item.get("kind") == requested), None)
-    if found is None or found.get("kind") not in _ACTION_KINDS.get(action, set()):
+    if found is None:
         raise WakeHubError(f"device has no {requested} power method")
+    if found.get("kind") not in _ACTION_KINDS.get(action, set()):
+        label = _METHOD_LABEL.get(requested, requested)
+        phrase = _ACTION_PHRASE.get(action, action)
+        raise WakeHubError(f"{label} can't {phrase} {device_name}")
     return found
 
 
@@ -326,8 +477,8 @@ def plug_status(hub: Hub, plug_id: int) -> dict[str, Any]:
 
 def amt_power(hub: Hub, amt_id: int, action: str, *, confirm: bool, source: str) -> dict[str, Any]:
     if action == "off_hard":
-        require_confirm("off", confirm)
-    elif action in {"off", "cycle", "reboot", "shutdown"}:
+        raise WakeHubError("use off")
+    if action in {"off", "cycle", "reboot", "shutdown"}:
         require_confirm(action, confirm)
     row, client = amt_client(hub, amt_id)
     try:
@@ -335,8 +486,9 @@ def amt_power(hub: Hub, amt_id: int, action: str, *, confirm: bool, source: str)
     except Exception as exc:
         record_action(hub, source=source, action=f"amt_{action}", ok=False, detail=str(exc), target_kind="amt", target_id=amt_id, target_name=row["name"])
         raise
-    record_action(hub, source=source, action=f"amt_{action}", ok=True, detail=action, target_kind="amt", target_id=amt_id, target_name=row["name"])
     result["amt_id"] = amt_id
+    result["name"] = row["name"]
+    record_action(hub, source=source, action=f"amt_{action}", ok=True, detail=result.get("reason") or action, target_kind="amt", target_id=amt_id, target_name=row["name"])
     return result
 
 
