@@ -81,7 +81,8 @@ class DeviceIn(BaseModel):
     enabled: bool = True
     reach_mode: Literal["icmp", "tcp"] = "icmp"
     reach_port: int | None = None
-    reach_timeout: float = 30
+    reach_timeout: float | None = None
+    power_method: str = "auto"
     wake_strategy: Literal["wol_only", "power_then_wol"] = "wol_only"
     methods: list[dict[str, Any]] | None = None
 
@@ -101,6 +102,7 @@ class DevicePatch(BaseModel):
     reach_port: int | None = None
     reach_timeout: float | None = None
     wake_strategy: Literal["wol_only", "power_then_wol"] | None = None
+    power_method: str | None = None
     methods: list[dict[str, Any]] | None = None
 
 
@@ -110,11 +112,12 @@ class EnabledIn(BaseModel):
 
 class WakeIn(BaseModel):
     timeout: float | None = None
+    method: str = "auto"
 
 
 class PowerIn(BaseModel):
     action: Literal["on", "off", "cycle", "reboot", "shutdown"]
-    method: str = "wol"
+    method: str = "auto"
     confirm: bool = False
 
 
@@ -127,6 +130,7 @@ class SettingsIn(BaseModel):
     session_days: int | None = None
     scan_keep: int | None = None
     scan_keep_days: int | None = None
+    default_wake_timeout: float | None = None
 
 
 class LoginIn(BaseModel):
@@ -391,7 +395,7 @@ def _api_router() -> APIRouter:
     @router.post("/devices/{device_id}/wake", tags=["power"])
     def wake(device_id: int, request: Request, body: WakeIn | None = Body(default=None)) -> dict[str, Any]:
         timeout = body.timeout if body else None
-        return wake_device(get_hub(), device_id, source=request_source(request), timeout=timeout)
+        return wake_device(get_hub(), device_id, source=request_source(request), timeout=timeout, method=None if body is None else body.method)
 
     @router.post("/devices/{device_id}/power", tags=["power"])
     def power(device_id: int, body: PowerIn, request: Request) -> dict[str, Any]:

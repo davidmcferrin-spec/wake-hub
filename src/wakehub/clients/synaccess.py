@@ -6,6 +6,7 @@ The status string's right-most bit is outlet 1.
 
 from __future__ import annotations
 
+import html
 import json
 import re
 from dataclasses import dataclass
@@ -34,6 +35,26 @@ class PduStatus:
 
 def synaccess_realm(header: str) -> bool:
     return "synaccess" in header.lower() or "netbooter" in header.lower()
+
+
+def synaccess_http(headers: dict[str, str] | None, body: str, status_code: int = 200) -> bool:
+    """True when a port-80 reply looks like a netBooter, including a 401 challenge."""
+    safe = {str(key).lower(): str(value) for key, value in (headers or {}).items()}
+    title = ""
+    match = _TITLE.search(body or "")
+    if match:
+        title = match.group(1)
+    blob = " ".join(
+        (
+            safe.get("server", ""),
+            safe.get("www-authenticate", ""),
+            title,
+            body or "",
+        )
+    ).lower()
+    if "synaccess" in blob or "netbooter" in blob:
+        return True
+    return status_code == 401 and synaccess_realm(safe.get("www-authenticate", ""))
 
 
 def parse_status(body: str, names: dict[int, str] | None = None) -> PduStatus:
@@ -97,7 +118,12 @@ def parse_result(body: str) -> None:
     raise UpstreamError(f"Synaccess returned an unknown result: {text!r}")
 
 
-_OUTLET_INPUT = re.compile(r"^(?:outlet[_-]?)?name[_-]?(\d+)$", re.IGNORECASE)
+_OUTLET_INPUT = re.compile(
+    r"^(?:outlet[_-]?)?(?:name|nm|custom)[_-]?(\d+)$",
+    re.IGNORECASE,
+)
+_JUNK_NAME = {"0", "1", "on", "off", "true", "false"}
+_TITLE = re.compile(r"<title>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 
 
 def parse_outlet_names(body: str) -> dict[int, str]:
@@ -126,7 +152,7 @@ def _names_from_json(data: object) -> dict[int, str]:
         label = item.get("outletName", item.get("name"))
         if index is None or label is None or not str(label).strip():
             continue
-        names[int(index)] = str(label).strip()
+        names[int(index)] = html.unescape(str(label)).strip()
     if 0 in names:
         names = {key + 1: value for key, value in names.items()}
     return {key: value for key, value in names.items() if key >= 1}
@@ -141,9 +167,12 @@ def _names_from_html(text: str) -> dict[int, str]:
             match.group(1),
         ):
             attrs[attr.group(1).lower()] = next(group for group in attr.groups()[1:] if group is not None)
+        kind = attrs.get("type", "text").lower()
+        if kind not in {"text", ""}:
+            continue
         found = _OUTLET_INPUT.match(attrs.get("name", ""))
-        label = attrs.get("value", "").strip()
-        if found and label:
+        label = html.unescape(attrs.get("value", "")).strip()
+        if found and label and label.lower() not in _JUNK_NAME:
             names[int(found.group(1))] = label
     if names:
         return names
@@ -151,7 +180,7 @@ def _names_from_html(text: str) -> dict[int, str]:
     if not array:
         return {}
     labels = re.findall(r"""["']([^"']*)["']""", array.group(1))
-    return {index: label for index, label in enumerate(labels, start=1) if label.strip()}
+    return {index: html.unescape(label).strip() for index, label in enumerate(labels, start=1) if label.strip()}
 
 
 def _payload(body: str) -> str:
@@ -177,6 +206,7 @@ class SynaccessClient:
         scheme = "https" if use_tls else "http"
         self._base = f"{scheme}://{host_for_url(host)}:{port}/cmd.cgi?"
         self._owns = http is None
+        self._timeout = timeout
         self._http = http or httpx.Client(
             auth=(username, password),
             timeout=timeout,
@@ -200,11 +230,11 @@ class SynaccessClient:
         parse_result(self._command(f"$A7 {1 if on else 0}"))
 
     def read_outlet_names(self) -> dict[int, str]:
-        # $A5 reports on/off bits, not the names typed into Outlet Setup.
+        # $A5/$A0 is on/off bits and bank current. Names live on the setup pages.
         origin = self._base.split("/cmd.cgi", 1)[0]
-        for path in ("/api/outlets", "/", "/outletsetup.htm"):
+        for path in ("/api/outlets", "/outletsetup.htm", "/outlets.htm", "/outlet.htm", "/setup.htm", "/"):
             try:
-                response = self._http.get(origin + path, timeout=2.0)
+                response = self._http.get(origin + path, timeout=min(2.0, self._timeout))
             except httpx.HTTPError:
                 continue
             if response.status_code >= 400:

@@ -61,6 +61,15 @@ CREATE TABLE IF NOT EXISTS pdus (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS pdu_outlets (
+    id INTEGER PRIMARY KEY,
+    pdu_id INTEGER NOT NULL,
+    number INTEGER NOT NULL,
+    name TEXT NOT NULL DEFAULT '',
+    tags TEXT NOT NULL DEFAULT '[]',
+    UNIQUE (pdu_id, number)
+);
+
 CREATE TABLE IF NOT EXISTS amt_endpoints (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
@@ -244,12 +253,15 @@ def connect(path: Path) -> sqlite3.Connection:
         _ensure_column(conn, table, "credential_profile_id", "INTEGER")
         _ensure_column(conn, table, "host_key", "TEXT")
         _ensure_column(conn, table, "tags", "TEXT NOT NULL DEFAULT '[]'")
+    _ensure_column(conn, "devices", "power_method", "TEXT NOT NULL DEFAULT 'auto'")
+    _ensure_column(conn, "devices", "reach_timeout_set", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(conn, "devices", "host_key", "TEXT")
     _ensure_column(conn, "devices", "mac_key", "TEXT")
     from wakehub.identity import migrate_identity
 
     migrate_identity(conn)
     _ensure_column(conn, "salvos", "slug", "TEXT")
+    _ensure_column(conn, "salvos", "last_run", "TEXT")
     _backfill_salvo_slugs(conn)
     conn.commit()
     return conn

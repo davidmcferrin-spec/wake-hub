@@ -7,7 +7,7 @@ import json
 from wakehub.errors import WakeHubError
 from wakehub.hub import Hub
 
-TABLES = ("devices", "pdus", "amt_endpoints", "jetkvm_endpoints", "plugs", "ups_cards", "rokus")
+TABLES = ("devices", "pdus", "amt_endpoints", "jetkvm_endpoints", "plugs", "ups_cards", "rokus", "pdu_outlets")
 
 
 def normalize_tags(values: list[str] | None) -> list[str]:

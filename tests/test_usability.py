@@ -14,7 +14,9 @@ def test_suggestions_use_vendor_and_ports():
     jet = suggest(vendor="", mac="", ports=set(), http_kinds=["jetkvm"], mdns=[])
     assert jet["type"] == "jetkvm"
     pdu = suggest(vendor="", mac="AA:BB:CC:DD:EE:05", ports=set(), http_kinds=["synaccess"], mdns=[])
-    assert pdu["type"] == "synaccess" and pdu["prefill"]["kind"] == "pdu"
+    assert pdu["type"] == "synaccess" and pdu["prefill"]["kind"] == "pdu" and pdu["prefill"]["port"] == 80
+    vendor_hit = suggest(vendor="Synaccess Networks", mac="AA:BB:CC:DD:EE:15", ports={80}, http_kinds=[], mdns=[])
+    assert vendor_hit["type"] == "synaccess" and vendor_hit["confidence"] == "high" and vendor_hit["prefill"]["port"] == 80
     pc = suggest(vendor="Dell Inc", mac="AA:BB:CC:DD:EE:06", ports=set(), http_kinds=[], mdns=[])
     assert pc["type"] == "pc" and pc["confidence"] == "low" and "wol" in pc["capabilities"]
 
@@ -128,12 +130,22 @@ def test_pdu_outlet_names_are_read_and_local_overrides_win(client, monkeypatch):
     def names(self):
         return {1: "NAS", 2: "Desk"}
 
+    def status(self, labels=None):
+        from wakehub.clients.synaccess import parse_status
+
+        return parse_status("0000000000000011,1.20,0.40,27", labels)
+
     monkeypatch.setattr("wakehub.clients.synaccess.SynaccessClient.read_outlet_names", names)
+    monkeypatch.setattr("wakehub.clients.synaccess.SynaccessClient.status", status)
     created = client.post("/api/v1/pdus", json={"name": "Rack", "host": "10.8.0.8", "outlet_names": {"1": "Custom"}})
     assert created.status_code == 201, created.text
     body = created.json()
     assert body["device_outlet_names"] == {"1": "NAS", "2": "Desk"}
     assert body["outlet_names"]["1"] == "Custom"
+    assert len(body["outlets"]) == 16
+    assert body["outlets"][0]["name"] == "Custom"
+    assert body["outlets"][1]["name"] == "Desk"
+    assert "tags" in body["outlets"][0]
     from wakehub.endpoints import outlet_labels
 
     labels = outlet_labels({"device_outlet_names": '{"1": "NAS", "2": "Desk"}', "outlet_names": '{"1": "Custom"}'})
@@ -148,7 +160,13 @@ def test_pdu_outlet_names_are_read_and_local_overrides_win(client, monkeypatch):
 
         raise UpstreamError("the PDU did not return outlet names")
 
+    def offline_status(self, labels=None):
+        from wakehub.errors import UpstreamError
+
+        raise UpstreamError("the PDU did not return outlet names")
+
     monkeypatch.setattr("wakehub.clients.synaccess.SynaccessClient.read_outlet_names", missing)
+    monkeypatch.setattr("wakehub.clients.synaccess.SynaccessClient.status", offline_status)
     offline = client.post("/api/v1/pdus", json={"name": "Quiet", "host": "10.8.0.9"})
     assert offline.status_code == 201, offline.text
     assert offline.json()["device_outlet_names"] == {}

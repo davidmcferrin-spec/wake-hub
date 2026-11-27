@@ -26,7 +26,14 @@ def test_run_salvo_previews_the_devices_before_confirm(live_server, hub):
         page.goto(live_server + "/")
         page.fill("#ui-password", "correct horse")
         page.click("button[data-cap=ui_login]")
+        page.click("aside button[data-page=salvos]")
         page.wait_for_selector("button[data-cap=run_salvo]")
+        page.wait_for_selector("button.copy-salvo-url")
+        assert "/api/v1/salvos/home-away/run" in page.locator("input[readonly]").first.input_value()
+        page.goto(live_server + "/#/salvos/home-away")
+        page.wait_for_selector("#salvo-form input[name=name]")
+        page.wait_for_function("() => document.querySelector('#salvo-form input[name=name]').value === 'Home Away'")
+        assert page.locator("#salvo-form input[name=name]").input_value() == "Home Away"
         page.click("button[data-cap=run_salvo]")
         page.wait_for_selector("#banner:not(.hidden)")
         assert seen and "Desk" in seen[0]

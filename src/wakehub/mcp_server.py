@@ -64,8 +64,9 @@ def build_server() -> MCPServer:
         enabled: bool = True,
         reach_mode: str = "icmp",
         reach_port: int | None = None,
-        reach_timeout: float = 30,
+        reach_timeout: float | None = None,
         wake_strategy: str = "wol_only",
+        power_method: str = "auto",
         methods: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Add a device. mac is required later to wake it. broadcast is the directed broadcast address. wol_port is usually 9 or 7. reach_mode is icmp or tcp. wake_strategy is wol_only or power_then_wol."""
@@ -85,6 +86,7 @@ def build_server() -> MCPServer:
                 "reach_port": reach_port,
                 "reach_timeout": reach_timeout,
                 "wake_strategy": wake_strategy,
+                "power_method": power_method,
                 "methods": methods,
             },
         )
@@ -106,6 +108,7 @@ def build_server() -> MCPServer:
         reach_port: int | None = None,
         reach_timeout: float | None = None,
         wake_strategy: str | None = None,
+        power_method: str | None = None,
         methods: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Edit a device. Omit a field to leave it unchanged. Pass an empty mac or secureon to clear it."""
@@ -124,6 +127,7 @@ def build_server() -> MCPServer:
             "reach_port": reach_port,
             "reach_timeout": reach_timeout,
             "wake_strategy": wake_strategy,
+            "power_method": power_method,
             "methods": methods,
         }.items():
             if value is not None:
@@ -145,16 +149,16 @@ def build_server() -> MCPServer:
 
     @server.tool()
     @expose
-    def wake_device(device_id: int, timeout: float | None = None) -> dict[str, Any]:
-        """Send a Wake-on-LAN magic packet to an enabled device, then poll ICMP or the configured TCP port until it answers or the timeout elapses. Refuses a disabled device."""
-        return records.wake_device(get_hub(), device_id, source="mcp", timeout=timeout)
+    def wake_device(device_id: int, timeout: float | None = None, method: str = "auto") -> dict[str, Any]:
+        """Wake an enabled device using its method priority, or method when that override is set. Wake-on-LAN then waits until the host answers or the timeout elapses."""
+        return records.wake_device(get_hub(), device_id, source="mcp", timeout=timeout, method=method)
 
     @server.tool()
     @expose
     def power_action(
         device_id: int,
         action: str,
-        method: str = "wol",
+        method: str = "auto",
         confirm: bool = False,
     ) -> dict[str, Any]:
         """Change power. action is on, off, cycle, reboot or shutdown. method is wol for Wake-on-LAN, which only supports on. off, cycle, reboot and shutdown require confirm=true."""
@@ -202,6 +206,7 @@ def build_server() -> MCPServer:
         session_days: int | None = None,
         scan_keep: int | None = None,
         scan_keep_days: int | None = None,
+        default_wake_timeout: float | None = None,
     ) -> dict[str, Any]:
         """Change settings. Set ui_password to require a password in the browser. clear_ui_password removes it. cors_origins is the list of allowed browser origins. An empty list blocks cross-origin calls."""
         payload: dict[str, Any] = {"clear_ui_password": clear_ui_password}
@@ -219,6 +224,8 @@ def build_server() -> MCPServer:
             payload["scan_keep"] = scan_keep
         if scan_keep_days is not None:
             payload["scan_keep_days"] = scan_keep_days
+        if default_wake_timeout is not None:
+            payload["default_wake_timeout"] = default_wake_timeout
         return records.update_settings(get_hub(), payload)
 
     @server.tool()

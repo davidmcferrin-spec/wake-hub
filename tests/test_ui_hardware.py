@@ -33,10 +33,12 @@ def test_editing_each_hardware_type_stays_put_and_saves(live_server, hub):
         page.wait_for_selector("#page-title")
         page.click("aside button[data-page=power]")
         page.wait_for_function("document.querySelector('#page-title').textContent === 'Hardware'")
+        page.click("button[data-add-form=pdu-form]")
         page.click("#pdu-form input[name=name]")
         assert page.inner_text("#page-title") == "Hardware"
         for original, renamed, _row in created:
             card = page.locator("article.card", has_text=original)
+            card.locator(".more-toggle").click()
             card.get_by_role("button", name="Edit", exact=True).click()
             form = page.locator("form.hardware-edit")
             form.wait_for()
@@ -57,7 +59,7 @@ def test_editing_each_hardware_type_stays_put_and_saves(live_server, hub):
             assert page.inner_text("#banner") == "Saved", page.inner_text("#banner")
             assert page.inner_text("#page-title") == "Hardware"
             page.locator("article.card", has_text=renamed).first.wait_for()
-        page.click("article.card:has-text('PDU renamed') button:has-text('Re-read from device')")
+        page.click("article.card:has-text('PDU renamed') button:has-text('Refresh names from device')")
         page.wait_for_selector("#banner.error")
         assert "did not return outlet names" in page.inner_text("#banner")
         assert page.inner_text("#page-title") == "Hardware"
@@ -68,7 +70,9 @@ def test_editing_each_hardware_type_stays_put_and_saves(live_server, hub):
         page.select_option("#kind-filter", "pdu")
         assert "PDU renamed" in page.inner_text("#view")
         assert "AMT renamed" not in page.inner_text("#view")
-        page.locator("article.card", has_text="PDU renamed").get_by_role("button", name="Open").click()
+        renamed = page.locator("article.card", has_text="PDU renamed")
+        renamed.locator(".more-toggle").click()
+        renamed.get_by_role("button", name="Edit").click()
         page.wait_for_selector("form.hardware-edit")
         assert page.inner_text("#page-title") == "PDU renamed"
         assert page.get_by_role("button", name="Re-read from device").count() >= 1

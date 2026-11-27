@@ -99,7 +99,7 @@ def _salvo_names(hub: Hub, targets: list[dict[str, Any]]) -> list[str]:
 
 def _step_hits(step: dict[str, Any], wanted: set[tuple[str, int]]) -> bool:
     kind = step.get("target_kind")
-    if kind not in _TABLE or step.get("target_id") is None:
+    if kind not in set(_TABLE) | {"outlet"} or step.get("target_id") is None:
         return False
     return (str(kind), int(step["target_id"])) in wanted
 

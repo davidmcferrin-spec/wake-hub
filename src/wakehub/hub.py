@@ -7,6 +7,7 @@ import os
 import secrets
 import threading
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
 
@@ -23,7 +24,8 @@ _hub: Hub | None = None
 class Hub:
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
+        self._tx = threading.local()
         self._background_stop = threading.Event()
         self._workers: list[threading.Thread] = []
         self._closed = False
@@ -34,6 +36,9 @@ class Hub:
         self.token = self._load_or_create_token()
         self._ensure_cors_default()
         self._abandon_running_scans()
+        from wakehub.controls import fold_linked_controls
+
+        fold_linked_controls(self)
         self._attempts: dict[str, list[float]] = {}
         self._attempt_lock = threading.Lock()
 
@@ -171,7 +176,8 @@ class Hub:
             if self._skip_locked():
                 return 0
             cursor = self.db.execute(sql, params)
-            self.db.commit()
+            if self._tx_depth() == 0:
+                self.db.commit()
             return int(cursor.lastrowid or 0)
 
     def write_many(self, statements: list[tuple[str, tuple[Any, ...]]]) -> None:
@@ -180,7 +186,48 @@ class Hub:
                 return
             for sql, params in statements:
                 self.db.execute(sql, params)
-            self.db.commit()
+            if self._tx_depth() == 0:
+                self.db.commit()
+
+    def _tx_depth(self) -> int:
+        return int(getattr(self._tx, "depth", 0) or 0)
+
+    def after_commit(self, callback) -> None:
+        """Run callback after this thread's transaction commits. It must not assume hub.lock is held."""
+        if self._tx_depth():
+            self._tx.callbacks.append(callback)
+        else:
+            callback()
+
+    @contextmanager
+    def transaction(self):
+        """Hold every write until the block finishes, and undo them all if it raises.
+
+        Depth and after-commit work belong to the calling thread, so one save cannot
+        run or drop another's follow-up. The lock covers the database work only.
+        """
+        local = self._tx
+        local.depth = self._tx_depth() + 1
+        if local.depth == 1:
+            local.callbacks = []
+        callbacks: list = []
+        try:
+            with self.lock:
+                try:
+                    yield
+                    if local.depth == 1:
+                        self.db.commit()
+                        callbacks = list(local.callbacks)
+                        local.callbacks = []
+                except Exception:
+                    if local.depth == 1:
+                        self.db.rollback()
+                        local.callbacks = []
+                    raise
+        finally:
+            local.depth -= 1
+        for callback in callbacks:
+            callback()
 
 
 def set_hub(hub: Hub) -> None:

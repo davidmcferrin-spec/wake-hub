@@ -27,7 +27,7 @@ from wakehub.hub import Hub
 from wakehub.inventory import _get_row, _require_enabled, record_action, wake_device
 
 PLUG_ACTIONS = {"on", "off", "toggle", "cycle"}
-PDU_ACTIONS = {"on", "off", "reboot"}
+PDU_ACTIONS = {"on", "off", "reboot", "cycle"}
 DEVICE_ACTIONS = {"on", "off", "cycle", "reboot", "shutdown"}
 
 
@@ -49,7 +49,9 @@ def dispatch_device(
     if chosen["kind"] == "wol":
         if action != "on":
             raise WakeHubError("Wake-on-LAN only supports action on")
-        result = wake_device(hub, device_id, source=source)
+        from wakehub.inventory import send_wake_packet
+
+        result = send_wake_packet(hub, device_id, source=source)
         result["method"] = "wol"
         return result
     if chosen["kind"] == "pdu":
@@ -102,21 +104,31 @@ def dispatch_device(
     raise WakeHubError(f"unknown power method {chosen['kind']}")
 
 
+# Order in the device's methods list is the priority. A kind is skipped when it cannot do the action.
+_ACTION_KINDS = {
+    "on": {"wol", "plug", "pdu", "amt", "ups", "jetkvm", "roku"},
+    "off": {"plug", "pdu", "amt", "ups", "jetkvm", "roku"},
+    "reboot": {"amt", "plug", "pdu", "ups", "jetkvm"},
+    "cycle": {"plug", "pdu", "amt", "ups", "jetkvm"},
+    "shutdown": {"amt", "ups", "jetkvm"},
+}
+
+# Cutting mains power is not the automatic Off or Reset when the machine can shut down itself.
+_POWER_CUT = {"plug", "pdu", "ups"}
+
+
 def _select_method(methods: list[dict[str, Any]], requested: str, action: str) -> dict[str, Any]:
-    if requested == "auto":
-        if action == "on":
-            for kind in ("plug", "pdu", "amt", "ups", "jetkvm", "wol"):
-                found = next((item for item in methods if item["kind"] == kind), None)
-                if found:
-                    return found
-        else:
-            for kind in ("amt", "plug", "pdu", "ups", "jetkvm"):
-                found = next((item for item in methods if item["kind"] == kind), None)
-                if found:
-                    return found
-        raise WakeHubError("device has no power method for that action")
-    found = next((item for item in methods if item["kind"] == requested), None)
-    if found is None:
+    capable = [item for item in methods if item.get("kind") in _ACTION_KINDS.get(action, set())]
+    if requested in {None, "", "auto"}:
+        if not capable:
+            raise WakeHubError("device has no power method for that action")
+        if action in {"off", "reboot"}:
+            gentle = [item for item in capable if item.get("kind") not in _POWER_CUT]
+            if gentle:
+                return gentle[0]
+        return capable[0]
+    found = next((item for item in methods if item.get("kind") == requested), None)
+    if found is None or found.get("kind") not in _ACTION_KINDS.get(action, set()):
         raise WakeHubError(f"device has no {requested} power method")
     return found
 
@@ -130,8 +142,10 @@ def power_on_linked(hub: Hub, row, source: str) -> None:
 
 
 def set_pdu_outlet(hub: Hub, pdu_id: int, outlet: int, action: str, *, confirm: bool, source: str) -> dict[str, Any]:
+    if action == "cycle":
+        action = "reboot"
     if action not in PDU_ACTIONS:
-        raise WakeHubError("PDU action must be on, off, or reboot")
+        raise WakeHubError("PDU action must be on, off, or cycle")
     if action in {"off", "reboot"}:
         require_confirm("off" if action == "off" else "reboot", confirm)
     row, client = pdu_client(hub, pdu_id)
@@ -161,6 +175,9 @@ def list_pdu_outlets(hub: Hub, pdu_id: int) -> dict[str, Any]:
     except Exception:
         pass
     row, client = pdu_client(hub, pdu_id)
+    from wakehub.endpoints import list_outlet_records
+
+    stored = {item["number"]: item for item in list_outlet_records(hub, pdu_id)}
     try:
         status = client.status(outlet_labels(row))
     finally:
@@ -170,7 +187,16 @@ def list_pdu_outlets(hub: Hub, pdu_id: int) -> dict[str, Any]:
         "bank_amps": list(status.bank_amps),
         "temperature_c": status.temperature_c,
         "per_outlet_current": False,
-        "outlets": [{"number": item.number, "name": item.name, "on": item.on} for item in status.outlets],
+        "outlets": [
+            {
+                "id": stored.get(item.number, {}).get("id"),
+                "number": item.number,
+                "name": item.name,
+                "on": item.on,
+                "tags": stored.get(item.number, {}).get("tags") or [],
+            }
+            for item in status.outlets
+        ],
     }
 
 
@@ -241,6 +267,16 @@ def tag_action(hub: Hub, tags: list[str], action: str, *, confirm: bool, source:
                 results.append({"kind": "roku", "id": roku["id"], "name": roku["name"], "ok": True, "detail": action})
             except Exception as exc:
                 results.append({"kind": "roku", "id": roku["id"], "name": roku["name"], "ok": False, "detail": str(exc)})
+        from wakehub.endpoints import list_outlet_records
+
+        for outlet in list_outlet_records(hub):
+            if not has_tags(outlet["tags"], wanted):
+                continue
+            try:
+                set_pdu_outlet(hub, outlet["pdu_id"], outlet["number"], action, confirm=True, source=source)
+                results.append({"kind": "outlet", "id": outlet["id"], "name": outlet["name"], "ok": True, "detail": action})
+            except Exception as exc:
+                results.append({"kind": "outlet", "id": outlet["id"], "name": outlet["name"], "ok": False, "detail": str(exc)})
     return {"action": action, "tags": wanted, "matched": len(results), "results": results}
 
 
@@ -289,7 +325,9 @@ def plug_status(hub: Hub, plug_id: int) -> dict[str, Any]:
 
 
 def amt_power(hub: Hub, amt_id: int, action: str, *, confirm: bool, source: str) -> dict[str, Any]:
-    if action in {"off", "cycle", "reboot", "shutdown"}:
+    if action == "off_hard":
+        require_confirm("off", confirm)
+    elif action in {"off", "cycle", "reboot", "shutdown"}:
         require_confirm(action, confirm)
     row, client = amt_client(hub, amt_id)
     try:

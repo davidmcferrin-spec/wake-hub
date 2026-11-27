@@ -29,6 +29,7 @@ def parse_device_info(body: str) -> dict[str, str | bool]:
         return node.text.strip()
 
     power = text("power-mode")
+    state = {"PowerOn": "On", "DisplayOff": "Standby", "Ready": "Standby", "Headless": "Off", "Suspend": "Off"}.get(power, "Off")
     name = text("user-device-name") or text("friendly-device-name") or text("default-device-name")
     model = text("model-name") or text("friendly-model-name")
     vendor = text("vendor-name")
@@ -38,6 +39,7 @@ def parse_device_info(body: str) -> dict[str, str | bool]:
         "name": name,
         "model": model,
         "power_mode": power,
+        "power_state": state,
         "on": power == "PowerOn",
         "vendor": vendor,
         "serial": text("serial-number"),

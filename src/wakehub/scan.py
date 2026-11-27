@@ -16,7 +16,7 @@ from typing import Any, Callable
 
 import httpx
 
-from wakehub.clients.synaccess import parse_status, synaccess_realm
+from wakehub.clients.synaccess import parse_status, synaccess_http
 from wakehub.errors import ConfirmationRequired, Conflict, NotFound, WakeHubError
 from wakehub.fingerprint import suggest
 from wakehub.hub import Hub
@@ -274,6 +274,7 @@ def get_scan(hub: Hub, scan_id: int) -> dict[str, Any]:
                 if marker not in seen:
                     seen.add(marker)
                     matches.append(item)
+        suggestion = detail.get("suggestion") or {}
         result["hosts"].append(
             {
                 "id": host["id"],
@@ -285,9 +286,56 @@ def get_scan(hub: Hub, scan_id: int) -> dict[str, Any]:
                 "detail": detail,
                 "matches": matches,
                 "known": matches[0] if matches else None,
+                "attach": _attach_device(hub, suggestion, host["mac"], host["hostname"]),
             }
         )
     return result
+
+
+def _attach_device(hub: Hub, suggestion: dict[str, Any], mac: str | None, hostname: str | None) -> dict[str, Any] | None:
+    kind = str(suggestion.get("type") or "")
+    if kind not in {"amt", "jetkvm", "shelly", "kasa", "roku"}:
+        return None
+    from wakehub.identity import mac_key
+
+    wanted_mac = ""
+    if mac:
+        try:
+            wanted_mac = mac_key(mac)
+        except WakeHubError:
+            wanted_mac = ""
+    host_name = str(hostname or "").strip().casefold()
+    for device in hub.query("SELECT id, name, mac, host FROM devices"):
+        device_mac = ""
+        if device["mac"]:
+            try:
+                device_mac = mac_key(device["mac"])
+            except WakeHubError:
+                device_mac = ""
+        name = str(device["name"] or "").strip().casefold()
+        host = str(device["host"] or "").strip().casefold()
+        if (wanted_mac and device_mac == wanted_mac) or (host_name and host_name in {name, host}):
+            label = {"amt": "AMT", "jetkvm": "JetKVM", "shelly": "Shelly", "kasa": "Kasa", "roku": "Roku"}[kind]
+            return {"device_id": device["id"], "name": device["name"], "label": f"Add {label} to {device['name']}"}
+    return None
+
+
+def _remember_method(hub: Hub, device_id: int | None, method: dict[str, Any]) -> None:
+    if not device_id:
+        return
+    from wakehub.controls import place_method
+
+    row = hub.query_one("SELECT methods FROM devices WHERE id = ?", (int(device_id),))
+    if row is None:
+        return
+    methods = json.loads(row["methods"] or "[]") or [{"kind": "wol"}]
+    updated = place_method(methods, method)
+    if updated == methods:
+        return
+    hub.write(
+        "UPDATE devices SET methods = ? WHERE id = ?",
+        (json.dumps(updated), int(device_id)),
+    )
 
 
 def add_from_scan(hub: Hub, scan_id: int, host_id: int, kind: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -318,7 +366,9 @@ def add_from_scan(hub: Hub, scan_id: int, host_id: int, kind: str, payload: dict
     if kind == "pdu":
         return add_pdu(hub, {"name": name, "host": host["ip"], **extra})
     if kind == "amt":
-        return add_amt(hub, {"name": name, "host": host["ip"], **extra})
+        created = add_amt(hub, {"name": name, "host": host["ip"], **extra})
+        _remember_method(hub, extra.get("device_id"), {"kind": "amt", "amt_id": created["id"]})
+        return created
     if kind == "jetkvm":
         return add_jetkvm(hub, {"name": name, "host": host["ip"], **extra})
     if kind == "plug":
@@ -485,6 +535,15 @@ def _fingerprint(ip: str, mac: str, mdns: list[str] | None = None) -> tuple[list
     return kinds, {"ports": sorted(ports), "suggestion": suggestion}
 
 
+def _status_is_synaccess(text: str) -> bool:
+    try:
+        parse_status(text)
+        return True
+    except Exception:
+        lowered = text.lower()
+        return "netbooter" in lowered or "synaccess" in lowered
+
+
 def _port_open(ip: str, port: int) -> bool:
     try:
         with socket.create_connection((ip, port), 0.3):
@@ -505,16 +564,13 @@ def _http_kinds(ip: str) -> list[str]:
             if shelly.status_code == 200 and "gen" in shelly.text:
                 kinds.append("shelly")
             pdu = client.get(f"http://{host}/cmd.cgi?$A5")
-            if pdu.status_code == 401 and synaccess_realm(pdu.headers.get("www-authenticate", "")):
+            if synaccess_http(dict(pdu.headers), pdu.text, pdu.status_code) or (
+                pdu.status_code == 200 and _status_is_synaccess(pdu.text)
+            ):
                 kinds.append("synaccess")
-            elif pdu.status_code == 200:
-                try:
-                    parse_status(pdu.text)
-                    kinds.append("synaccess")
-                except WakeHubError:
-                    if "netBooter" in pdu.text or "Synaccess" in pdu.text:
-                        kinds.append("synaccess")
             root = client.get(f"http://{host}/")
+            if "synaccess" not in kinds and synaccess_http(dict(root.headers), root.text, root.status_code):
+                kinds.append("synaccess")
             if any(token in root.text for token in ("CyberPower", "RCCARD", "RMCARD")):
                 kinds.append("ups")
     except httpx.HTTPError:

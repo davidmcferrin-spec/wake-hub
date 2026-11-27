@@ -16,6 +16,26 @@ INFO = """
 """
 
 
+def _info(mode: str) -> str:
+    return f"""
+    <device-info>
+      <vendor-name>Roku</vendor-name>
+      <model-name>Roku TV</model-name>
+      <user-device-name>Den</user-device-name>
+      <power-mode>{mode}</power-mode>
+      <serial-number>YN00</serial-number>
+    </device-info>
+    """
+
+
+def test_roku_power_modes_map_to_on_standby_or_off():
+    assert parse_device_info(_info("PowerOn"))["power_state"] == "On"
+    assert parse_device_info(_info("DisplayOff"))["power_state"] == "Standby"
+    assert parse_device_info(_info("Ready"))["power_state"] == "Standby"
+    assert parse_device_info(_info("Headless"))["power_state"] == "Off"
+    assert parse_device_info(_info("Suspend"))["power_state"] == "Off"
+
+
 def test_roku_device_info_and_ssdp_are_parsed():
     parsed = parse_device_info(INFO)
     assert parsed["name"] == "Den"
