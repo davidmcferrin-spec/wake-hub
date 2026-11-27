@@ -924,12 +924,11 @@ def roku_client(hub: Hub, roku_id: int) -> tuple[Any, RokuClient]:
 def _link(hub: Hub, device_id: int | None, method: dict[str, Any]) -> None:
     if not device_id:
         return
+    from wakehub.controls import place_method
     from wakehub.inventory import get_device, normalize_methods, update_device
 
     device = get_device(hub, int(device_id))
     methods = list(device["methods"])
-    if method not in methods:
-        from wakehub.controls import _insert_before_wol
-
-        methods = _insert_before_wol(methods, method)
-    update_device(hub, int(device_id), {"methods": normalize_methods(methods)})
+    updated = place_method(methods, method)
+    if updated != methods:
+        update_device(hub, int(device_id), {"methods": normalize_methods(updated)})

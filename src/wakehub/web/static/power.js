@@ -402,90 +402,76 @@ window.loadOperateStatus = async function () {
 };
 
 function renderPower() {
-  const profiles = (state.power.profiles || []).map((item) => `
-    <article class="card">
-      <h2>${escapeHtml(item.name)}</h2>
-      <p class="meta">${escapeHtml(item.username || "no username")} · ${item.password_set ? "password stored" : "no password"}</p>
-      <div class="row-actions">
-        <button type="button" class="danger" data-cap="remove_credential_profile" data-fields="force" data-id="${item.id}">Remove</button>
-      </div>
-    </article>`).join("");
-  const pduCards = state.power.pdus.map((pdu) => `
-    <article class="card">
-      <header>
-        <h2>${escapeHtml(pdu.name)}</h2>
-        <button type="button" class="danger delete" data-cap="remove_pdu" data-fields="" data-id="${pdu.id}">Delete</button>
-      </header>
-      <p class="meta">${escapeHtml(pdu.host)}</p>
-      ${tagChips(pdu.tags)}
-      <div class="row-actions">
-        <button type="button" class="ghost" data-cap="list_pdu_outlets" data-fields="" data-id="${pdu.id}" hidden>Show outlets</button>
-        <button type="button" class="ghost" data-cap="refresh_pdu_outlet_names" data-fields="" data-id="${pdu.id}">Refresh names from device</button>
-        <button type="button" class="ghost" data-cap="update_pdu" data-fields="credential_profile_id,host,insecure_tls,name,outlet_names,password,port,tags,use_tls,username" data-id="${pdu.id}">Edit</button>
-      </div>
-    </article>`).join("");
-  const amtCards = state.power.amts.map((item) => `
-    <article class="card">
-      <header>
-        <h2>${escapeHtml(item.name)}</h2>
-        <button type="button" class="danger delete" data-cap="remove_amt" data-fields="" data-id="${item.id}">Delete</button>
-      </header>
-      <p class="meta">${escapeHtml(item.host)}:${escapeHtml(item.port)}</p>
-      ${tagChips(item.tags)}
-      <div class="row-actions">
-        <button type="button" class="ghost" data-cap="update_amt" data-fields="credential_profile_id,device_id,host,insecure_tls,name,password,port,tags,use_tls,username" data-id="${item.id}">Edit</button>
-      </div>
-    </article>`).join("");
-  const jetCards = state.power.jetkvms.map((item) => `
-    <article class="card">
-      <header>
-        <h2>${escapeHtml(item.name)}</h2>
-        <button type="button" class="danger delete" data-cap="remove_jetkvm" data-fields="" data-id="${item.id}">Delete</button>
-      </header>
-      <p class="meta">${escapeHtml(item.host)}</p>
-      ${tagChips(item.tags)}
-      <div class="row-actions">
-        <button type="button" class="ghost" data-cap="update_jetkvm" data-fields="credential_profile_id,device_id,extension,host,insecure_tls,name,password,poll_metrics,port,tags,use_tls,username" data-id="${item.id}">Edit</button>
-      </div>
-    </article>`).join("");
-  const plugCard = (item) => `
-    <article class="card">
-      <header>
-        <h2>${escapeHtml(item.name)}</h2>
-        <button type="button" class="danger delete" data-cap="remove_plug" data-fields="" data-id="${item.id}">Delete</button>
-      </header>
-      <p class="meta">${escapeHtml(item.kind)} · ${escapeHtml(item.host)}</p>
-      ${tagChips(item.tags)}
-      <div class="row-actions">
-        <button type="button" class="ghost" data-cap="update_plug" data-fields="credential_profile_id,device_id,host,insecure_tls,kind,name,password,port,protocol,switch_id,tags,username" data-id="${item.id}">Edit</button>
-      </div>
-    </article>`;
+  const profiles = (state.power.profiles || []).map((item, index) => window.recordCard({
+    kind: "login",
+    id: item.id,
+    name: item.name,
+    check: false,
+    open: false,
+    meta: `${item.username || "no username"} · ${item.password_set ? "password stored" : "no password"}`,
+    primary: index === 0 ? `<button type="button" class="ghost" data-cap="update_credential_profile" data-fields="name,password,username" data-id="${item.id}">Replace this login</button>` : "",
+    more: `<button type="button" class="danger delete" data-cap="remove_credential_profile" data-fields="force" data-id="${item.id}">Delete</button>`,
+  })).join("");
+  const pduCards = state.power.pdus.map((pdu) => window.recordCard({
+    kind: "pdu",
+    id: pdu.id,
+    name: pdu.name,
+    meta: pdu.host,
+    body: tagChips(pdu.tags),
+    primary: `
+      <button type="button" class="ghost" data-cap="update_pdu" data-fields="credential_profile_id,host,insecure_tls,name,outlet_names,password,port,tags,use_tls,username" data-id="${pdu.id}">Edit</button>
+      <button type="button" class="ghost" data-cap="refresh_pdu_outlet_names" data-fields="" data-id="${pdu.id}">Refresh names from device</button>`,
+    more: `
+      <button type="button" class="ghost" data-cap="list_pdu_outlets" data-fields="" data-id="${pdu.id}" hidden>Show outlets</button>
+      <button type="button" class="danger delete" data-cap="remove_pdu" data-fields="" data-id="${pdu.id}">Delete</button>`,
+  })).join("");
+  const amtCards = state.power.amts.map((item) => window.recordCard({
+    kind: "amt",
+    id: item.id,
+    name: item.name,
+    meta: `${item.host}:${item.port}`,
+    body: tagChips(item.tags),
+    primary: `<button type="button" class="ghost" data-cap="update_amt" data-fields="credential_profile_id,device_id,host,insecure_tls,name,password,port,tags,use_tls,username" data-id="${item.id}">Edit</button>`,
+    more: `<button type="button" class="danger delete" data-cap="remove_amt" data-fields="" data-id="${item.id}">Delete</button>`,
+  })).join("");
+  const jetCards = state.power.jetkvms.map((item) => window.recordCard({
+    kind: "jetkvm",
+    id: item.id,
+    name: item.name,
+    meta: item.host,
+    body: tagChips(item.tags),
+    primary: `<button type="button" class="ghost" data-cap="update_jetkvm" data-fields="credential_profile_id,device_id,extension,host,insecure_tls,name,password,poll_metrics,port,tags,use_tls,username" data-id="${item.id}">Edit</button>`,
+    more: `<button type="button" class="danger delete" data-cap="remove_jetkvm" data-fields="" data-id="${item.id}">Delete</button>`,
+  })).join("");
+  const plugCard = (item) => window.recordCard({
+    kind: "plug",
+    id: item.id,
+    name: item.name,
+    meta: `${item.kind} · ${item.host}`,
+    body: tagChips(item.tags),
+    primary: `<button type="button" class="ghost" data-cap="update_plug" data-fields="credential_profile_id,device_id,host,insecure_tls,kind,name,password,port,protocol,switch_id,tags,username" data-id="${item.id}">Edit</button>`,
+    more: `<button type="button" class="danger delete" data-cap="remove_plug" data-fields="" data-id="${item.id}">Delete</button>`,
+  });
   const shellyPlugs = state.power.plugs.filter((item) => item.kind !== "kasa");
   const kasaPlugs = state.power.plugs.filter((item) => item.kind === "kasa");
-  const upsCards = state.power.ups.map((item) => `
-    <article class="card">
-      <header>
-        <h2>${escapeHtml(item.name)}</h2>
-        <button type="button" class="danger delete" data-cap="remove_ups" data-fields="" data-id="${item.id}">Delete</button>
-      </header>
-      <p class="meta">SNMP ${escapeHtml(item.snmp_version)} · ${escapeHtml(item.host)}</p>
-      ${tagChips(item.tags)}
-      <div class="row-actions">
-        <button type="button" class="ghost" data-cap="update_ups" data-fields="community,credential_profile_id,device_id,host,name,port,snmp_version,tags,v3_auth,v3_auth_proto,v3_priv,v3_priv_proto,v3_user" data-id="${item.id}">Edit</button>
-      </div>
-    </article>`).join("");
-  const rokuCards = (state.power.rokus || []).map((item) => `
-    <article class="card">
-      <header>
-        <h2>${escapeHtml(item.name)}</h2>
-        <button type="button" class="danger delete" data-cap="remove_roku" data-fields="" data-id="${item.id}">Delete</button>
-      </header>
-      <p class="meta">${escapeHtml(item.host)}:${escapeHtml(item.port)}</p>
-      ${tagChips(item.tags)}
-      <div class="row-actions">
-        <button type="button" class="ghost" data-cap="update_roku" data-fields="device_id,host,name,port,tags" data-id="${item.id}">Edit</button>
-      </div>
-    </article>`).join("");
+  const upsCards = state.power.ups.map((item) => window.recordCard({
+    kind: "ups",
+    id: item.id,
+    name: item.name,
+    meta: `SNMP ${item.snmp_version} · ${item.host}`,
+    body: tagChips(item.tags),
+    primary: `<button type="button" class="ghost" data-cap="update_ups" data-fields="community,credential_profile_id,device_id,host,name,port,snmp_version,tags,v3_auth,v3_auth_proto,v3_priv,v3_priv_proto,v3_user" data-id="${item.id}">Edit</button>`,
+    more: `<button type="button" class="danger delete" data-cap="remove_ups" data-fields="" data-id="${item.id}">Delete</button>`,
+  })).join("");
+  const rokuCards = (state.power.rokus || []).map((item) => window.recordCard({
+    kind: "roku",
+    id: item.id,
+    name: item.name,
+    meta: `${item.host}:${item.port}`,
+    body: tagChips(item.tags),
+    primary: `<button type="button" class="ghost" data-cap="update_roku" data-fields="device_id,host,name,port,tags" data-id="${item.id}">Edit</button>`,
+    more: `<button type="button" class="danger delete" data-cap="remove_roku" data-fields="" data-id="${item.id}">Delete</button>`,
+  })).join("");
   const counts = {
     pdu: state.power.pdus.length,
     amt: state.power.amts.length,
@@ -516,7 +502,7 @@ function renderPower() {
   const visibleTypes = typeList.filter(([id]) => counts[id] > 0 || tab === id);
   const hiddenTypes = typeList.filter(([id]) => counts[id] === 0 && tab !== id);
   const addType = hiddenTypes.length
-    ? `<label>Add type <select id="hw-add-type" aria-label="Add a hardware type"><option value="">Add type</option>${hiddenTypes.map(([id, label]) => `<option value="${id}">${escapeHtml(label)}</option>`).join("")}</select></label>`
+    ? `<label class="add-type">Add type <select id="hw-add-type" aria-label="Add a hardware type"><option value="">Choose</option>${hiddenTypes.map(([id, label]) => `<option value="${id}">${escapeHtml(label)}</option>`).join("")}</select></label>`
     : "";
   const plugKind = tab === "kasa" || (tab === "all" && !counts.shelly && counts.kasa) ? "kasa" : "shelly";
   const plugCards = (tab === "kasa" ? kasaPlugs : tab === "shelly" ? shellyPlugs : state.power.plugs).map(plugCard).join("");
@@ -530,7 +516,6 @@ function renderPower() {
         <input name="username" placeholder="Username">
         <input name="password" type="password" placeholder="Password">
         <button type="submit" data-cap="add_credential_profile" data-fields="name,password,username">Save login</button>
-        <button type="button" class="ghost" data-cap="update_credential_profile" data-fields="name,password,username" data-id="${(state.power.profiles || [])[0] ? state.power.profiles[0].id : ""}">Update first saved login</button>
       </form>
       <div class="grid">${profiles}</div>
     </section>
@@ -874,7 +859,7 @@ document.body.addEventListener("submit", async (event) => {
 
 window.CONTROL_HANDLERS = {
   list_devices() { return show("devices"); },
-  get_device(el) { state.focus = null; state.editing = Number(el.dataset.id); render(); },
+  get_device(el) { state.focus = null; state.editing = Number(el.dataset.id); writeRoute("devices", ""); render(); },
   add_device() { state.editing = "new"; render(); },
   update_device(el) { state.editing = Number(el.dataset.id); render(); },
   remove_device(el) { return onClick({ target: el }); },

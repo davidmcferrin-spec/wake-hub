@@ -4,6 +4,12 @@ Self-hosted power control for a home LAN. One process serves a web UI, a version
 
 The web UI requires a password. The API token is entered once, during first-run setup, and is then kept in an httpOnly cookie for 30 days (change the length in Settings). Signing out or rotating the token ends those sessions. The API and MCP always require a bearer token. Stored passwords are encrypted and are never returned.
 
+![Devices](docs/screenshots/devices.jpg)
+
+![A device](docs/screenshots/device.jpg)
+
+![Salvos](docs/screenshots/salvos.jpg)
+
 ## Run with Docker
 
 Host networking is required. A bridge network does not deliver directed broadcasts, and ARP discovery cannot see the LAN from a bridge.

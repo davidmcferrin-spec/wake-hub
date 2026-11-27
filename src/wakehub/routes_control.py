@@ -267,6 +267,7 @@ class SalvoStepIn(BaseModel):
     tags: list[str] = []
     action: str
     delay_seconds: float = 0
+    method: str = "auto"
 
 
 class SalvoIn(BaseModel):

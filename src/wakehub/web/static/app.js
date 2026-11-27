@@ -146,42 +146,71 @@ function methodForAction(device, action) {
     reboot: ["amt", "plug", "pdu", "ups", "jetkvm"],
     cycle: ["plug", "pdu", "amt", "ups", "jetkvm"],
   }[action] || [];
-  return ((device && device.methods) || [{ kind: "wol" }]).find((item) => can.includes(item.kind)) || null;
+  const capable = ((device && device.methods) || [{ kind: "wol" }]).filter((item) => can.includes(item.kind));
+  if (action === "off" || action === "reboot") {
+    const gentle = capable.find((item) => !["plug", "pdu", "ups"].includes(item.kind));
+    if (gentle) return gentle;
+  }
+  return capable[0] || null;
 }
 
 function via(device, action, verb) {
   const method = methodForAction(device, action);
-  return method ? `${verb} via ${methodName(method.kind)}` : verb;
+  if (!method) return verb;
+  const name = method.kind === "wol" ? "WOL" : methodName(method.kind);
+  return `${verb} via ${name}`;
 }
 
-function deviceCard(device) {
-  const choices = ((device.methods || [{ kind: "wol" }])).map((item) => `<option value="${escapeHtml(item.kind)}">${escapeHtml(methodName(item.kind))}</option>`).join("");
+function recordCard(spec) {
+  const kind = spec.kind;
+  const id = spec.id;
+  const check = spec.check === false ? "" : `<label class="check"><input type="checkbox" class="select-record" data-kind="${escapeHtml(kind)}" data-id="${id}" ${isSelected(kind, id) ? "checked" : ""} aria-label="Select ${escapeHtml(spec.name)}"></label>`;
+  const title = spec.title ? ` title="${escapeHtml(spec.title)}"` : "";
+  const name = spec.open === false
+    ? escapeHtml(spec.name)
+    : `<button type="button" class="name-button" data-open-kind="${escapeHtml(kind)}" data-id="${id}">${escapeHtml(spec.name)}</button>`;
   return `
-    <article class="card">
+    <article class="card" data-kind="${escapeHtml(kind)}">
       <header class="card-head">
-        <label class="check"><input type="checkbox" class="select-record" data-kind="device" data-id="${device.id}" ${isSelected("device", device.id) ? "checked" : ""} aria-label="Select ${escapeHtml(device.name)}"></label>
-        <h2><button type="button" class="name-button" data-open-kind="device" data-id="${device.id}">${escapeHtml(device.name)}</button></h2>
-        ${pill(device)}
+        ${check}
+        <h2>${name}</h2>
+        ${spec.badge || ""}
       </header>
-      <p class="meta" title="Broadcast ${escapeHtml(device.broadcast)}:${escapeHtml(device.wol_port)}">${escapeHtml(device.host || "no host")} · ${escapeHtml(device.mac || "no MAC")}</p>
-      ${powerBlock(device)}
-      ${tagChips(device.tags)}
+      ${spec.meta ? `<p class="meta"${title}>${escapeHtml(spec.meta)}</p>` : ""}
+      ${spec.body || ""}
       <div class="row-actions actions">
-        <button type="button" class="primary" data-cap="power_action" data-fields="action,confirm,method" data-action="on" data-id="${device.id}">${escapeHtml(via(device, "on", "Wake"))}</button>
-        <button type="button" class="danger" data-cap="power_action" data-fields="action,confirm,method" data-action="off" data-id="${device.id}">${escapeHtml(via(device, "off", "Off"))}</button>
-        <button type="button" class="danger" data-cap="power_action" data-fields="action,confirm,method" data-action="reboot" data-id="${device.id}">${escapeHtml(via(device, "reboot", "Reset"))}</button>
-        <button type="button" class="danger" data-cap="power_action" data-fields="action,confirm,method" data-action="cycle" data-id="${device.id}">${escapeHtml(via(device, "cycle", "Cycle"))}</button>
-      </div>
-      <div class="row-actions">
-        <label>Use <select class="action-method" aria-label="Method for the next action"><option value="auto">Auto</option>${choices}</select></label>
-        <button type="button" class="ghost" data-open-kind="device" data-id="${device.id}">Open</button>
-        <button type="button" class="ghost" data-cap="get_device" data-fields="" data-id="${device.id}" aria-label="Edit ${escapeHtml(device.name)}">Edit</button>
+        ${spec.primary || ""}
         <details class="more">
           <summary class="ghost">More</summary>
-          <button type="button" class="danger delete" data-cap="remove_device" data-fields="" data-id="${device.id}">Delete</button>
+          ${spec.more || ""}
         </details>
       </div>
     </article>`;
+}
+
+window.recordCard = recordCard;
+
+function deviceCard(device) {
+  const choices = ((device.methods || [{ kind: "wol" }])).map((item) => `<option value="${escapeHtml(item.kind)}">${escapeHtml(methodName(item.kind))}</option>`).join("");
+  return recordCard({
+    kind: "device",
+    id: device.id,
+    name: device.name,
+    badge: pill(device),
+    meta: `${device.host || "no host"} · ${device.mac || "no MAC"}`,
+    title: `Broadcast ${device.broadcast}:${device.wol_port}`,
+    body: `${powerBlock(device)}${tagChips(device.tags)}`,
+    primary: `
+      <button type="button" class="primary" data-cap="power_action" data-fields="action,confirm,method" data-action="on" data-id="${device.id}">${escapeHtml(via(device, "on", "Wake"))}</button>
+      <button type="button" class="danger" data-cap="power_action" data-fields="action,confirm,method" data-action="off" data-id="${device.id}">${escapeHtml(via(device, "off", "Off"))}</button>
+      <button type="button" class="danger" data-cap="power_action" data-fields="action,confirm,method" data-action="reboot" data-id="${device.id}">${escapeHtml(via(device, "reboot", "Reset"))}</button>`,
+    more: `
+      <label>Use <select class="action-method" aria-label="Method for the next action"><option value="auto">Auto</option>${choices}</select></label>
+      <button type="button" class="ghost" data-open-kind="device" data-id="${device.id}">Open</button>
+      <button type="button" class="ghost" data-cap="get_device" data-fields="" data-id="${device.id}" aria-label="Edit ${escapeHtml(device.name)}">Edit</button>
+      <button type="button" class="danger" data-cap="power_action" data-fields="action,confirm,method" data-action="cycle" data-id="${device.id}">${escapeHtml(via(device, "cycle", "Cycle"))}</button>
+      <button type="button" class="danger delete" data-cap="remove_device" data-fields="" data-id="${device.id}">Delete</button>`,
+  });
 }
 
 function hardwareChoices(kind, selected) {
@@ -196,11 +225,20 @@ function methodEditor(device) {
   return methods.map((method) => methodRow(method)).join("");
 }
 
-function methodRow(method) {
+function methodSummary(kind, record, method) {
+  if (kind === "wol") return "Wake-on-LAN";
+  if (!record || !record.host) return `${methodName(kind)}: new`;
+  const port = record.port ? `:${record.port}` : "";
+  const tls = record.use_tls ? ", TLS" : "";
+  const outlet = kind === "pdu" ? `, outlet ${method && method.outlet || 1}` : "";
+  return `${methodName(kind)}: ${record.host}${port}${tls}${outlet}`;
+}
+
+function methodRow(method, open) {
   const kind = method.kind || "wol";
   const ref = method.amt_id || method.jetkvm_id || method.plug_id || method.pdu_id || method.ups_id || method.roku_id || "";
   const record = findMethodRecord(kind, ref);
-  const login = (state.power && state.power.profiles || []).map((item) => `<option value="${item.id}">${escapeHtml(item.name)}</option>`).join("");
+  const login = (state.power && state.power.profiles || []).map((item) => `<option value="${item.id}" ${record && Number(record.credential_profile_id) === Number(item.id) ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("");
   const fields = kind === "wol" ? `<p class="sub">Uses this device's MAC address and broadcast.</p>` : `
     <label>Record ${hardwareChoices(kind, ref)}</label>
     <label>Host <input name="method_host" value="${escapeHtml(record && record.host || "")}"></label>
@@ -210,8 +248,8 @@ function methodRow(method) {
     <label>Password <input name="method_password" type="password" placeholder="Leave blank to keep"></label>
     <label>Saved login <select name="method_profile"><option value="">None</option>${login}</select></label>
     ${kind === "pdu" ? `<label>Outlet <input name="method_outlet" type="number" value="${escapeHtml(method.outlet || 1)}"></label>` : ""}`;
-  return `<fieldset class="method-row" data-kind="${kind}" data-ref="${ref}">
-    <legend>${escapeHtml(methodName(kind))}</legend>
+  return `<details class="method-row" data-kind="${kind}" data-ref="${ref}" ${open ? "open" : ""}>
+    <summary>${escapeHtml(methodSummary(kind, record, method))}</summary>
     ${fields}
     <div class="row-actions">
       <button type="button" class="ghost" data-move="up">Up</button>
@@ -219,7 +257,7 @@ function methodRow(method) {
       <button type="button" class="ghost test-method">Test</button>
       <button type="button" class="danger" data-remove-method="1">Remove</button>
     </div>
-  </fieldset>`;
+  </details>`;
 }
 
 function findMethodRecord(kind, id) {
@@ -360,22 +398,19 @@ function removeCap(kind) {
 
 function hardwareInventoryCard(entry) {
   const item = entry.item;
-  return `
-    <article class="card" data-kind="${entry.kind}">
-      <header>
-        <label class="check"><input type="checkbox" class="select-record" data-kind="${entry.kind}" data-id="${item.id}" ${isSelected(entry.kind, item.id) ? "checked" : ""} aria-label="Select ${escapeHtml(item.name)}"></label>
-        <h2><button type="button" class="name-button" data-open-kind="${entry.kind}" data-id="${item.id}">${escapeHtml(item.name)}</button></h2>
-        <span class="pill">${entry.label}</span>
-        <button type="button" class="danger delete" data-cap="${removeCap(entry.kind)}" data-fields="" data-id="${item.id}">Delete</button>
-      </header>
-      <p class="meta">${escapeHtml(item.host || "no host")}${item.port ? `:${escapeHtml(item.port)}` : ""}</p>
-      ${tagChips(item.tags)}
-      ${window.hardwareControls ? window.hardwareControls(entry.kind, item, false) : ""}
-      <div class="row-actions">
-        <button type="button" class="ghost" data-open-kind="${entry.kind}" data-id="${item.id}">Open</button>
-        <button type="button" class="ghost" data-edit-kind="${entry.kind}" data-id="${item.id}" aria-label="Edit ${escapeHtml(item.name)}">Edit</button>
-      </div>
-    </article>`;
+  const port = item.port ? `:${item.port}` : "";
+  return recordCard({
+    kind: entry.kind,
+    id: item.id,
+    name: item.name,
+    badge: `<span class="pill">${escapeHtml(entry.label)}</span>`,
+    meta: `${item.host || "no host"}${port}`,
+    body: `${tagChips(item.tags)}${window.hardwareControls ? window.hardwareControls(entry.kind, item, false) : ""}`,
+    primary: `
+      <button type="button" class="ghost" data-open-kind="${entry.kind}" data-id="${item.id}">Open</button>
+      <button type="button" class="ghost" data-edit-kind="${entry.kind}" data-id="${item.id}" aria-label="Edit ${escapeHtml(item.name)}">Edit</button>`,
+    more: `<button type="button" class="danger delete" data-cap="${removeCap(entry.kind)}" data-fields="" data-id="${item.id}">Delete</button>`,
+  });
 }
 
 function blankSalvoStep() {
@@ -674,7 +709,7 @@ function renderDevices() {
       state.editing = device.id;
       state.focus = null;
     } else {
-      const methods = (device.methods || []).map((item, index) => `<li>${index + 1}. ${escapeHtml(methodName(item.kind))}</li>`).join("");
+      const methods = (device.methods || []).map((item) => `<li>${escapeHtml(methodName(item.kind))}</li>`).join("");
       $("view").innerHTML = `
         <div class="row-actions"><button type="button" class="ghost" id="back-inventory">Back</button><button type="button" class="ghost" data-cap="get_device" data-fields="" data-id="${device.id}">Edit</button></div>
         <article class="card detail">
@@ -904,6 +939,7 @@ function readRoute() {
   const head = decodeURIComponent(slash === -1 ? raw : raw.slice(0, slash));
   const tail = decodeURIComponent(slash === -1 ? "" : raw.slice(slash + 1));
   const pages = { devices: "devices", scan: "scan", hardware: "power", salvos: "salvos", history: "history", settings: "settings" };
+  if (head === "devices") return { page: "devices", slug: /^\d+$/.test(tail) ? tail : "" };
   if (head === "salvos") return { page: "salvos", slug: tail };
   if (head === "hardware") return { page: "power", slug: tail };
   if (pages[head]) return { page: pages[head], slug: "" };
@@ -912,7 +948,8 @@ function readRoute() {
 
 function writeRoute(page, slug) {
   const name = page === "power" ? "hardware" : page;
-  const next = slug && (page === "salvos" || page === "power") ? `#/${name}/${encodeURIComponent(slug)}` : `#/${name}`;
+  const deviceRoute = page === "devices" && slug && /^\d+$/.test(String(slug));
+  const next = slug && (page === "salvos" || page === "power" || deviceRoute) ? `#/${name}/${encodeURIComponent(slug)}` : `#/${name}`;
   if (location.hash !== next) history.replaceState(null, "", next);
 }
 
@@ -936,7 +973,13 @@ function render() {
   if (state.page === "salvos") renderSalvos();
   if (state.page === "history") renderHistory();
   if (state.page === "settings") renderSettings();
-  if (state.page === "devices" && state.focus && window.findHardware) {
+  if (state.page === "devices" && state.focus && state.focus.kind === "device") {
+    const device = (state.devices || []).find((item) => item.id === Number(state.focus.id));
+    if (device) {
+      $("page-kicker").textContent = "Device";
+      $("page-title").textContent = device.name;
+    }
+  } else if (state.page === "devices" && state.focus && window.findHardware) {
     const record = window.findHardware(state.focus.kind, state.focus.id);
     if (record) {
       $("page-kicker").textContent = window.hardwareKindLabel(state.focus.kind);
@@ -976,12 +1019,26 @@ async function show(page, slug) {
   state.page = page;
   state.salvoSlug = page === "salvos" ? (slug || "") : "";
   if (page === "power" && slug) state.hardwareTab = slug;
+  if (page === "devices" && arguments.length > 1) {
+    if (slug && /^\d+$/.test(String(slug))) {
+      state.focus = { kind: "device", id: Number(slug), mode: "view" };
+      state.editing = null;
+    } else {
+      state.focus = null;
+    }
+  }
   if (page === "salvos" && state.salvoSlug) {
     const draft = state.salvoDraft;
     const same = draft && String(draft.id) === state.salvoSlug && draft.name;
     if (!same) state.salvoReplace = true;
   }
-  const routeSlug = page === "salvos" ? state.salvoSlug : page === "power" && state.hardwareTab && state.hardwareTab !== "all" ? state.hardwareTab : "";
+  const routeSlug = page === "salvos"
+    ? state.salvoSlug
+    : page === "power" && state.hardwareTab && state.hardwareTab !== "all"
+      ? state.hardwareTab
+      : page === "devices" && state.focus && state.focus.kind === "device"
+        ? String(state.focus.id)
+        : "";
   writeRoute(page, routeSlug);
   showBanner("");
   if (state.booted) render();
@@ -1031,7 +1088,8 @@ function devicePayload(form) {
     wake_strategy: data.wake_strategy,
   };
   if (data.secureon) payload.secureon = data.secureon;
-  if (String(data.reach_timeout || "").trim()) payload.reach_timeout = Number(data.reach_timeout);
+  const timeout = String(data.reach_timeout || "").trim();
+  payload.reach_timeout = timeout ? Number(timeout) : null;
   const methods = readMethods(form);
   if (methods) payload.methods = methods;
   return payload;
@@ -1043,14 +1101,27 @@ function readMethods(form) {
   return rows.map((row) => {
     const kind = row.dataset.kind;
     if (kind === "wol") return { kind: "wol" };
-    const id = Number((row.querySelector(".method-target") || {}).value || row.dataset.ref || 0);
-    const outlet = row.querySelector("[name=method_outlet]");
-    const method = { kind };
     const key = { amt: "amt_id", jetkvm: "jetkvm_id", plug: "plug_id", pdu: "pdu_id", ups: "ups_id", roku: "roku_id" }[kind];
+    const select = row.querySelector(".method-target");
+    const id = Number((select && select.value) || (!select && row.dataset.ref) || 0);
+    const method = { kind };
     if (key && id) method[key] = id;
+    const host = row.querySelector("[name=method_host]");
+    if (host) method.host = host.value.trim();
+    const port = row.querySelector("[name=method_port]");
+    if (port && String(port.value).trim()) method.port = Number(port.value);
+    const tls = row.querySelector("[name=method_tls]");
+    if (tls) method.use_tls = tls.checked;
+    const username = row.querySelector("[name=method_username]");
+    if (username) method.username = username.value;
+    const password = row.querySelector("[name=method_password]");
+    if (password && password.value) method.password = password.value;
+    const profile = row.querySelector("[name=method_profile]");
+    if (profile) method.credential_profile_id = profile.value ? Number(profile.value) : null;
+    const outlet = row.querySelector("[name=method_outlet]");
     if (kind === "pdu") method.outlet = Number(outlet && outlet.value || 1);
     return method;
-  }).filter((method) => method.kind === "wol" || Object.keys(method).length > 1);
+  }).filter((method) => method.kind === "wol" || method.host || Object.keys(method).some((name) => name.endsWith("_id")));
 }
 
 async function onClick(event) {
@@ -1107,7 +1178,9 @@ async function onClick(event) {
       state.status[id] = result;
       showBanner(result.reachable === true ? `${result.name} is up` : `${result.name} did not answer`);
     } else if (button.dataset.cap === "get_device") {
+      state.focus = null;
       state.editing = id;
+      writeRoute("devices", "");
     } else if (button.dataset.cap === "set_device_enabled") {
       await api("POST", `/api/v1/devices/${id}/enabled`, { enabled: button.dataset.enabled === "1" });
       await refreshDevices();
@@ -1434,6 +1507,26 @@ window.runTagAction = async function (el) {
 };
 
 document.body.addEventListener("change", (event) => {
+  const methodPick = event.target.closest && event.target.closest(".method-target");
+  if (methodPick) {
+    const row = methodPick.closest(".method-row");
+    const record = findMethodRecord(row.dataset.kind, methodPick.value);
+    const host = row.querySelector("[name=method_host]");
+    if (host) host.value = (record && record.host) || "";
+    const port = row.querySelector("[name=method_port]");
+    if (port) port.value = (record && record.port) || "";
+    const tls = row.querySelector("[name=method_tls]");
+    if (tls) tls.checked = Boolean(record && record.use_tls);
+    const username = row.querySelector("[name=method_username]");
+    if (username) username.value = (record && record.username) || "";
+    const profile = row.querySelector("[name=method_profile]");
+    if (profile) profile.value = record && record.credential_profile_id ? String(record.credential_profile_id) : "";
+    row.dataset.ref = record ? String(record.id) : "";
+    const summary = row.querySelector("summary");
+    const outlet = row.querySelector("[name=method_outlet]");
+    if (summary) summary.textContent = methodSummary(row.dataset.kind, record, { outlet: outlet && outlet.value });
+    return;
+  }
   const box = event.target.closest && event.target.closest(".select-record");
   if (!box) return;
   const item = { kind: box.dataset.kind, id: Number(box.dataset.id) };
@@ -1474,7 +1567,8 @@ document.body.addEventListener("click", (event) => {
   }
   if (event.target.id === "back-inventory") {
     state.focus = null;
-    render();
+    state.editing = null;
+    show("devices", "").catch((error) => showBanner(error.message, true, error.existing));
     return;
   }
   const save = event.target.closest("[data-save]");
@@ -1521,8 +1615,8 @@ document.body.addEventListener("click", (event) => {
   if (event.target.id === "add-method") {
     const kind = $("new-method-kind").value;
     const list = $("method-list");
-    const actions = list.querySelector(".row-actions");
-    const html = methodRow({ kind });
+    const actions = list.querySelector(":scope > .row-actions");
+    const html = methodRow({ kind }, true);
     if (actions) actions.insertAdjacentHTML("beforebegin", html);
     else list.insertAdjacentHTML("beforeend", html);
     return;
@@ -1550,9 +1644,9 @@ document.body.addEventListener("click", (event) => {
     const id = Number(opener.dataset.id);
     state.editing = null;
     if (kind === "device") {
-      state.focus = null;
-      state.editing = id;
-      show("devices").catch((error) => showBanner(error.message, true, error.existing));
+      state.editing = null;
+      state.focus = { kind: "device", id, mode: "view" };
+      show("devices", String(id)).catch((error) => showBanner(error.message, true, error.existing));
     } else {
       state.focus = { kind, id };
       show("devices").catch((error) => showBanner(error.message, true, error.existing));

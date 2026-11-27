@@ -239,6 +239,109 @@ def _insert_values(hub: Hub, fields: dict[str, Any]) -> dict[str, Any]:
     return get_device(hub, device_id)
 
 
+_METHOD_SPECS = {
+    "amt": ("amt_endpoints", "amt_id", "add_amt", "update_amt"),
+    "jetkvm": ("jetkvm_endpoints", "jetkvm_id", "add_jetkvm", "update_jetkvm"),
+    "plug": ("plugs", "plug_id", "add_plug", "update_plug"),
+    "pdu": ("", "pdu_id", "add_pdu", "update_pdu"),
+    "ups": ("ups_cards", "ups_id", "add_ups", "update_ups"),
+    "roku": ("rokus", "roku_id", "add_roku", "update_roku"),
+}
+
+
+def _method_payload(item: dict[str, Any], kind: str, device_name: str, *, creating: bool) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    if creating:
+        label = {"amt": "AMT", "jetkvm": "JetKVM", "plug": "plug", "pdu": "PDU", "ups": "UPS", "roku": "Roku"}.get(kind, kind)
+        payload["name"] = str(item.get("name") or f"{device_name} {label}").strip()[:80]
+        payload["host"] = item.get("host")
+    elif str(item.get("host") or "").strip():
+        payload["host"] = item.get("host")
+    if item.get("port") not in (None, ""):
+        payload["port"] = int(item["port"])
+    if "use_tls" in item:
+        payload["use_tls"] = bool(item["use_tls"])
+    if "insecure_tls" in item:
+        payload["insecure_tls"] = bool(item["insecure_tls"])
+    if "username" in item:
+        payload["username"] = "" if item.get("username") is None else str(item.get("username"))
+    # A blank password means leave the stored one. A new record still has to supply one when the endpoint requires it.
+    if item.get("password"):
+        if kind == "ups":
+            payload["community"] = item["password"]
+        else:
+            payload["password"] = item["password"]
+    if "credential_profile_id" in item:
+        profile = item.get("credential_profile_id")
+        payload["credential_profile_id"] = int(profile) if profile else None
+    if kind == "plug" and creating:
+        payload["kind"] = item.get("kind") or "shelly"
+        payload["protocol"] = item.get("protocol") or "auto"
+    return payload
+
+
+def sync_device_methods(
+    hub: Hub,
+    device_id: int,
+    device_name: str,
+    methods: list[dict[str, Any]] | None,
+    previous: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Create or update the hardware behind each method, and drop the link when a method is removed."""
+    from wakehub import endpoints as ends
+
+    if methods is None:
+        return previous
+    if not isinstance(methods, list):
+        raise WakeHubError("methods must be a list")
+    cleaned: list[dict[str, Any]] = []
+    kept: dict[str, set[int]] = {}
+    for item in methods:
+        if not isinstance(item, dict):
+            raise WakeHubError("a power method must be an object")
+        kind = item.get("kind")
+        if kind == "wol":
+            cleaned.append({"kind": "wol"})
+            continue
+        spec = _METHOD_SPECS.get(str(kind))
+        if spec is None:
+            raise WakeHubError(f"unknown power method {kind}")
+        table, key, add_name, update_name = spec
+        record_id = item.get(key)
+        creating = not record_id
+        if creating and not str(item.get("host") or "").strip():
+            continue
+        payload = _method_payload(item, str(kind), device_name, creating=creating)
+        if record_id:
+            record_id = int(record_id)
+            if payload:
+                getattr(ends, update_name)(hub, record_id, payload)
+        else:
+            created = getattr(ends, add_name)(hub, payload)
+            record_id = int(created["id"])
+        if table:
+            hub.write(f"UPDATE {table} SET device_id = ? WHERE id = ?", (device_id, record_id))
+        method: dict[str, Any] = {"kind": kind, key: record_id}
+        if kind == "pdu":
+            method["outlet"] = int(item.get("outlet") or 1)
+        cleaned.append(method)
+        kept.setdefault(str(kind), set()).add(record_id)
+    for old in previous:
+        if not isinstance(old, dict):
+            continue
+        kind = str(old.get("kind") or "")
+        spec = _METHOD_SPECS.get(kind)
+        if spec is None or not spec[0]:
+            continue
+        old_id = old.get(spec[1])
+        if old_id is None or int(old_id) in kept.get(kind, set()):
+            continue
+        hub.write(f"UPDATE {spec[0]} SET device_id = NULL WHERE id = ?", (int(old_id),))
+    if not any(item.get("kind") == "wol" for item in cleaned):
+        cleaned.append({"kind": "wol"})
+    return cleaned
+
+
 def add_device(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
     name = (payload.get("name") or "").strip()
     if not name or len(name) > 80:
@@ -274,7 +377,7 @@ def add_device(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
         raise WakeHubError("notes must be 2000 characters or fewer")
     host = _host(payload.get("host"))
     assert_available(hub, "device", host, mac_norm)
-    return _insert_values(
+    created = _insert_values(
         hub,
         {
             "name": name,
@@ -292,9 +395,12 @@ def add_device(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
             "reach_timeout_set": timeout_set,
             "wake_strategy": strategy,
             "power_method": _power_method(payload.get("power_method")),
-            "methods": json.dumps(normalize_methods(payload.get("methods"))),
+            "methods": json.dumps([{"kind": "wol"}]),
         },
     )
+    if payload.get("methods") is not None:
+        return update_device(hub, created["id"], {"methods": payload.get("methods")})
+    return created
 
 
 def update_device(hub: Hub, device_id: int, payload: dict[str, Any]) -> dict[str, Any]:
@@ -373,7 +479,9 @@ def update_device(hub: Hub, device_id: int, payload: dict[str, Any]) -> dict[str
     if "power_method" in payload and payload["power_method"] is not None:
         fields["power_method"] = _power_method(payload["power_method"])
     if "methods" in payload and payload["methods"] is not None:
-        fields["methods"] = json.dumps(normalize_methods(payload["methods"]))
+        previous = json.loads(row["methods"] or "[]")
+        synced = sync_device_methods(hub, device_id, fields["name"], payload["methods"], previous)
+        fields["methods"] = json.dumps(normalize_methods(synced))
     assert_available(hub, "device", fields["host"], fields["mac"], exclude_id=device_id)
     try:
         hub.write(

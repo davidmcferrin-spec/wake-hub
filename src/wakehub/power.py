@@ -113,12 +113,19 @@ _ACTION_KINDS = {
     "shutdown": {"amt", "ups", "jetkvm"},
 }
 
+# Cutting mains power is not the automatic Off or Reset when the machine can shut down itself.
+_POWER_CUT = {"plug", "pdu", "ups"}
+
 
 def _select_method(methods: list[dict[str, Any]], requested: str, action: str) -> dict[str, Any]:
     capable = [item for item in methods if item.get("kind") in _ACTION_KINDS.get(action, set())]
     if requested in {None, "", "auto"}:
         if not capable:
             raise WakeHubError("device has no power method for that action")
+        if action in {"off", "reboot"}:
+            gentle = [item for item in capable if item.get("kind") not in _POWER_CUT]
+            if gentle:
+                return gentle[0]
         return capable[0]
     found = next((item for item in methods if item.get("kind") == requested), None)
     if found is None or found.get("kind") not in _ACTION_KINDS.get(action, set()):

@@ -128,11 +128,13 @@ def run_salvo(hub: Hub, salvo: str, *, confirm: bool, dry_run: bool, source: str
 
 
 def _plan_step(hub: Hub, index: int, step: dict[str, Any]) -> dict[str, Any]:
+    method = str(step.get("method") or "auto")
     return {
         "step": index,
         "action": step["action"],
         "delay_seconds": step["delay_seconds"],
-        "targets": _targets(hub, step),
+        "method": method,
+        "targets": [{**item, "method": method} for item in _targets(hub, step)],
     }
 
 
@@ -196,10 +198,11 @@ def _execute(hub: Hub, salvo_name: str, action: str, target: dict[str, Any], sou
         record_action(hub, source=source, action=action, ok=False, detail=f"{detail}: {reason}", target_kind=kind, target_id=item_id, target_name=name)
         return {"kind": kind, "id": item_id, "name": name, "ok": False, "detail": reason}
     try:
+        method = str(target.get("method") or "auto")
         if kind == "device" and action == "wake":
-            wake_device(hub, item_id, source=source, method="auto")
+            wake_device(hub, item_id, source=source, method=method)
         elif kind == "device":
-            dispatch_device(hub, item_id, action=action, confirm=True, source=source)
+            dispatch_device(hub, item_id, action=action, method=method, confirm=True, source=source)
         elif kind == "plug":
             plug_power(hub, item_id, action, confirm=True, source=source)
         elif kind == "outlet":
@@ -328,12 +331,16 @@ def _step(item: object, index: int) -> dict[str, Any]:
         if target_id is None:
             raise WakeHubError(f"step {index + 1} needs a {kind} id")
         target_id = int(target_id)
+    method = str(item.get("method") or "auto")
+    if method not in {"auto", "wol", "amt", "jetkvm", "plug", "pdu", "ups", "roku"}:
+        raise WakeHubError(f"step {index + 1} method must be auto or a control method")
     return {
         "target_kind": kind,
         "target_id": target_id,
         "tags": tags,
         "action": action,
         "delay_seconds": delay,
+        "method": method,
     }
 
 

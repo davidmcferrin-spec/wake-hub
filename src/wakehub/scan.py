@@ -323,17 +323,18 @@ def _attach_device(hub: Hub, suggestion: dict[str, Any], mac: str | None, hostna
 def _remember_method(hub: Hub, device_id: int | None, method: dict[str, Any]) -> None:
     if not device_id:
         return
-    from wakehub.controls import _has_method, _insert_before_wol
+    from wakehub.controls import place_method
 
     row = hub.query_one("SELECT methods FROM devices WHERE id = ?", (int(device_id),))
     if row is None:
         return
     methods = json.loads(row["methods"] or "[]") or [{"kind": "wol"}]
-    if _has_method(methods, method):
+    updated = place_method(methods, method)
+    if updated == methods:
         return
     hub.write(
         "UPDATE devices SET methods = ? WHERE id = ?",
-        (json.dumps(_insert_before_wol(methods, method)), int(device_id)),
+        (json.dumps(updated), int(device_id)),
     )
 
 

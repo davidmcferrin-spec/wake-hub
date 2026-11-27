@@ -44,6 +44,7 @@ def test_names_from_the_user_are_not_html(live_server, hub):
         assert page.evaluate("() => window.__xss") is None
         assert page.locator("img[src='x']").count() == 0
         page.click("aside button[data-page=devices]")
+        page.locator("article summary", has_text="More").click()
         page.wait_for_selector("button[data-cap=get_device]")
         page.click("button[data-cap=get_device]")
         page.wait_for_selector("#device-form")

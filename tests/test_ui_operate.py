@@ -43,6 +43,7 @@ def test_saving_an_edit_keeps_the_linked_amt(live_server, hub):
         card = page.locator("article").filter(has=page.get_by_role("heading", name="UNRAID", exact=True))
         assert card.locator("button", has_text="Wake via AMT").count() == 1
         assert page.get_by_role("heading", name="UNRAID vPRO", exact=True).count() == 0
+        card.locator("summary", has_text="More").click()
         card.get_by_role("button", name="Edit").click()
         page.wait_for_selector("#device-form")
         page.click("#device-form button[type=submit]")
