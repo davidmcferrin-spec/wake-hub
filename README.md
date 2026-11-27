@@ -2,7 +2,7 @@
 
 Self-hosted power control for a home LAN. One process serves a web UI, a versioned REST API and an MCP server, all on the same port. It can wake a machine, switch a Synaccess outlet or a smart plug, drive Intel AMT and JetKVM power buttons, and read or command a CyberPower UPS card.
 
-The web UI requires a password. The API and MCP always require a bearer token. Stored passwords are encrypted and are never returned.
+The web UI requires a password. The API token is entered once, during first-run setup, and is then kept in an httpOnly cookie for 30 days (change the length in Settings). Signing out or rotating the token ends those sessions. The API and MCP always require a bearer token. Stored passwords are encrypted and are never returned.
 
 ## Run with Docker
 
@@ -44,7 +44,8 @@ Config lives in `/config`. SQLite lives in `/data`.
 - **Shelly Plug US Gen4.** Gen2 RPC (`Switch.GetStatus`, `Switch.Set`, `Switch.Toggle`) with optional digest auth, plus power, voltage and energy when the plug reports them.
 - **Kasa (EP10, EP25, KP125M and the same family).** Legacy XOR on port 9999, and KLAP on current firmware using the TP-Link account email and password. Energy is read on models that report it.
 - **CyberPower RCCARD100.** SNMP v1, v2c or v3. Status, on line or on battery, capacity, runtime, input and output voltage, load, current and watts. Shutdown, reboot, turn off (immediate or delayed), battery test, and outlet-bank control. The UI warns before those commands.
-- **Discovery.** Ping and ARP sweep of a CIDR (the host subnet by default), plus reverse DNS, MAC vendor from the bundled IEEE OUI list, and probes for AMT, Synaccess, JetKVM, Shelly, Kasa and CyberPower. Scans run in the background. Every type can also be added by hand with an IP.
+- **Discovery.** The scan box is filled from this host's primary IPv4 subnet. Docker, veth and bridge interfaces are skipped, and a picker appears when more than one LAN remains. Ping, ARP and fingerprinting run together. Each host is grouped by a suggested type (AMT, Kasa, Shelly, JetKVM, Synaccess, CyberPower, or a generic PC) with a confidence and a one-click add. Hosts already in the inventory are marked.
+- **A computer's page** shows Wake-on-LAN plus every linked PDU outlet, plug, AMT endpoint, JetKVM and UPS, and its power readings. The Hardware page is where those PDUs, plugs and UPS cards are added. Each has its own username and password. A saved login can be shared from a dropdown. Test checks the settings without saving. A wake test sends the magic packet only after you confirm.
 - **Telemetry.** Bank current, plug power and energy, and UPS load and voltages are polled into SQLite. JetKVM DC voltage, current and watts are polled only when that endpoint is set to the DC extension and its metrics toggle is on, because a poll opens a WebRTC session and can take over an open console. The UI shows the latest values and a small chart. Retention and the poll interval are settings.
 
 ## REST API
@@ -61,7 +62,7 @@ A missing or wrong token is `401`. `off`, `cycle`, `reboot`, `shutdown`, outlet 
 
 Streamable HTTP at `/mcp`, same bearer token. Without the token the endpoint is `401`.
 
-Tools: `list_devices`, `get_device`, `add_device`, `update_device`, `remove_device`, `set_device_enabled`, `wake_device`, `power_action`, `device_status`, `list_status`, `list_actions`, `get_settings`, `update_settings`, `get_access_token`, `rotate_token`, `ui_login`, `ui_setup`, `get_ui_session`, `list_pdus`, `add_pdu`, `update_pdu`, `remove_pdu`, `list_pdu_outlets`, `set_pdu_outlet`, `list_amt`, `add_amt`, `update_amt`, `remove_amt`, `amt_power_state`, `list_jetkvm`, `add_jetkvm`, `update_jetkvm`, `remove_jetkvm`, `jetkvm_status`, `jetkvm_power`, `jetkvm_console`, `list_plugs`, `add_plug`, `update_plug`, `remove_plug`, `plug_status`, `plug_power`, `list_ups`, `add_ups`, `update_ups`, `remove_ups`, `ups_status`, `ups_action`, `scan_subnet`, `list_scans`, `scan_results`, `add_from_scan`, `device_metrics`, `list_metrics`.
+Tools: `list_devices`, `get_device`, `add_device`, `update_device`, `remove_device`, `set_device_enabled`, `wake_device`, `power_action`, `device_status`, `list_status`, `list_actions`, `get_settings`, `update_settings`, `get_access_token`, `rotate_token`, `ui_login`, `ui_setup`, `ui_logout`, `get_ui_session`, `list_interfaces`, `test_target`, `list_credential_profiles`, `add_credential_profile`, `update_credential_profile`, `remove_credential_profile`, `list_pdus`, `add_pdu`, `update_pdu`, `remove_pdu`, `list_pdu_outlets`, `set_pdu_outlet`, `list_amt`, `add_amt`, `update_amt`, `remove_amt`, `amt_power_state`, `list_jetkvm`, `add_jetkvm`, `update_jetkvm`, `remove_jetkvm`, `jetkvm_status`, `jetkvm_power`, `jetkvm_console`, `list_plugs`, `add_plug`, `update_plug`, `remove_plug`, `plug_status`, `plug_power`, `list_ups`, `add_ups`, `update_ups`, `remove_ups`, `ups_status`, `ups_action`, `scan_subnet`, `list_scans`, `scan_results`, `add_from_scan`, `device_metrics`, `list_metrics`.
 
 `tests/test_parity.py` fails if any of these is missing from the OpenAPI document, the MCP tool list, or a `data-cap` control in the UI.
 
@@ -126,6 +127,8 @@ In particular, without those devices it is not confirmed that:
 - an NP-1601DU's live `$A5` string matches the bank-current layout used here (the parser follows Synaccess's published format)
 - an AMT stack accepts the WS-Management body and digest challenge this client sends
 - a JetKVM completes the WebRTC offer and answers `getATXState` / `setATXPowerAction` / `setDCPowerState` (the JSON-RPC and signaling bytes are covered by fixtures; the live data channel is not). DC volts, amps and watts are collected only after the endpoint is set to the DC extension and metrics polling is turned on for that device. A poll opens a WebRTC session, which can take the console away from someone who already has it open. That takeover was not checked on hardware
+- the suggested type for a live Intel, TP-Link, Shelly, JetKVM, Synaccess or CyberPower device matches what is on the bench (the rules are covered by fixtures; no device was scanned)
+- mDNS answers for `_shelly._tcp` and `_jetkvm._tcp` were not heard on a real LAN
 - a current Kasa firmware accepts this KLAP handshake (the hash and AES framing are covered by test vectors; no plug was attached)
 - an RCCARD100 reports runtime as TimeTicks and accepts the graceful-delay SET (the client follows the CPS-MIB; the card was not queried)
 - SNMP v3 auth and privacy on that card match the protocols selected in the form

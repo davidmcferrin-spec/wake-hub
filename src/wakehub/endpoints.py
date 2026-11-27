@@ -11,6 +11,7 @@ from wakehub.clients.kasa import KasaClient
 from wakehub.clients.shelly import ShellyClient
 from wakehub.clients.synaccess import SynaccessClient
 from wakehub.clients.ups import PysnmpTransport, UpsClient
+from wakehub.credentials import remember_profile
 from wakehub.crypto import decrypt, encrypt
 from wakehub.errors import NotFound, WakeHubError
 from wakehub.hub import Hub
@@ -62,6 +63,7 @@ def public_pdu(row) -> dict[str, Any]:
         "username": row["username"],
         "password_set": bool(row["password_enc"]),
         "outlet_names": json.loads(row["outlet_names"]),
+        "credential_profile_id": row["credential_profile_id"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -77,6 +79,7 @@ def public_amt(row) -> dict[str, Any]:
         "insecure_tls": bool(row["insecure_tls"]),
         "username": row["username"],
         "password_set": bool(row["password_enc"]),
+        "credential_profile_id": row["credential_profile_id"],
         "device_id": row["device_id"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
@@ -91,7 +94,9 @@ def public_jetkvm(row) -> dict[str, Any]:
         "port": row["port"],
         "use_tls": bool(row["use_tls"]),
         "insecure_tls": bool(row["insecure_tls"]),
+        "username": row["username"] or "",
         "password_set": bool(row["password_enc"]),
+        "credential_profile_id": row["credential_profile_id"],
         "extension": row["extension"] or "",
         "poll_metrics": bool(row["poll_metrics"]),
         "device_id": row["device_id"],
@@ -113,6 +118,7 @@ def public_plug(row) -> dict[str, Any]:
         "insecure_tls": bool(row["insecure_tls"]),
         "protocol": row["protocol"],
         "switch_id": row["switch_id"],
+        "credential_profile_id": row["credential_profile_id"],
         "device_id": row["device_id"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
@@ -132,6 +138,7 @@ def public_ups(row) -> dict[str, Any]:
         "v3_auth_set": bool(row["v3_auth_enc"]),
         "v3_priv_proto": row["v3_priv_proto"],
         "v3_priv_set": bool(row["v3_priv_enc"]),
+        "credential_profile_id": row["credential_profile_id"],
         "device_id": row["device_id"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
@@ -195,6 +202,7 @@ def add_pdu(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
         """,
         tuple(fields[key] for key in ("name", "host", "port", "use_tls", "insecure_tls", "username", "password_enc", "outlet_names", "created_at", "updated_at")),
     )
+    remember_profile(hub, "pdus", item_id, payload)
     return public_pdu(_row(hub, "pdu", item_id))
 
 
@@ -222,6 +230,7 @@ def update_pdu(hub: Hub, pdu_id: int, payload: dict[str, Any]) -> dict[str, Any]
             pdu_id,
         ),
     )
+    remember_profile(hub, "pdus", pdu_id, payload)
     return public_pdu(_row(hub, "pdu", pdu_id))
 
 
@@ -230,12 +239,24 @@ def remove_pdu(hub: Hub, pdu_id: int) -> None:
     hub.write("DELETE FROM pdus WHERE id = ?", (pdu_id,))
 
 
+def _resolved_login(hub: Hub, row, username_key: str = "username", secret_key: str = "password_enc") -> tuple[str, str]:
+    from wakehub.credentials import profile_login
+
+    profile_id = row["credential_profile_id"]
+    if profile_id:
+        shared = profile_login(hub, int(profile_id))
+        if shared and shared[1]:
+            return shared[0] or str(row[username_key] or ""), shared[1]
+    return str(row[username_key] or ""), _plain(hub, row[secret_key])
+
+
 def pdu_client(hub: Hub, pdu_id: int) -> tuple[Any, SynaccessClient]:
     row = _row(hub, "pdu", pdu_id)
+    username, password = _resolved_login(hub, row)
     client = SynaccessClient(
         row["host"],
-        row["username"],
-        _plain(hub, row["password_enc"]),
+        username,
+        password,
         port=row["port"],
         use_tls=bool(row["use_tls"]),
         insecure_tls=bool(row["insecure_tls"]),
@@ -282,6 +303,7 @@ def add_amt(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
         ),
     )
     _link(hub, fields["device_id"], {"kind": "amt", "amt_id": item_id})
+    remember_profile(hub, "amt_endpoints", item_id, payload)
     return public_amt(_row(hub, "amt", item_id))
 
 
@@ -309,6 +331,7 @@ def update_amt(hub: Hub, amt_id: int, payload: dict[str, Any]) -> dict[str, Any]
             amt_id,
         ),
     )
+    remember_profile(hub, "amt_endpoints", amt_id, payload)
     return public_amt(_row(hub, "amt", amt_id))
 
 
@@ -319,10 +342,11 @@ def remove_amt(hub: Hub, amt_id: int) -> None:
 
 def amt_client(hub: Hub, amt_id: int) -> tuple[Any, AmtClient]:
     row = _row(hub, "amt", amt_id)
+    username, password = _resolved_login(hub, row)
     client = AmtClient(
         row["host"],
-        row["username"],
-        _plain(hub, row["password_enc"]),
+        username or "admin",
+        password,
         port=row["port"],
         use_tls=bool(row["use_tls"]),
         insecure_tls=bool(row["insecure_tls"]),
@@ -342,6 +366,7 @@ def add_jetkvm(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
             "port": int(payload.get("port") or (443 if payload.get("use_tls") else 80)),
             "use_tls": 1 if payload.get("use_tls") else 0,
             "insecure_tls": 1 if payload.get("insecure_tls") else 0,
+            "username": str(payload.get("username") or ""),
             "password_enc": _secret(hub, payload.get("password")),
             "extension": _jet_extension(payload.get("extension")),
             "poll_metrics": 1 if payload.get("poll_metrics") else 0,
@@ -351,8 +376,8 @@ def add_jetkvm(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
     item_id = hub.write(
         """
         INSERT INTO jetkvm_endpoints (
-            name, host, port, use_tls, insecure_tls, password_enc, extension, poll_metrics, device_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            name, host, port, use_tls, insecure_tls, username, password_enc, extension, poll_metrics, device_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             fields["name"],
@@ -360,6 +385,7 @@ def add_jetkvm(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
             fields["port"],
             fields["use_tls"],
             fields["insecure_tls"],
+            fields["username"],
             fields["password_enc"],
             fields["extension"],
             fields["poll_metrics"],
@@ -369,6 +395,7 @@ def add_jetkvm(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
         ),
     )
     _link(hub, fields["device_id"], {"kind": "jetkvm", "jetkvm_id": item_id})
+    remember_profile(hub, "jetkvm_endpoints", item_id, payload)
     return public_jetkvm(_row(hub, "jetkvm", item_id))
 
 
@@ -380,7 +407,7 @@ def update_jetkvm(hub: Hub, jetkvm_id: int, payload: dict[str, Any]) -> dict[str
     hub.write(
         """
         UPDATE jetkvm_endpoints
-        SET name=?, host=?, port=?, use_tls=?, insecure_tls=?, password_enc=?, extension=?, poll_metrics=?, device_id=?, updated_at=?
+        SET name=?, host=?, port=?, use_tls=?, insecure_tls=?, username=?, password_enc=?, extension=?, poll_metrics=?, device_id=?, updated_at=?
         WHERE id=?
         """,
         (
@@ -389,6 +416,7 @@ def update_jetkvm(hub: Hub, jetkvm_id: int, payload: dict[str, Any]) -> dict[str
             int(payload.get("port") if payload.get("port") is not None else current["port"]),
             int(payload["use_tls"]) if "use_tls" in payload else current["use_tls"],
             int(payload["insecure_tls"]) if "insecure_tls" in payload else current["insecure_tls"],
+            payload.get("username") if payload.get("username") is not None else (current["username"] or ""),
             password,
             extension,
             poll_metrics,
@@ -397,6 +425,7 @@ def update_jetkvm(hub: Hub, jetkvm_id: int, payload: dict[str, Any]) -> dict[str
             jetkvm_id,
         ),
     )
+    remember_profile(hub, "jetkvm_endpoints", jetkvm_id, payload)
     return public_jetkvm(_row(hub, "jetkvm", jetkvm_id))
 
 
@@ -407,9 +436,10 @@ def remove_jetkvm(hub: Hub, jetkvm_id: int) -> None:
 
 def jetkvm_client(hub: Hub, jetkvm_id: int, rpc=None) -> tuple[Any, JetKvmClient]:
     row = _row(hub, "jetkvm", jetkvm_id)
+    _username, password = _resolved_login(hub, row)
     client = JetKvmClient(
         row["host"],
-        _plain(hub, row["password_enc"]),
+        password,
         port=row["port"],
         use_tls=bool(row["use_tls"]),
         insecure_tls=bool(row["insecure_tls"]),
@@ -465,6 +495,7 @@ def add_plug(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
         ),
     )
     _link(hub, fields["device_id"], {"kind": "plug", "plug_id": item_id})
+    remember_profile(hub, "plugs", item_id, payload)
     return public_plug(_row(hub, "plug", item_id))
 
 
@@ -495,6 +526,7 @@ def update_plug(hub: Hub, plug_id: int, payload: dict[str, Any]) -> dict[str, An
             plug_id,
         ),
     )
+    remember_profile(hub, "plugs", plug_id, payload)
     return public_plug(_row(hub, "plug", plug_id))
 
 
@@ -505,18 +537,18 @@ def remove_plug(hub: Hub, plug_id: int) -> None:
 
 def plug_client(hub: Hub, plug_id: int):
     row = _row(hub, "plug", plug_id)
-    password = _plain(hub, row["password_enc"])
+    username, password = _resolved_login(hub, row)
     if row["kind"] == "shelly":
         client = ShellyClient(
             row["host"],
-            row["username"],
+            username,
             password,
             port=row["port"],
             switch_id=row["switch_id"],
             insecure_tls=bool(row["insecure_tls"]),
         )
     elif row["kind"] == "kasa":
-        client = KasaClient(row["host"], row["username"], password, protocol=row["protocol"], port=row["port"])
+        client = KasaClient(row["host"], username, password, protocol=row["protocol"], port=row["port"])
     else:
         raise WakeHubError(f"unknown plug kind {row['kind']}")
     return row, client
@@ -569,6 +601,7 @@ def add_ups(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
         ),
     )
     _link(hub, fields["device_id"], {"kind": "ups", "ups_id": item_id})
+    remember_profile(hub, "ups_cards", item_id, payload)
     return public_ups(_row(hub, "ups", item_id))
 
 
@@ -600,6 +633,7 @@ def update_ups(hub: Hub, ups_id: int, payload: dict[str, Any]) -> dict[str, Any]
             ups_id,
         ),
     )
+    remember_profile(hub, "ups_cards", ups_id, payload)
     return public_ups(_row(hub, "ups", ups_id))
 
 
@@ -610,14 +644,28 @@ def remove_ups(hub: Hub, ups_id: int) -> None:
 
 def ups_client(hub: Hub, ups_id: int) -> tuple[Any, UpsClient]:
     row = _row(hub, "ups", ups_id)
+    from wakehub.credentials import profile_login
+
+    community = _plain(hub, row["community_enc"]) or "public"
+    v3_user = row["v3_user"]
+    v3_auth = _plain(hub, row["v3_auth_enc"])
+    if row["credential_profile_id"]:
+        shared = profile_login(hub, int(row["credential_profile_id"]))
+        if shared:
+            if shared[0]:
+                v3_user = shared[0]
+            if shared[1] and row["snmp_version"] == "3":
+                v3_auth = shared[1]
+            elif shared[1]:
+                community = shared[1]
     transport = PysnmpTransport(
         row["host"],
         row["port"],
         row["snmp_version"],
-        _plain(hub, row["community_enc"]) or "public",
-        row["v3_user"],
+        community,
+        v3_user,
         row["v3_auth_proto"],
-        _plain(hub, row["v3_auth_enc"]),
+        v3_auth,
         row["v3_priv_proto"],
         _plain(hub, row["v3_priv_enc"]),
     )

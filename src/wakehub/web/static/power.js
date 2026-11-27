@@ -4,6 +4,7 @@ state.power = { pdus: [], amts: [], jetkvms: [], plugs: [], ups: [] };
 
 async function refreshScans() {
   state.scans = await api("GET", "/api/v1/scans");
+  state.interfaces = await api("GET", "/api/v1/interfaces");
   if (state.scan) state.scan = await api("GET", `/api/v1/scans/${state.scan.id}`);
 }
 
@@ -13,45 +14,71 @@ async function refreshPower() {
   state.power.jetkvms = await api("GET", "/api/v1/jetkvm");
   state.power.plugs = await api("GET", "/api/v1/plugs");
   state.power.ups = await api("GET", "/api/v1/ups");
+  state.power.profiles = await api("GET", "/api/v1/credential-profiles");
 }
 
 function renderScan() {
-  const rows = (state.scan ? state.scan.hosts : []).map((host) => `
-    <article class="card">
-      <header>
-        <h2>${escapeHtml(host.ip)}</h2>
-        <span class="pill">${escapeHtml((host.kinds || []).join(", ") || "host")}</span>
-      </header>
-      <p class="meta">${escapeHtml(host.mac || "no MAC")} · ${escapeHtml(host.hostname || "no name")} · ${escapeHtml(host.vendor || "")}</p>
-      <div class="row-actions">
-        <button type="button" data-cap="add_from_scan" data-fields="community,kind,name,password,plug_kind,username" data-scan="${state.scan.id}" data-host="${host.id}" data-kind="device">Add device</button>
-        <button type="button" data-cap="add_from_scan" data-fields="community,kind,name,password,plug_kind,username" data-scan="${state.scan.id}" data-host="${host.id}" data-kind="pdu">Add PDU</button>
-        <button type="button" data-cap="add_from_scan" data-fields="community,kind,name,password,plug_kind,username" data-scan="${state.scan.id}" data-host="${host.id}" data-kind="amt">Add AMT</button>
-        <button type="button" data-cap="add_from_scan" data-fields="community,kind,name,password,plug_kind,username" data-scan="${state.scan.id}" data-host="${host.id}" data-kind="jetkvm">Add JetKVM</button>
-        <button type="button" data-cap="add_from_scan" data-fields="community,kind,name,password,plug_kind,username" data-scan="${state.scan.id}" data-host="${host.id}" data-kind="plug">Add plug</button>
-        <button type="button" data-cap="add_from_scan" data-fields="community,kind,name,password,plug_kind,username" data-scan="${state.scan.id}" data-host="${host.id}" data-kind="ups">Add UPS</button>
-      </div>
-    </article>`).join("");
+  const interfaces = state.interfaces || [];
+  const primary = interfaces.find((item) => item.primary) || interfaces[0];
+  const options = interfaces.map((item) => `<option value="${escapeHtml(item.cidr)}"${item.primary ? " selected" : ""}>${escapeHtml(item.name)} ${escapeHtml(item.cidr)}</option>`).join("");
+  const picker = interfaces.length > 1
+    ? `<label>Subnet <select id="cidr-pick" aria-label="Choose a subnet">${options}</select></label>`
+    : "";
+  const hosts = state.scan ? state.scan.hosts : [];
+  const groups = {};
+  hosts.forEach((host) => {
+    const suggestion = (host.detail && host.detail.suggestion) || { type: "unknown", confidence: "low", reason: "", prefill: { kind: "device" } };
+    const key = suggestion.type || "unknown";
+    (groups[key] ||= []).push({ host, suggestion });
+  });
+  const sections = Object.keys(groups).sort().map((key) => {
+    const cards = groups[key].map(({ host, suggestion }) => {
+      const known = host.known ? `Already in inventory as ${host.known.name}` : "New";
+      const addKind = (suggestion.prefill && suggestion.prefill.kind) || "device";
+      const add = host.known ? "" : `<button type="button" data-cap="add_from_scan" data-fields="community,kind,name,password,plug_kind,username" data-scan="${state.scan.id}" data-host="${host.id}" data-kind="${escapeHtml(addKind)}" data-plug-kind="${escapeHtml((suggestion.prefill && suggestion.prefill.plug_kind) || "")}">Add</button>`;
+      return `
+      <article class="card">
+        <header><h2>${escapeHtml(host.ip)}</h2><span class="pill">${escapeHtml(suggestion.confidence || "")}</span></header>
+        <p class="meta">${escapeHtml(host.vendor || "unknown vendor")} · ${escapeHtml(host.mac || "no MAC")} · ${escapeHtml(known)}</p>
+        <p class="sub">${escapeHtml(suggestion.reason || "")}</p>
+        <div class="row-actions">${add}</div>
+      </article>`;
+    }).join("");
+    return `<section><h2>${escapeHtml(key)}</h2><div class="grid">${cards}</div></section>`;
+  }).join("");
   const scans = state.scans.map((scan) => `
     <button type="button" class="ghost" data-cap="scan_results" data-fields="" data-id="${scan.id}">${escapeHtml(scan.cidr)} · ${escapeHtml(scan.status)} ${scan.progress}/${scan.total}</button>
   `).join(" ");
   $("view").innerHTML = `
+    <p class="lede">The subnet is taken from this host. Docker, veth and bridge interfaces are skipped. Pick another when the machine has more than one LAN.</p>
     <form id="scan-form" class="toolbar">
-      <input name="cidr" placeholder="192.168.1.0/24" aria-label="CIDR">
+      ${picker}
+      <label>CIDR <input id="cidr" name="cidr" value="${escapeHtml(primary ? primary.cidr : "")}" aria-label="CIDR"></label>
       <button type="submit" data-cap="scan_subnet" data-fields="cidr">Scan subnet</button>
+      <button type="button" class="ghost" data-cap="list_interfaces" data-fields="">Refresh subnets</button>
     </form>
     <div class="row-actions">${scans || ""}</div>
-    <section class="grid">${rows || `<div class="empty">Start a scan. Host networking is required for ARP and broadcast.</div>`}</section>`;
+    ${sections || `<div class="empty">Start a scan. Host networking is required for ARP and broadcast.</div>`}`;
+  const pick = $("cidr-pick");
+  if (pick) pick.addEventListener("change", () => { $("cidr").value = pick.value; });
 }
 
 function renderPower() {
+  const profiles = (state.power.profiles || []).map((item) => `
+    <article class="card">
+      <h2>${escapeHtml(item.name)}</h2>
+      <p class="meta">${escapeHtml(item.username || "no username")} · ${item.password_set ? "password stored" : "no password"}</p>
+      <div class="row-actions">
+        <button type="button" class="danger" data-cap="remove_credential_profile" data-fields="" data-id="${item.id}">Remove</button>
+      </div>
+    </article>`).join("");
   const pduCards = state.power.pdus.map((pdu) => `
     <article class="card">
       <h2>${escapeHtml(pdu.name)}</h2>
       <p class="meta">${escapeHtml(pdu.host)}</p>
       <div class="row-actions">
         <button type="button" data-cap="list_pdu_outlets" data-fields="" data-id="${pdu.id}">Outlets</button>
-        <button type="button" data-cap="update_pdu" data-fields="host,insecure_tls,name,outlet_names,password,port,use_tls,username" data-id="${pdu.id}">Edit</button>
+        <button type="button" data-cap="update_pdu" data-fields="credential_profile_id,host,insecure_tls,name,outlet_names,password,port,use_tls,username" data-id="${pdu.id}">Edit</button>
         <button type="button" class="danger" data-cap="remove_pdu" data-fields="" data-id="${pdu.id}">Remove</button>
       </div>
       <div id="pdu-${pdu.id}"></div>
@@ -62,7 +89,7 @@ function renderPower() {
       <p class="meta">${escapeHtml(item.host)}:${item.port}</p>
       <div class="row-actions">
         <button type="button" data-cap="amt_power_state" data-fields="" data-id="${item.id}">Power state</button>
-        <button type="button" data-cap="update_amt" data-fields="device_id,host,insecure_tls,name,password,port,use_tls,username" data-id="${item.id}">Edit</button>
+        <button type="button" data-cap="update_amt" data-fields="credential_profile_id,device_id,host,insecure_tls,name,password,port,use_tls,username" data-id="${item.id}">Edit</button>
         <button type="button" class="danger" data-cap="remove_amt" data-fields="" data-id="${item.id}">Remove</button>
       </div>
     </article>`).join("");
@@ -78,7 +105,7 @@ function renderPower() {
         <button type="button" data-cap="jetkvm_power" data-fields="action,confirm,extension" data-id="${item.id}" data-action="dc-on" data-extension="dc-power">DC on</button>
         <button type="button" class="danger" data-cap="jetkvm_power" data-fields="action,confirm,extension" data-id="${item.id}" data-action="dc-off" data-extension="dc-power">DC off</button>
         <a class="ghost" data-cap="jetkvm_console" data-fields="" href="${escapeHtml(item.console_url)}" target="_blank" rel="noopener">Open console</a>
-        <button type="button" data-cap="update_jetkvm" data-fields="device_id,extension,host,insecure_tls,name,password,poll_metrics,port,use_tls" data-id="${item.id}">Edit</button>
+        <button type="button" data-cap="update_jetkvm" data-fields="credential_profile_id,device_id,extension,host,insecure_tls,name,password,poll_metrics,port,use_tls,username" data-id="${item.id}">Edit</button>
         <button type="button" class="danger" data-cap="remove_jetkvm" data-fields="" data-id="${item.id}">Remove</button>
       </div>
     </article>`).join("");
@@ -92,7 +119,7 @@ function renderPower() {
         <button type="button" class="danger" data-cap="plug_power" data-fields="action,confirm,cycle_seconds" data-id="${item.id}" data-action="off">Off</button>
         <button type="button" data-cap="plug_power" data-fields="action,confirm,cycle_seconds" data-id="${item.id}" data-action="toggle">Toggle</button>
         <button type="button" class="danger" data-cap="plug_power" data-fields="action,confirm,cycle_seconds" data-id="${item.id}" data-action="cycle">Cycle</button>
-        <button type="button" data-cap="update_plug" data-fields="device_id,host,insecure_tls,kind,name,password,port,protocol,switch_id,username" data-id="${item.id}">Edit</button>
+        <button type="button" data-cap="update_plug" data-fields="credential_profile_id,device_id,host,insecure_tls,kind,name,password,port,protocol,switch_id,username" data-id="${item.id}">Edit</button>
         <button type="button" class="danger" data-cap="remove_plug" data-fields="" data-id="${item.id}">Remove</button>
       </div>
     </article>`).join("");
@@ -113,13 +140,27 @@ function renderPower() {
         <button type="button" data-cap="ups_action" data-fields="action,confirm,delay_seconds,outlet" data-id="${item.id}" data-action="battery_test">Battery test</button>
         <button type="button" data-cap="ups_action" data-fields="action,confirm,delay_seconds,outlet" data-id="${item.id}" data-action="outlet_on">Bank on</button>
         <button type="button" class="danger" data-cap="ups_action" data-fields="action,confirm,delay_seconds,outlet" data-id="${item.id}" data-action="outlet_off">Bank off</button>
-        <button type="button" data-cap="update_ups" data-fields="community,device_id,host,name,port,snmp_version,v3_auth,v3_auth_proto,v3_priv,v3_priv_proto,v3_user" data-id="${item.id}">Edit</button>
+        <button type="button" data-cap="update_ups" data-fields="community,credential_profile_id,device_id,host,name,port,snmp_version,v3_auth,v3_auth_proto,v3_priv,v3_priv_proto,v3_user" data-id="${item.id}">Edit</button>
         <button type="button" class="danger" data-cap="remove_ups" data-fields="" data-id="${item.id}">Remove</button>
       </div>
     </article>`).join("");
   $("view").innerHTML = `
+    <section class="panel" style="padding:1rem" data-cap="list_credential_profiles" data-fields="">
+      <h2>Saved logins</h2>
+      <p class="lede">Each PDU, plug, AMT endpoint, JetKVM and UPS keeps its own username and password. A saved login is optional and can be shared by picking it when you add the hardware.</p>
+      <form id="profile-form" class="editor fields">
+        <input name="name" placeholder="Name" required>
+        <input name="username" placeholder="Username">
+        <input name="password" type="password" placeholder="Password">
+        <button type="submit" data-cap="add_credential_profile" data-fields="name,password,username">Save login</button>
+        <button type="button" class="ghost" data-cap="update_credential_profile" data-fields="name,password,username" data-id="${(state.power.profiles || [])[0] ? state.power.profiles[0].id : ""}">Update first saved login</button>
+      </form>
+      <div class="grid">${profiles}</div>
+    </section>
+    <p class="lede">This page manages the hardware a computer plugs into. Open a computer on Devices to wake it or switch the outlet, plug, AMT, JetKVM or UPS linked to it. A test checks the settings without saving them.</p>
     <section data-cap="list_pdus" data-fields="">
       <h2>Synaccess PDU</h2>
+      <p class="lede">A managed power strip. Link an outlet to a computer, then switch that outlet from the computer's page.</p>
       <form id="pdu-form" class="editor fields">
         <input name="name" placeholder="Name" required>
         <input name="host" placeholder="IP" required>
@@ -129,12 +170,14 @@ function renderPower() {
         <label class="check"><input type="checkbox" name="insecure_tls"> Allow self-signed</label>
         <input name="port" type="number" placeholder="Port" value="80">
         <input name="outlet_names" placeholder="outlet names 1=NAS,2=Desk">
-        <button type="submit" data-cap="add_pdu" data-fields="host,insecure_tls,name,outlet_names,password,port,use_tls,username">Add PDU</button>
+        <button type="button" data-cap="test_target" data-fields="broadcast,community,confirm,host,insecure_tls,kind,mac,password,plug_kind,port,snmp_version,use_tls,username" data-kind="pdu">Test</button>
+        <button type="submit" data-cap="add_pdu" data-fields="credential_profile_id,host,insecure_tls,name,outlet_names,password,port,use_tls,username">Add PDU</button>
       </form>
       <div class="grid">${pduCards}</div>
     </section>
       <section data-cap="list_amt" data-fields="">
       <h2>Intel AMT</h2>
+      <p class="lede">Out-of-band control for a vPro PC. The username and password belong to that PC.</p>
       <form id="amt-form" class="editor fields">
         <input name="name" placeholder="Name" required>
         <input name="host" placeholder="IP" required>
@@ -144,12 +187,14 @@ function renderPower() {
         <label class="check"><input type="checkbox" name="insecure_tls"> Allow self-signed</label>
         <input name="port" type="number" placeholder="Port">
         <input name="device_id" type="number" placeholder="device id">
-        <button type="submit" data-cap="add_amt" data-fields="device_id,host,insecure_tls,name,password,port,use_tls,username">Add AMT</button>
+        <button type="button" data-cap="test_target" data-fields="broadcast,community,confirm,host,insecure_tls,kind,mac,password,plug_kind,port,snmp_version,use_tls,username" data-kind="amt">Test</button>
+        <button type="submit" data-cap="add_amt" data-fields="credential_profile_id,device_id,host,insecure_tls,name,password,port,use_tls,username">Add AMT</button>
       </form>
       <div class="grid">${amtCards}</div>
     </section>
       <section data-cap="list_jetkvm" data-fields="">
       <h2>JetKVM</h2>
+      <p class="lede">A local KVM. Shutdown on the computer page is a short press. Force off holds the button.</p>
       <form id="jet-form" class="editor fields">
         <input name="name" placeholder="Name" required>
         <input name="host" placeholder="IP" required>
@@ -166,12 +211,14 @@ function renderPower() {
         <label class="check"><input type="checkbox" name="poll_metrics"> Poll DC metrics</label>
         <input name="port" type="number" placeholder="Port">
         <input name="device_id" type="number" placeholder="device id">
-        <button type="submit" data-cap="add_jetkvm" data-fields="device_id,extension,host,insecure_tls,name,password,poll_metrics,port,use_tls">Add JetKVM</button>
+        <button type="button" data-cap="test_target" data-fields="broadcast,community,confirm,host,insecure_tls,kind,mac,password,plug_kind,port,snmp_version,use_tls,username" data-kind="jetkvm">Test</button>
+        <button type="submit" data-cap="add_jetkvm" data-fields="credential_profile_id,device_id,extension,host,insecure_tls,name,password,poll_metrics,port,use_tls,username">Add JetKVM</button>
       </form>
       <div class="grid">${jetCards}</div>
     </section>
       <section data-cap="list_plugs" data-fields="">
       <h2>Smart plugs</h2>
+      <p class="lede">Shelly or Kasa. Each plug has its own login, or you can pick a saved one.</p>
       <form id="plug-form" class="editor fields">
         <input name="name" placeholder="Name" required>
         <select name="kind"><option value="shelly">Shelly</option><option value="kasa">Kasa</option></select>
@@ -183,12 +230,14 @@ function renderPower() {
         <input name="port" type="number" placeholder="Port" value="80">
         <input name="switch_id" type="number" placeholder="switch id" value="0">
         <input name="device_id" type="number" placeholder="device id">
-        <button type="submit" data-cap="add_plug" data-fields="device_id,host,insecure_tls,kind,name,password,port,protocol,switch_id,username">Add plug</button>
+        <button type="button" data-cap="test_target" data-fields="broadcast,community,confirm,host,insecure_tls,kind,mac,password,plug_kind,port,snmp_version,use_tls,username" data-kind="plug">Test</button>
+        <button type="submit" data-cap="add_plug" data-fields="credential_profile_id,device_id,host,insecure_tls,kind,name,password,port,protocol,switch_id,username">Add plug</button>
       </form>
       <div class="grid">${plugCards}</div>
     </section>
       <section data-cap="list_ups" data-fields="">
       <h2>CyberPower UPS</h2>
+      <p class="lede">An RCCARD on the UPS. Shutdown and outlet-off commands ask you to confirm because they can drop every load.</p>
       <p class="sub">Destructive UPS actions need confirmation and can shut down every load.</p>
       <form id="ups-form" class="editor fields">
         <input name="name" placeholder="Name" required>
@@ -202,7 +251,8 @@ function renderPower() {
         <input name="device_id" type="number" placeholder="device id">
         <select name="v3_auth_proto"><option value="sha">sha</option><option value="md5">md5</option><option value="none">none</option></select>
         <select name="v3_priv_proto"><option value="aes">aes</option><option value="des">des</option><option value="none">none</option></select>
-        <button type="submit" data-cap="add_ups" data-fields="community,device_id,host,name,port,snmp_version,v3_auth,v3_auth_proto,v3_priv,v3_priv_proto,v3_user">Add UPS</button>
+        <button type="button" data-cap="test_target" data-fields="broadcast,community,confirm,host,insecure_tls,kind,mac,password,plug_kind,port,snmp_version,use_tls,username" data-kind="ups">Test</button>
+        <button type="submit" data-cap="add_ups" data-fields="community,credential_profile_id,device_id,host,name,port,snmp_version,v3_auth,v3_auth_proto,v3_priv,v3_priv_proto,v3_user">Add UPS</button>
       </form>
       <div class="grid">${upsCards}</div>
       <button type="button" class="ghost" data-cap="list_metrics" data-fields="device_id,limit,metric,source_id,source_kind">Refresh readings</button>
@@ -233,6 +283,7 @@ window.handlePowerCap = async function handlePowerCap(button) {
       state.scan = await api("GET", `/api/v1/scans/${id}`);
     } else if (cap === "add_from_scan") {
       const body = { kind: button.dataset.kind };
+      if (button.dataset.plugKind) body.plug_kind = button.dataset.plugKind;
       if (body.kind === "amt") {
         const password = window.prompt("AMT password");
         if (!password) return true;
@@ -374,7 +425,7 @@ document.body.addEventListener("submit", async (event) => {
     return;
   }
   const form = event.target;
-  if (!["pdu-form", "amt-form", "jet-form", "plug-form", "ups-form", "scan-form"].includes(form.id)) return;
+  if (!["pdu-form", "amt-form", "jet-form", "plug-form", "ups-form", "scan-form", "profile-form"].includes(form.id)) return;
   event.preventDefault();
   const data = Object.fromEntries(new FormData(form).entries());
   try {
@@ -398,6 +449,8 @@ document.body.addEventListener("submit", async (event) => {
       await api("POST", "/api/v1/jetkvm", data);
     } else if (form.id === "plug-form") {
       await api("POST", "/api/v1/plugs", data);
+    } else if (form.id === "profile-form") {
+      await api("POST", "/api/v1/credential-profiles", { name: data.name, username: data.username || "", password: data.password || null });
     } else if (form.id === "ups-form") {
       await api("POST", "/api/v1/ups", data);
     }
@@ -432,7 +485,14 @@ window.CONTROL_HANDLERS = {
   rotate_token(el) { return onClick({ target: el }); },
   ui_login() { $("login").classList.remove("hidden"); },
   ui_setup() { $("setup").classList.remove("hidden"); },
-  get_ui_session() { return boot(); },
+  get_ui_session() {},
+  ui_logout() { return window.signOut(); },
+  list_interfaces() { return show("scan"); },
+  test_target(el) { return window.runTest(el); },
+  list_credential_profiles() { return show("power"); },
+  add_credential_profile() { return show("power"); },
+  update_credential_profile(el) { return window.saveProfile(el); },
+  remove_credential_profile(el) { return window.removeProfile(el); },
   list_pdus() { return show("power"); },
   add_pdu() { return show("power"); },
   update_pdu(el) { return window.handlePowerCap(el); },

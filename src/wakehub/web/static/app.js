@@ -1,6 +1,6 @@
 const state = {
   token: "",
-  page: "devices",
+  page: "",
   devices: [],
   status: {},
   actions: [],
@@ -11,7 +11,7 @@ const state = {
 const titles = {
   devices: ["Inventory", "Devices"],
   scan: ["Discovery", "Scan"],
-  power: ["Control", "Power"],
+  power: ["Managed hardware", "Hardware"],
   history: ["Log", "History"],
   settings: ["Access", "Settings"],
 };
@@ -51,6 +51,33 @@ async function api(method, path, body) {
   return data;
 }
 
+function deviceLinks(device) {
+  const hardware = state.power || { pdus: [], amts: [], jetkvms: [], plugs: [], ups: [] };
+  const lines = [];
+  const test = `data-cap="test_target" data-fields="broadcast,community,confirm,host,insecure_tls,kind,mac,password,plug_kind,port,snmp_version,use_tls,username"`;
+  lines.push(`<button type="button" class="ghost" ${test} data-kind="wol" data-confirm="false" data-mac="${escapeHtml(device.mac || "")}" data-broadcast="${escapeHtml(device.broadcast)}" data-host="${escapeHtml(device.host || "")}">Test wake</button>`);
+  lines.push(`<button type="button" class="ghost" ${test} data-kind="wol" data-confirm="true" data-mac="${escapeHtml(device.mac || "")}" data-broadcast="${escapeHtml(device.broadcast)}" data-host="${escapeHtml(device.host || "")}">Send wake packet</button>`);
+  for (const method of device.methods || []) {
+    if (method.kind === "pdu") {
+      const item = (hardware.pdus || []).find((row) => row.id === method.pdu_id);
+      lines.push(`<p class="sub">PDU ${escapeHtml(item ? item.name : "outlet")} outlet ${method.outlet}. Off and reboot ask for confirmation.</p>`);
+    } else if (method.kind === "plug") {
+      const item = (hardware.plugs || []).find((row) => row.id === method.plug_id);
+      lines.push(`<p class="sub">Smart plug ${escapeHtml(item ? item.name : "plug")} can cut power to this computer.</p>`);
+    } else if (method.kind === "amt") {
+      const item = (hardware.amts || []).find((row) => row.id === method.amt_id);
+      lines.push(`<p class="sub">Intel AMT ${escapeHtml(item ? item.name : "endpoint")} reads power state and can shut the PC down.</p>`);
+    } else if (method.kind === "jetkvm") {
+      const item = (hardware.jetkvms || []).find((row) => row.id === method.jetkvm_id);
+      lines.push(`<p class="sub">JetKVM ${escapeHtml(item ? item.name : "endpoint")} presses the power button. Shutdown is a short press. Force off is the long press.</p>`);
+    } else if (method.kind === "ups") {
+      const item = (hardware.ups || []).find((row) => row.id === method.ups_id);
+      lines.push(`<p class="sub">UPS ${escapeHtml(item ? item.name : "card")} can drop every load on that UPS. Those actions ask for confirmation.</p>`);
+    }
+  }
+  return `<div class="row-actions">${lines.join("")}</div>`;
+}
+
 function pill(device) {
   const reach = state.status[device.id];
   if (!device.enabled) return '<span class="pill off">disabled</span>';
@@ -69,7 +96,8 @@ function deviceCard(device) {
         ${pill(device)}
       </header>
       <p class="meta">${escapeHtml(device.host || "no host")} · ${escapeHtml(device.mac || "no MAC")}</p>
-      <p class="sub">Broadcast ${escapeHtml(device.broadcast)}:${device.wol_port}</p>
+      <p class="sub">Broadcast ${escapeHtml(device.broadcast)}:${device.wol_port}. Wake-on-LAN, and any PDU outlet, plug, AMT, JetKVM or UPS linked below, are controlled from this computer.</p>
+      ${deviceLinks(device)}
       <div class="tags">${tags}</div>
       <div class="row-actions">
         <label class="sub">Method <select class="method-picker" aria-label="Power method"><option value="auto">auto</option><option value="wol">wol</option><option value="pdu">pdu</option><option value="amt">amt</option><option value="jetkvm">jetkvm</option><option value="plug">plug</option><option value="ups">ups</option></select></label>
@@ -252,7 +280,10 @@ function renderSettings() {
       <input id="retention" name="metrics_retention_days" type="number" value="${settings.metrics_retention_days || 30}">
       <label class="check"><input type="checkbox" name="clear_ui_password"> Remove the UI password</label>
       <div class="row-actions" style="margin-top:0.8rem">
-        <button type="submit" data-cap="update_settings" data-fields="clear_ui_password,cors_origins,metrics_poll_seconds,metrics_retention_days,ui_password">Save settings</button>
+        <label for="session-days">Remember this browser (days)</label>
+        <input id="session-days" name="session_days" type="number" min="1" max="365" value="${settings.session_days || 30}">
+        <button type="submit" data-cap="update_settings" data-fields="clear_ui_password,cors_origins,metrics_poll_seconds,metrics_retention_days,session_days,ui_password">Save settings</button>
+        <button type="button" class="ghost" data-cap="ui_logout" data-fields="">Sign out</button>
       </div>
     </form>`;
 }
@@ -273,6 +304,7 @@ function render() {
 
 async function refreshDevices() {
   state.devices = await api("GET", "/api/v1/devices");
+  if (typeof refreshPower === "function") await refreshPower();
   const status = await api("GET", "/api/v1/status");
   state.status = {};
   status.forEach((item) => { state.status[item.device_id] = item; });
@@ -473,6 +505,7 @@ async function onSubmit(event) {
       clear_ui_password: Boolean(form.elements.clear_ui_password.checked),
       metrics_poll_seconds: Number(data.metrics_poll_seconds || 60),
       metrics_retention_days: Number(data.metrics_retention_days || 30),
+      session_days: Number(data.session_days || 30),
     };
     if (data.ui_password) payload.ui_password = data.ui_password;
     try {
@@ -509,8 +542,12 @@ async function boot() {
   }
   const data = await response.json();
   state.token = data.token;
+  $("setup").classList.add("hidden");
+  $("login").classList.add("hidden");
   $("app").classList.remove("hidden");
-  await show("devices");
+  if (!state.page) await show("devices");
+  if (state.booted) return;
+  state.booted = true;
   window.setInterval(() => {
     if (state.page !== "devices" || !state.token || state.editing) return;
     refreshDevices().then(() => {
@@ -519,13 +556,55 @@ async function boot() {
   }, 10000);
 }
 
+window.runTest = async function (el) {
+  const form = el.closest("form");
+  const body = form ? Object.fromEntries(new FormData(form).entries()) : {};
+  body.kind = el.dataset.kind || body.kind || "wol";
+  body.confirm = el.dataset.confirm === "true";
+  if (el.dataset.mac) body.mac = el.dataset.mac;
+  if (el.dataset.broadcast) body.broadcast = el.dataset.broadcast;
+  if (el.dataset.host) body.host = el.dataset.host;
+  if (form && form.elements.use_tls) body.use_tls = Boolean(form.elements.use_tls.checked);
+  if (form && form.elements.insecure_tls) body.insecure_tls = Boolean(form.elements.insecure_tls.checked);
+  try {
+    const result = await api("POST", "/api/v1/test", body);
+    showBanner(result.message, !result.ok);
+  } catch (error) {
+    showBanner(error.message, true);
+  }
+};
+
+window.signOut = async function () {
+  await fetch("/api/v1/ui/logout", { method: "POST" });
+  state.page = "";
+  state.token = "";
+  $("app").classList.add("hidden");
+  $("setup").classList.add("hidden");
+  $("login").classList.remove("hidden");
+};
+
+window.saveProfile = async function (el) {
+  const form = document.getElementById("profile-form");
+  if (!form || !el.dataset.id) return;
+  const data = Object.fromEntries(new FormData(form).entries());
+  await api("PATCH", `/api/v1/credential-profiles/${el.dataset.id}`, data);
+  await refreshPower();
+  renderPower();
+};
+
+window.removeProfile = async function (el) {
+  await api("DELETE", `/api/v1/credential-profiles/${el.dataset.id}`);
+  await refreshPower();
+  renderPower();
+};
+
 document.body.addEventListener("click", (event) => {
   const nav = event.target.closest("[data-page]");
   if (nav && nav.closest("aside")) {
     show(nav.dataset.page).catch((error) => showBanner(error.message, true));
     return;
   }
-  const control = event.target.closest("[data-cap]");
+  const control = event.target.closest("button[data-cap], a[data-cap]");
   if (!control || control.type === "submit") return;
   const handler = window.CONTROL_HANDLERS && window.CONTROL_HANDLERS[control.dataset.cap];
   if (!handler) {

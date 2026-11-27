@@ -56,6 +56,7 @@ class PduIn(BaseModel):
     username: str = "admin"
     password: str | None = None
     outlet_names: dict[str, str] | None = None
+    credential_profile_id: int | None = None
 
 
 class PduPatch(BaseModel):
@@ -67,6 +68,7 @@ class PduPatch(BaseModel):
     username: str | None = None
     password: str | None = None
     outlet_names: dict[str, str] | None = None
+    credential_profile_id: int | None = None
 
 
 class OutletIn(BaseModel):
@@ -83,6 +85,7 @@ class AmtIn(BaseModel):
     username: str = "admin"
     password: str
     device_id: int | None = None
+    credential_profile_id: int | None = None
 
 
 class AmtPatch(BaseModel):
@@ -94,6 +97,7 @@ class AmtPatch(BaseModel):
     username: str | None = None
     password: str | None = None
     device_id: int | None = None
+    credential_profile_id: int | None = None
 
 
 class JetIn(BaseModel):
@@ -102,10 +106,12 @@ class JetIn(BaseModel):
     port: int | None = None
     use_tls: bool = False
     insecure_tls: bool = False
+    username: str = ""
     password: str | None = None
     extension: str = ""
     poll_metrics: bool = False
     device_id: int | None = None
+    credential_profile_id: int | None = None
 
 
 class JetPatch(BaseModel):
@@ -114,10 +120,12 @@ class JetPatch(BaseModel):
     port: int | None = None
     use_tls: bool | None = None
     insecure_tls: bool | None = None
+    username: str | None = None
     password: str | None = None
     extension: str | None = None
     poll_metrics: bool | None = None
     device_id: int | None = None
+    credential_profile_id: int | None = None
 
 
 class JetPowerIn(BaseModel):
@@ -137,6 +145,7 @@ class PlugIn(BaseModel):
     insecure_tls: bool = False
     switch_id: int = 0
     device_id: int | None = None
+    credential_profile_id: int | None = None
 
 
 class PlugPatch(BaseModel):
@@ -150,6 +159,7 @@ class PlugPatch(BaseModel):
     insecure_tls: bool | None = None
     switch_id: int | None = None
     device_id: int | None = None
+    credential_profile_id: int | None = None
 
 
 class PlugPowerIn(BaseModel):
@@ -170,6 +180,7 @@ class UpsIn(BaseModel):
     v3_priv_proto: str = "aes"
     v3_priv: str | None = None
     device_id: int | None = None
+    credential_profile_id: int | None = None
 
 
 class UpsPatch(BaseModel):
@@ -184,6 +195,7 @@ class UpsPatch(BaseModel):
     v3_priv_proto: str | None = None
     v3_priv: str | None = None
     device_id: int | None = None
+    credential_profile_id: int | None = None
 
 
 class UpsActionIn(BaseModel):
@@ -195,6 +207,34 @@ class UpsActionIn(BaseModel):
 
 class ScanIn(BaseModel):
     cidr: str | None = None
+
+
+class TestIn(BaseModel):
+    kind: str
+    host: str | None = None
+    mac: str | None = None
+    broadcast: str | None = None
+    username: str | None = None
+    password: str | None = None
+    port: int | None = None
+    use_tls: bool = False
+    insecure_tls: bool = False
+    confirm: bool = False
+    plug_kind: str | None = None
+    community: str | None = None
+    snmp_version: str | None = None
+
+
+class ProfileIn(BaseModel):
+    name: str
+    username: str = ""
+    password: str | None = None
+
+
+class ProfilePatch(BaseModel):
+    name: str | None = None
+    username: str | None = None
+    password: str | None = None
 
 
 class AddFromScanIn(BaseModel):
@@ -369,6 +409,44 @@ def control_router() -> APIRouter:
             delay_seconds=body.delay_seconds,
             outlet=body.outlet,
         )
+
+    @router.get("/interfaces", tags=["scan"])
+    def interfaces() -> list[dict[str, Any]]:
+        from wakehub.scan import list_interfaces
+
+        return list_interfaces()
+
+    @router.post("/test", tags=["scan"])
+    def test_connection(body: TestIn) -> dict[str, Any]:
+        from wakehub.probe import test_target
+
+        return test_target(get_hub(), body.model_dump())
+
+    @router.get("/credential-profiles", tags=["credentials"])
+    def profiles() -> list[dict[str, Any]]:
+        from wakehub.credentials import list_profiles
+
+        return list_profiles(get_hub())
+
+    @router.post("/credential-profiles", tags=["credentials"], status_code=201)
+    def create_profile(body: ProfileIn) -> dict[str, Any]:
+        from wakehub.credentials import add_profile
+
+        return add_profile(get_hub(), body.model_dump())
+
+    @router.patch("/credential-profiles/{profile_id}", tags=["credentials"])
+    def edit_profile(profile_id: int, body: ProfilePatch) -> dict[str, Any]:
+        from wakehub.credentials import update_profile
+
+        return update_profile(get_hub(), profile_id, body.model_dump(exclude_unset=True))
+
+    @router.delete("/credential-profiles/{profile_id}", tags=["credentials"], status_code=204)
+    def delete_profile(profile_id: int):
+        from fastapi import Response
+        from wakehub.credentials import remove_profile
+
+        remove_profile(get_hub(), profile_id)
+        return Response(status_code=204)
 
     @router.post("/scans", tags=["scan"], status_code=202)
     def create_scan(body: ScanIn) -> dict[str, Any]:

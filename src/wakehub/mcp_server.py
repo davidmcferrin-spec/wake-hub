@@ -199,6 +199,7 @@ def build_server() -> MCPServer:
         cors_origins: list[str] | None = None,
         metrics_poll_seconds: int | None = None,
         metrics_retention_days: int | None = None,
+        session_days: int | None = None,
     ) -> dict[str, Any]:
         """Change settings. Set ui_password to require a password in the browser. clear_ui_password removes it. cors_origins is the list of allowed browser origins. An empty list blocks cross-origin calls."""
         payload: dict[str, Any] = {"clear_ui_password": clear_ui_password}
@@ -210,6 +211,8 @@ def build_server() -> MCPServer:
             payload["metrics_poll_seconds"] = metrics_poll_seconds
         if metrics_retention_days is not None:
             payload["metrics_retention_days"] = metrics_retention_days
+        if session_days is not None:
+            payload["session_days"] = session_days
         return records.update_settings(get_hub(), payload)
 
     @server.tool()
@@ -243,6 +246,15 @@ def build_server() -> MCPServer:
         hub = get_hub()
         password_set = bool(hub.setting("ui_password"))
         return {"password_required": True, "setup_required": not password_set}
+
+    @server.tool()
+    @expose
+    def ui_logout() -> dict[str, Any]:
+        """Sign the web UI out. Clears every browser session. Rotating the API token does the same."""
+        from wakehub.sessions import drop_all
+
+        drop_all(get_hub())
+        return {"ok": True}
 
     from wakehub.mcp_extra import register
 

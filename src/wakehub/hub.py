@@ -104,6 +104,7 @@ class Hub:
         self._write_setting("api_token", encrypt(self.cipher, token))
         self.token = token
         self._publish_token(token)
+        self.write("DELETE FROM ui_sessions")
         return token
 
     def note_attempt(self, key: str, *, ok: bool) -> None:

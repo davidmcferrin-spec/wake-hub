@@ -157,6 +157,22 @@ CREATE TABLE IF NOT EXISTS metric_samples (
 );
 
 CREATE INDEX IF NOT EXISTS metric_lookup ON metric_samples (source_kind, source_id, recorded_at);
+
+CREATE TABLE IF NOT EXISTS ui_sessions (
+    id INTEGER PRIMARY KEY,
+    token_hash TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS credential_profiles (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    username TEXT NOT NULL DEFAULT '',
+    password_enc TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -177,5 +193,8 @@ def connect(path: Path) -> sqlite3.Connection:
     _ensure_column(conn, "plugs", "insecure_tls", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(conn, "jetkvm_endpoints", "extension", "TEXT NOT NULL DEFAULT ''")
     _ensure_column(conn, "jetkvm_endpoints", "poll_metrics", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(conn, "jetkvm_endpoints", "username", "TEXT NOT NULL DEFAULT ''")
+    for table in ("pdus", "amt_endpoints", "jetkvm_endpoints", "plugs", "ups_cards"):
+        _ensure_column(conn, table, "credential_profile_id", "INTEGER")
     conn.commit()
     return conn

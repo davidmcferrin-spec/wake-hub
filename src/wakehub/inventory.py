@@ -587,6 +587,7 @@ def public_settings(hub: Hub) -> dict[str, Any]:
         "cors_origins": hub.cors_origins(),
         "metrics_poll_seconds": int(hub.setting("metrics_poll_seconds", "60") or 60),
         "metrics_retention_days": int(hub.setting("metrics_retention_days", "30") or 30),
+        "session_days": int(hub.setting("session_days", "30") or 30),
     }
 
 
@@ -608,6 +609,11 @@ def update_settings(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
         if days < 1 or days > 3650:
             raise WakeHubError("metrics retention must be between 1 and 3650 days")
         hub._write_setting("metrics_retention_days", str(days))
+    if payload.get("session_days") is not None:
+        days = int(payload["session_days"])
+        if days < 1 or days > 365:
+            raise WakeHubError("session length must be between 1 and 365 days")
+        hub._write_setting("session_days", str(days))
     if payload.get("cors_origins") is not None:
         origins = payload["cors_origins"]
         if isinstance(origins, str):

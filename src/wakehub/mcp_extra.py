@@ -22,15 +22,15 @@ def register(server) -> None:
 
     @server.tool()
     @expose
-    def add_pdu(name: str, host: str, username: str = "admin", password: str = "", port: int = 80, use_tls: bool = False, insecure_tls: bool = False, outlet_names: dict[str, str] | None = None) -> dict[str, Any]:
-        """Add a Synaccess netBooter by IP. The password is stored encrypted. insecure_tls skips certificate checks for that PDU only."""
-        return ends.add_pdu(get_hub(), {"name": name, "host": host, "username": username, "password": password, "port": port, "use_tls": use_tls, "insecure_tls": insecure_tls, "outlet_names": outlet_names})
+    def add_pdu(name: str, host: str, username: str = "admin", password: str = "", port: int = 80, use_tls: bool = False, insecure_tls: bool = False, outlet_names: dict[str, str] | None = None, credential_profile_id: int | None = None) -> dict[str, Any]:
+        """Add a Synaccess netBooter by IP. The password is stored encrypted. insecure_tls skips certificate checks for that PDU only. credential_profile_id uses a saved login instead."""
+        return ends.add_pdu(get_hub(), {"name": name, "host": host, "username": username, "password": password, "port": port, "use_tls": use_tls, "insecure_tls": insecure_tls, "outlet_names": outlet_names, "credential_profile_id": credential_profile_id})
 
     @server.tool()
     @expose
-    def update_pdu(pdu_id: int, name: str | None = None, host: str | None = None, username: str | None = None, password: str | None = None, port: int | None = None, use_tls: bool | None = None, insecure_tls: bool | None = None, outlet_names: dict[str, str] | None = None) -> dict[str, Any]:
+    def update_pdu(pdu_id: int, name: str | None = None, host: str | None = None, username: str | None = None, password: str | None = None, port: int | None = None, use_tls: bool | None = None, insecure_tls: bool | None = None, outlet_names: dict[str, str] | None = None, credential_profile_id: int | None = None) -> dict[str, Any]:
         """Edit a PDU. Omit a field to leave it unchanged."""
-        payload = {key: value for key, value in {"name": name, "host": host, "username": username, "password": password, "port": port, "use_tls": use_tls, "insecure_tls": insecure_tls, "outlet_names": outlet_names}.items() if value is not None}
+        payload = {key: value for key, value in {"name": name, "host": host, "username": username, "password": password, "port": port, "use_tls": use_tls, "insecure_tls": insecure_tls, "outlet_names": outlet_names, "credential_profile_id": credential_profile_id}.items() if value is not None}
         return ends.update_pdu(get_hub(), pdu_id, payload)
 
     @server.tool()
@@ -60,15 +60,15 @@ def register(server) -> None:
 
     @server.tool()
     @expose
-    def add_amt(name: str, host: str, password: str, username: str = "admin", port: int | None = None, use_tls: bool = False, insecure_tls: bool = False, device_id: int | None = None) -> dict[str, Any]:
+    def add_amt(name: str, host: str, password: str, username: str = "admin", port: int | None = None, use_tls: bool = False, insecure_tls: bool = False, device_id: int | None = None, credential_profile_id: int | None = None) -> dict[str, Any]:
         """Add an Intel AMT or vPro endpoint. Port 16992 is HTTP and 16993 is TLS. insecure_tls allows that device's self-signed certificate."""
-        return ends.add_amt(get_hub(), {"name": name, "host": host, "password": password, "username": username, "port": port, "use_tls": use_tls, "insecure_tls": insecure_tls, "device_id": device_id})
+        return ends.add_amt(get_hub(), {"name": name, "host": host, "password": password, "username": username, "port": port, "use_tls": use_tls, "insecure_tls": insecure_tls, "device_id": device_id, "credential_profile_id": credential_profile_id})
 
     @server.tool()
     @expose
-    def update_amt(amt_id: int, name: str | None = None, host: str | None = None, password: str | None = None, port: int | None = None, use_tls: bool | None = None, insecure_tls: bool | None = None, username: str | None = None, device_id: int | None = None) -> dict[str, Any]:
+    def update_amt(amt_id: int, name: str | None = None, host: str | None = None, password: str | None = None, port: int | None = None, use_tls: bool | None = None, insecure_tls: bool | None = None, username: str | None = None, device_id: int | None = None, credential_profile_id: int | None = None) -> dict[str, Any]:
         """Edit an AMT endpoint."""
-        payload = {key: value for key, value in {"name": name, "host": host, "password": password, "port": port, "use_tls": use_tls, "insecure_tls": insecure_tls, "username": username, "device_id": device_id}.items() if value is not None}
+        payload = {key: value for key, value in {"name": name, "host": host, "password": password, "port": port, "use_tls": use_tls, "insecure_tls": insecure_tls, "username": username, "device_id": device_id, "credential_profile_id": credential_profile_id}.items() if value is not None}
         return ends.update_amt(get_hub(), amt_id, payload)
 
     @server.tool()
@@ -92,15 +92,15 @@ def register(server) -> None:
 
     @server.tool()
     @expose
-    def add_jetkvm(name: str, host: str, password: str = "", port: int | None = None, use_tls: bool = False, insecure_tls: bool = False, extension: str = "", poll_metrics: bool = False, device_id: int | None = None) -> dict[str, Any]:
+    def add_jetkvm(name: str, host: str, password: str = "", username: str = "", port: int | None = None, use_tls: bool = False, insecure_tls: bool = False, extension: str = "", poll_metrics: bool = False, device_id: int | None = None, credential_profile_id: int | None = None) -> dict[str, Any]:
         """Add a JetKVM by IP. Leave password empty when the device is in no-password mode. insecure_tls skips certificate checks for that device only. extension is atx-power or dc-power. poll_metrics opens a WebRTC session on the metrics interval and should stay off unless the DC extension is installed."""
-        return ends.add_jetkvm(get_hub(), {"name": name, "host": host, "password": password, "port": port, "use_tls": use_tls, "insecure_tls": insecure_tls, "extension": extension, "poll_metrics": poll_metrics, "device_id": device_id})
+        return ends.add_jetkvm(get_hub(), {"name": name, "host": host, "password": password, "username": username, "port": port, "use_tls": use_tls, "insecure_tls": insecure_tls, "extension": extension, "poll_metrics": poll_metrics, "device_id": device_id, "credential_profile_id": credential_profile_id})
 
     @server.tool()
     @expose
-    def update_jetkvm(jetkvm_id: int, name: str | None = None, host: str | None = None, password: str | None = None, port: int | None = None, use_tls: bool | None = None, insecure_tls: bool | None = None, extension: str | None = None, poll_metrics: bool | None = None, device_id: int | None = None) -> dict[str, Any]:
+    def update_jetkvm(jetkvm_id: int, name: str | None = None, host: str | None = None, password: str | None = None, username: str | None = None, port: int | None = None, use_tls: bool | None = None, insecure_tls: bool | None = None, extension: str | None = None, poll_metrics: bool | None = None, device_id: int | None = None, credential_profile_id: int | None = None) -> dict[str, Any]:
         """Edit a JetKVM endpoint. poll_metrics is off by default because a poll takes the device's single WebRTC session."""
-        payload = {key: value for key, value in {"name": name, "host": host, "password": password, "port": port, "use_tls": use_tls, "insecure_tls": insecure_tls, "extension": extension, "poll_metrics": poll_metrics, "device_id": device_id}.items() if value is not None}
+        payload = {key: value for key, value in {"name": name, "host": host, "password": password, "username": username, "port": port, "use_tls": use_tls, "insecure_tls": insecure_tls, "extension": extension, "poll_metrics": poll_metrics, "device_id": device_id, "credential_profile_id": credential_profile_id}.items() if value is not None}
         return ends.update_jetkvm(get_hub(), jetkvm_id, payload)
 
     @server.tool()
@@ -139,15 +139,15 @@ def register(server) -> None:
 
     @server.tool()
     @expose
-    def add_plug(name: str, kind: str, host: str, username: str = "", password: str = "", protocol: str = "auto", port: int = 80, insecure_tls: bool = False, switch_id: int = 0, device_id: int | None = None) -> dict[str, Any]:
+    def add_plug(name: str, kind: str, host: str, username: str = "", password: str = "", protocol: str = "auto", port: int = 80, insecure_tls: bool = False, switch_id: int = 0, device_id: int | None = None, credential_profile_id: int | None = None) -> dict[str, Any]:
         """Add a plug. kind is shelly or kasa. Kasa protocol is auto, xor (port 9999) or klap. Kasa username is the TP-Link account email."""
-        return ends.add_plug(get_hub(), {"name": name, "kind": kind, "host": host, "username": username, "password": password, "protocol": protocol, "port": port, "insecure_tls": insecure_tls, "switch_id": switch_id, "device_id": device_id})
+        return ends.add_plug(get_hub(), {"name": name, "kind": kind, "host": host, "username": username, "password": password, "protocol": protocol, "port": port, "insecure_tls": insecure_tls, "switch_id": switch_id, "device_id": device_id, "credential_profile_id": credential_profile_id})
 
     @server.tool()
     @expose
-    def update_plug(plug_id: int, name: str | None = None, host: str | None = None, password: str | None = None, protocol: str | None = None, kind: str | None = None, port: int | None = None, username: str | None = None, insecure_tls: bool | None = None, switch_id: int | None = None, device_id: int | None = None) -> dict[str, Any]:
+    def update_plug(plug_id: int, name: str | None = None, host: str | None = None, password: str | None = None, protocol: str | None = None, kind: str | None = None, port: int | None = None, username: str | None = None, insecure_tls: bool | None = None, switch_id: int | None = None, device_id: int | None = None, credential_profile_id: int | None = None) -> dict[str, Any]:
         """Edit a plug."""
-        payload = {key: value for key, value in {"name": name, "host": host, "password": password, "protocol": protocol, "kind": kind, "port": port, "username": username, "insecure_tls": insecure_tls, "switch_id": switch_id, "device_id": device_id}.items() if value is not None}
+        payload = {key: value for key, value in {"name": name, "host": host, "password": password, "protocol": protocol, "kind": kind, "port": port, "username": username, "insecure_tls": insecure_tls, "switch_id": switch_id, "device_id": device_id, "credential_profile_id": credential_profile_id}.items() if value is not None}
         return ends.update_plug(get_hub(), plug_id, payload)
 
     @server.tool()
@@ -177,15 +177,15 @@ def register(server) -> None:
 
     @server.tool()
     @expose
-    def add_ups(name: str, host: str, snmp_version: str = "2c", community: str = "public", port: int = 161, v3_user: str = "", v3_auth_proto: str = "sha", v3_auth: str = "", v3_priv_proto: str = "aes", v3_priv: str = "", device_id: int | None = None) -> dict[str, Any]:
+    def add_ups(name: str, host: str, snmp_version: str = "2c", community: str = "public", port: int = 161, v3_user: str = "", v3_auth_proto: str = "sha", v3_auth: str = "", v3_priv_proto: str = "aes", v3_priv: str = "", device_id: int | None = None, credential_profile_id: int | None = None) -> dict[str, Any]:
         """Add a CyberPower network card. snmp_version is 1, 2c or 3. v3_auth and v3_priv are stored encrypted."""
-        return ends.add_ups(get_hub(), {"name": name, "host": host, "snmp_version": snmp_version, "community": community, "port": port, "v3_user": v3_user, "v3_auth_proto": v3_auth_proto, "v3_auth": v3_auth, "v3_priv_proto": v3_priv_proto, "v3_priv": v3_priv, "device_id": device_id})
+        return ends.add_ups(get_hub(), {"name": name, "host": host, "snmp_version": snmp_version, "community": community, "port": port, "v3_user": v3_user, "v3_auth_proto": v3_auth_proto, "v3_auth": v3_auth, "v3_priv_proto": v3_priv_proto, "v3_priv": v3_priv, "device_id": device_id, "credential_profile_id": credential_profile_id})
 
     @server.tool()
     @expose
-    def update_ups(ups_id: int, name: str | None = None, host: str | None = None, community: str | None = None, snmp_version: str | None = None, port: int | None = None, v3_user: str | None = None, v3_auth_proto: str | None = None, v3_auth: str | None = None, v3_priv_proto: str | None = None, v3_priv: str | None = None, device_id: int | None = None) -> dict[str, Any]:
+    def update_ups(ups_id: int, name: str | None = None, host: str | None = None, community: str | None = None, snmp_version: str | None = None, port: int | None = None, v3_user: str | None = None, v3_auth_proto: str | None = None, v3_auth: str | None = None, v3_priv_proto: str | None = None, v3_priv: str | None = None, device_id: int | None = None, credential_profile_id: int | None = None) -> dict[str, Any]:
         """Edit a UPS card."""
-        payload = {key: value for key, value in {"name": name, "host": host, "community": community, "snmp_version": snmp_version, "port": port, "v3_user": v3_user, "v3_auth_proto": v3_auth_proto, "v3_auth": v3_auth, "v3_priv_proto": v3_priv_proto, "v3_priv": v3_priv, "device_id": device_id}.items() if value is not None}
+        payload = {key: value for key, value in {"name": name, "host": host, "community": community, "snmp_version": snmp_version, "port": port, "v3_user": v3_user, "v3_auth_proto": v3_auth_proto, "v3_auth": v3_auth, "v3_priv_proto": v3_priv_proto, "v3_priv": v3_priv, "device_id": device_id, "credential_profile_id": credential_profile_id}.items() if value is not None}
         return ends.update_ups(get_hub(), ups_id, payload)
 
     @server.tool()
@@ -243,3 +243,51 @@ def register(server) -> None:
     def list_metrics(source_kind: str | None = None, source_id: int | None = None, device_id: int | None = None, metric: str | None = None, limit: int = 400) -> list[dict[str, Any]]:
         """Read stored current, power, voltage, energy or load samples."""
         return series.query_metrics(get_hub(), source_kind=source_kind, source_id=source_id, device_id=device_id, metric=metric, limit=limit)
+
+    @server.tool()
+    @expose
+    def list_interfaces() -> list[dict[str, Any]]:
+        """Host IPv4 subnets that are safe to scan. Docker, veth and bridge interfaces are skipped. primary is the default route."""
+        return scansvc.list_interfaces()
+
+    @server.tool()
+    @expose
+    def test_target(kind: str, host: str | None = None, mac: str | None = None, broadcast: str | None = None, username: str | None = None, password: str | None = None, port: int | None = None, use_tls: bool = False, insecure_tls: bool = False, confirm: bool = False, plug_kind: str | None = None, community: str | None = None, snmp_version: str | None = None) -> dict[str, Any]:
+        """Check settings without saving. kind is wol, amt, pdu, plug, jetkvm or ups. WOL only sends a packet when confirm is true."""
+        from wakehub.probe import test_target as run_test
+
+        return run_test(get_hub(), {"kind": kind, "host": host, "mac": mac, "broadcast": broadcast, "username": username, "password": password, "port": port, "use_tls": use_tls, "insecure_tls": insecure_tls, "confirm": confirm, "plug_kind": plug_kind, "community": community, "snmp_version": snmp_version})
+
+    @server.tool()
+    @expose
+    def list_credential_profiles() -> list[dict[str, Any]]:
+        """List saved logins. Passwords are not included."""
+        from wakehub.credentials import list_profiles
+
+        return list_profiles(get_hub())
+
+    @server.tool()
+    @expose
+    def add_credential_profile(name: str, username: str = "", password: str | None = None) -> dict[str, Any]:
+        """Save a username and password that several devices can share."""
+        from wakehub.credentials import add_profile
+
+        return add_profile(get_hub(), {"name": name, "username": username, "password": password})
+
+    @server.tool()
+    @expose
+    def update_credential_profile(profile_id: int, name: str | None = None, username: str | None = None, password: str | None = None) -> dict[str, Any]:
+        """Edit a saved login."""
+        from wakehub.credentials import update_profile
+
+        payload = {key: value for key, value in {"name": name, "username": username, "password": password}.items() if value is not None}
+        return update_profile(get_hub(), profile_id, payload)
+
+    @server.tool()
+    @expose
+    def remove_credential_profile(profile_id: int) -> dict[str, Any]:
+        """Remove a saved login. Devices keep their own stored passwords."""
+        from wakehub.credentials import remove_profile
+
+        remove_profile(get_hub(), profile_id)
+        return {"removed": profile_id}
