@@ -86,6 +86,176 @@ def test_netbooter_setup_page_and_challenge_are_recognized():
     assert not synaccess_http({"Server": "nginx"}, "<title>Router</title>", 401)
 
 
+def _input_name_page() -> str:
+    labels = ("Attic POE", "HDMI Streaming", "Home PC", "Internet Fiber Jack", "Network Gear", "Work HP", "Work Peplink")
+    inputs = "".join(f'<input type="text" name="oName{index}" value="{label}">' for index, label in enumerate(labels, start=1))
+    return f"<html><body><form>{inputs}</form></body></html>"
+
+
+def _status_table_page() -> str:
+    rows = (
+        ("1", "Attic POE"),
+        ("2", "It's HDMI"),
+        ("3", "Work (HP)"),
+        ("4", "Rack]"),
+    )
+    body = "".join(f"<tr><td>{number}</td><td>{label}</td><td>ON</td></tr>" for number, label in rows)
+    return "<html><table><tr><th>No.</th><th>Name</th><th>State</th></tr>" + body + "</table></html>"
+
+
+def test_outlet_name_fixtures_match_their_format(monkeypatch):
+    monkeypatch.undo()
+    assert parse_outlet_names("$A5\n1111111111111111,0.42,0.18,27") == {}
+    inputs = parse_outlet_names(_input_name_page())
+    assert inputs[1] == "Attic POE"
+    assert inputs[4] == "Internet Fiber Jack"
+    table = parse_outlet_names(_status_table_page())
+    assert table == {1: "Attic POE", 2: "It's HDMI", 3: "Work (HP)", 4: "Rack]"}
+    script = 'var olName = new Array("It\'s Attic", "Work (HP)", "Rack]");'
+    assert parse_outlet_names(f"<script>{script}</script>") == {1: "It's Attic", 2: "Work (HP)", 3: "Rack]"}
+    mixed = """var outletname = ["It's", 'say "hi"', "end]"];"""
+    assert parse_outlet_names(mixed) == {1: "It's", 2: 'say "hi"', 3: "end]"}
+
+    def handler(request):
+        if request.url.path == "/outletsetup.htm":
+            return httpx.Response(404, text="missing")
+        if request.url.path == "/outlets.htm":
+            return httpx.Response(200, text=_status_table_page(), headers={"content-type": "text/html"})
+        return httpx.Response(404, text="later")
+
+    client = SynaccessClient("192.168.0.8", "admin", "secret-pass", http=httpx.Client(transport=httpx.MockTransport(handler)))
+    assert client.read_outlet_names()[2] == "It's HDMI"
+    assert client.name_pages[0]["status"] == 404
+    assert client.name_pages[1]["path"] == "/outlets.htm"
+    assert "secret-pass" not in str(client.name_pages)
+    client.close()
+
+
+def _np05b_status_page() -> str:
+    # Outlet 2 has no opening <tr>. Outlet 3's name is empty. A later table has an Outlet List column.
+    return """
+    <html><body>
+    <table border="1">
+    <tr><td>Outlet</td><td>Name</td><td>Status</td></tr>
+    <tr><td>1</td><td>Attic POE</td><td>ON</td></tr>
+    <td>2</td><td>HDMI Streaming</td><td>ON</td></tr>
+    <tr><td>3</td><td></td><td>OFF</td></tr>
+    </table>
+    <table>
+    <tr><td>Group</td><td>Outlet List</td></tr>
+    <tr><td>Studio</td><td>3</td></tr>
+    </table>
+    </body></html>
+    """
+
+
+def test_status_table_ignores_a_missing_tr_and_the_next_table():
+    names = parse_outlet_names(_np05b_status_page())
+    assert names[1] == "Attic POE"
+    assert names[2] == "HDMI Streaming"
+    assert 3 not in names
+    assert "3" not in names.values()
+    assert "Outlet List" not in names.values()
+
+
+def test_diagnostics_redact_every_form_of_the_password():
+    import base64
+    import html
+    from urllib.parse import quote
+
+    from wakehub.clients.synaccess import redact_diagnostics
+
+    secret = "S3cr&t<pw>!"
+    username = "admin"
+    escaped = html.escape(secret, quote=True)
+    encoded = quote(secret, safe="")
+    token = base64.b64encode(f"{username}:{secret}".encode()).decode()
+    page = "\n".join(
+        (
+            f'<input type="password" name="pw" value="{escaped}">',
+            '<input name="again" type="password" value="other-secret">',
+            f'<a href="/go?password={encoded}">open</a>',
+            "Cookie: sid=1; session=abc",
+            "Set-Cookie: theme=dark; sid=2",
+            token,
+        )
+    )
+    cleaned = redact_diagnostics(page, secret, username)
+    assert secret not in cleaned
+    assert escaped not in cleaned
+    assert encoded not in cleaned
+    assert "other-secret" not in cleaned
+    assert "sid=1" not in cleaned
+    assert "session=abc" not in cleaned
+    assert "theme=dark" not in cleaned
+    assert token not in cleaned
+    assert "[redacted]" in cleaned
+
+
+def test_name_read_reports_the_first_non_404_and_a_login_page(monkeypatch, caplog):
+    import logging
+
+    from wakehub.clients.synaccess import LOGIN_MESSAGE
+
+    monkeypatch.undo()
+
+    def login_handler(request):
+        if request.url.path == "/outletsetup.htm":
+            return httpx.Response(404, text="last-must-not-win")
+        if request.url.path == "/outlets.htm":
+            return httpx.Response(200, text="<html><body>Please login<form><input type='password'></form></body></html>")
+        return httpx.Response(404, text="last-must-not-win")
+
+    client = SynaccessClient("192.168.0.8", "admin", "secret-pass", http=httpx.Client(transport=httpx.MockTransport(login_handler)))
+    with caplog.at_level(logging.INFO, logger="wakehub.synaccess"):
+        try:
+            client.read_outlet_names()
+        except Exception as exc:
+            message = str(exc)
+        else:
+            message = ""
+    client.close()
+    assert message == LOGIN_MESSAGE
+    assert "last-must-not-win" not in message
+    assert caplog.text.count("PDU outlet names") == 1
+
+    def plain_handler(request):
+        if request.url.path == "/outletsetup.htm":
+            return httpx.Response(404, text="skip")
+        if request.url.path == "/outlets.htm":
+            return httpx.Response(200, text="<html><body>no names TOKEN</body></html>")
+        return httpx.Response(401, text="later-login")
+
+    client = SynaccessClient("192.168.0.9", "admin", "secret-pass", http=httpx.Client(transport=httpx.MockTransport(plain_handler)))
+    try:
+        client.read_outlet_names()
+    except Exception as exc:
+        message = str(exc)
+    else:
+        message = ""
+    client.close()
+    assert "/outlets.htm" in message
+    assert "TOKEN" in message
+    assert "later-login" not in message
+
+    def rejected(request):
+        if request.url.path == "/outletsetup.htm":
+            return httpx.Response(401, text="denied")
+        return httpx.Response(404, text="later")
+
+    from wakehub.clients.synaccess import AUTH_MESSAGE
+
+    client = SynaccessClient("192.168.0.10", "admin", "secret-pass", http=httpx.Client(transport=httpx.MockTransport(rejected)))
+    try:
+        client.read_outlet_names()
+    except Exception as exc:
+        message = str(exc)
+    else:
+        message = ""
+    client.close()
+    assert message == AUTH_MESSAGE
+
+
 def test_amt_wsman_round_trip():
     request = build_power_change("http://amt.local:16992/wsman", 2, "uuid:test")
     assert "RequestPowerStateChange" in request

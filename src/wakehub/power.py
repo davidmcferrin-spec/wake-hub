@@ -17,7 +17,6 @@ from wakehub.endpoints import (
     outlet_labels,
     pdu_client,
     plug_client,
-    refresh_pdu_outlet_names,
     roku_client,
     ups_client,
 )
@@ -321,11 +320,8 @@ def set_pdu_outlet(hub: Hub, pdu_id: int, outlet: int, action: str, *, confirm: 
 
 
 def list_pdu_outlets(hub: Hub, pdu_id: int) -> dict[str, Any]:
-    try:
-        refresh_pdu_outlet_names(hub, pdu_id)
-    except Exception:
-        pass
-    row, client = pdu_client(hub, pdu_id)
+    # The status poll calls this. $A5 only, and a short timeout so a dead PDU cannot stall the page.
+    row, client = pdu_client(hub, pdu_id, timeout=2)
     from wakehub.endpoints import list_outlet_records
 
     stored = {item["number"]: item for item in list_outlet_records(hub, pdu_id)}

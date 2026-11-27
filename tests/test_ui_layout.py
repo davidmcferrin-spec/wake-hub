@@ -123,11 +123,16 @@ def test_devices_toolbar_and_hardware_tabs(live_server, hub):
         row = page.evaluate(
             """() => {
               const card = [...document.querySelectorAll("article.card")].find((node) => node.dataset.kind === "device" && node.innerText.includes("Office PC"));
-              const tops = [...card.querySelectorAll(".actions > button, .actions .more-toggle")].map((el) => el.getBoundingClientRect().top);
-              return { tops, spread: Math.max(...tops) - Math.min(...tops) };
+              const box = card.getBoundingClientRect();
+              const buttons = [...card.querySelectorAll(".actions > button, .actions .more-toggle")];
+              const outside = buttons.filter((el) => {
+                const rect = el.getBoundingClientRect();
+                return rect.width > 0 && (rect.right > box.right + 1 || rect.left < box.left - 1);
+              });
+              return { count: buttons.length, outside: outside.map((el) => el.innerText.trim()) };
             }"""
         )
-        assert row["spread"] < 4, row
+        assert row["count"] >= 4 and row["outside"] == [], row
         messages = []
         page.once("dialog", lambda dialog: messages.append(dialog.message) or dialog.dismiss())
         page.locator("article", has_text="Office PC").get_by_role("button", name="Off via AMT").click()
