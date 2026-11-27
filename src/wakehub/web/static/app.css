@@ -249,6 +249,25 @@ button[type="submit"], .primary, .ghost, .danger {
   gap: 0.2rem 0.8rem;
 }
 
+.hardware-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  max-width: 42rem;
+}
+
+.pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.8rem;
+}
+
+.toolbar select, .inline select, .sub select { width: auto; }
+
+@media (max-width: 640px) {
+  .pair { grid-template-columns: 1fr; }
+}
+
 .span-2 { grid-column: span 2; }
 
 .check {

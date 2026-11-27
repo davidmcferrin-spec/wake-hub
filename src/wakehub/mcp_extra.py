@@ -43,8 +43,14 @@ def register(server) -> None:
     @server.tool()
     @expose
     def list_pdu_outlets(pdu_id: int) -> dict[str, Any]:
-        """List outlet names and on/off state. Current is per inlet bank, not per outlet, on an NP-1601DU."""
+        """List outlet names and on/off state. Current is per inlet bank, not per outlet, on an NP-1601DU. Names are read from the PDU when it answers; a local override wins."""
         return actions.list_pdu_outlets(get_hub(), pdu_id)
+
+    @server.tool()
+    @expose
+    def refresh_pdu_outlet_names(pdu_id: int) -> dict[str, Any]:
+        """Read outlet names from the PDU and store them. Names typed on the PDU record are kept and win over the device."""
+        return ends.refresh_pdu_outlet_names(get_hub(), pdu_id)
 
     @server.tool()
     @expose

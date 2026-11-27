@@ -11,8 +11,10 @@ from wakehub.clients.ups import DESTRUCTIVE as UPS_DESTRUCTIVE
 from wakehub.endpoints import (
     amt_client,
     jetkvm_client,
+    outlet_labels,
     pdu_client,
     plug_client,
+    refresh_pdu_outlet_names,
     ups_client,
 )
 from wakehub.errors import WakeHubError, require_confirm
@@ -144,10 +146,13 @@ def set_pdu_outlet(hub: Hub, pdu_id: int, outlet: int, action: str, *, confirm: 
 
 
 def list_pdu_outlets(hub: Hub, pdu_id: int) -> dict[str, Any]:
+    try:
+        refresh_pdu_outlet_names(hub, pdu_id)
+    except Exception:
+        pass
     row, client = pdu_client(hub, pdu_id)
     try:
-        names = {int(key): value for key, value in json.loads(row["outlet_names"]).items()}
-        status = client.status(names)
+        status = client.status(outlet_labels(row))
     finally:
         client.close()
     return {

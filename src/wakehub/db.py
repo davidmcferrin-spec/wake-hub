@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS pdus (
     username TEXT NOT NULL DEFAULT '',
     password_enc TEXT,
     outlet_names TEXT NOT NULL DEFAULT '{}',
+    device_outlet_names TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -190,6 +191,7 @@ def connect(path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(SCHEMA)
     _ensure_column(conn, "pdus", "insecure_tls", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(conn, "pdus", "device_outlet_names", "TEXT NOT NULL DEFAULT '{}'")
     _ensure_column(conn, "plugs", "insecure_tls", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(conn, "jetkvm_endpoints", "extension", "TEXT NOT NULL DEFAULT ''")
     _ensure_column(conn, "jetkvm_endpoints", "poll_metrics", "INTEGER NOT NULL DEFAULT 0")

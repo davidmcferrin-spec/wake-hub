@@ -26,6 +26,16 @@ def hub(tmp_path):
     opened.close()
 
 
+@pytest.fixture(autouse=True)
+def pdu_names_offline(monkeypatch):
+    def offline(self):
+        from wakehub.errors import UpstreamError
+
+        raise UpstreamError("the PDU did not return outlet names")
+
+    monkeypatch.setattr("wakehub.clients.synaccess.SynaccessClient.read_outlet_names", offline)
+
+
 @pytest.fixture
 def client(hub):
     app = create_app(hub)

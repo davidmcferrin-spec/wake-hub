@@ -63,7 +63,8 @@ def public_pdu(row) -> dict[str, Any]:
         "insecure_tls": bool(row["insecure_tls"]),
         "username": row["username"],
         "password_set": bool(row["password_enc"]),
-        "outlet_names": json.loads(row["outlet_names"]),
+        "outlet_names": json.loads(row["outlet_names"] or "{}"),
+        "device_outlet_names": json.loads(row["device_outlet_names"] or "{}"),
         "credential_profile_id": row["credential_profile_id"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
@@ -206,6 +207,11 @@ def add_pdu(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
     )
     bind_identity(hub, "pdu", item_id, fields["host"])
     remember_profile(hub, "pdus", item_id, payload)
+    try:
+        refresh_pdu_outlet_names(hub, item_id)
+    except Exception:
+        # Adding the record still succeeds when the PDU is offline or has no name API.
+        pass
     return public_pdu(_row(hub, "pdu", item_id))
 
 
@@ -237,6 +243,32 @@ def update_pdu(hub: Hub, pdu_id: int, payload: dict[str, Any]) -> dict[str, Any]
     )
     bind_identity(hub, "pdu", pdu_id, host)
     remember_profile(hub, "pdus", pdu_id, payload)
+    return public_pdu(_row(hub, "pdu", pdu_id))
+
+
+def outlet_labels(row) -> dict[int, str]:
+    # A name typed in Wake Hub replaces the name read from the PDU.
+    merged: dict[int, str] = {}
+    for raw in (row["device_outlet_names"], row["outlet_names"]):
+        for key, value in json.loads(raw or "{}").items():
+            if value is None or not str(value).strip():
+                continue
+            merged[int(key)] = str(value)
+    return merged
+
+
+def refresh_pdu_outlet_names(hub: Hub, pdu_id: int) -> dict[str, Any]:
+    _row(hub, "pdu", pdu_id)
+    row, client = pdu_client(hub, pdu_id)
+    try:
+        names = client.read_outlet_names()
+    finally:
+        client.close()
+    stored = {str(number): label for number, label in sorted(names.items())}
+    hub.write(
+        "UPDATE pdus SET device_outlet_names = ?, updated_at = ? WHERE id = ?",
+        (json.dumps(stored), utcnow(), pdu_id),
+    )
     return public_pdu(_row(hub, "pdu", pdu_id))
 
 

@@ -6,6 +6,9 @@ const state = {
   actions: [],
   settings: null,
   editing: null,
+  focus: null,
+  kindFilter: "all",
+  deviceQuery: "",
 };
 
 const titles = {
@@ -248,21 +251,81 @@ function editorHtml() {
     </form>`;
 }
 
+function hardwareInventory() {
+  const power = state.power || { pdus: [], amts: [], jetkvms: [], plugs: [], ups: [] };
+  return [
+    ...(power.pdus || []).map((item) => ({ kind: "pdu", label: "PDU", item })),
+    ...(power.amts || []).map((item) => ({ kind: "amt", label: "AMT", item })),
+    ...(power.jetkvms || []).map((item) => ({ kind: "jetkvm", label: "JetKVM", item })),
+    ...(power.plugs || []).map((item) => ({ kind: "plug", label: "Plug", item })),
+    ...(power.ups || []).map((item) => ({ kind: "ups", label: "UPS", item })),
+  ];
+}
+
+function hardwareInventoryCard(entry) {
+  const item = entry.item;
+  return `
+    <article class="card" data-kind="${entry.kind}">
+      <header>
+        <h2>${escapeHtml(item.name)}</h2>
+        <span class="pill">${entry.label}</span>
+      </header>
+      <p class="meta">${escapeHtml(item.host || "no host")}${item.port ? `:${item.port}` : ""}</p>
+      <div class="row-actions">
+        <button type="button" data-open-kind="${entry.kind}" data-id="${item.id}">Open</button>
+      </div>
+    </article>`;
+}
+
 function renderDevices() {
-  const cards = state.devices.map(deviceCard).join("") || `<div class="empty">No devices yet. Add one, then send a magic packet.</div>`;
+  if (state.focus && window.hardwareEditor && window.findHardware) {
+    const record = window.findHardware(state.focus.kind, state.focus.id);
+    $("view").innerHTML = record
+      ? `<div class="row-actions"><button type="button" class="ghost" id="back-inventory">Back</button></div>${window.hardwareEditor(state.focus.kind, record)}`
+      : `<div class="row-actions"><button type="button" class="ghost" id="back-inventory">Back</button></div><div class="empty">That hardware record is gone.</div>`;
+    return;
+  }
+  const kind = state.kindFilter || "all";
+  const query = (state.deviceQuery || "").toLowerCase();
+  const matches = (item) => !query || `${item.name} ${item.host || ""}`.toLowerCase().includes(query);
+  const computers = (kind === "all" || kind === "device" ? state.devices.filter(matches) : []).map(deviceCard).join("");
+  const hardware = hardwareInventory()
+    .filter((entry) => (kind === "all" || kind === entry.kind) && matches(entry.item))
+    .map(hardwareInventoryCard)
+    .join("");
+  const cards = `${computers}${hardware}` || `<div class="empty">Nothing in this view yet.</div>`;
   $("view").innerHTML = `
     <div class="toolbar">
       <form id="filter-form" class="inline">
-        <input name="q" placeholder="Search" aria-label="Search">
+        <input name="q" placeholder="Search" aria-label="Search" value="${escapeHtml(state.deviceQuery || "")}">
         <input name="tag" placeholder="Tag" aria-label="Tag">
         <button type="submit" data-cap="list_devices" data-fields="q,tag">Filter</button>
       </form>
+      <label class="sub">Type
+        <select id="kind-filter" aria-label="Type">
+          <option value="all">All</option>
+          <option value="device">Computers</option>
+          <option value="pdu">PDU</option>
+          <option value="amt">AMT</option>
+          <option value="jetkvm">JetKVM</option>
+          <option value="plug">Plug</option>
+          <option value="ups">UPS</option>
+        </select>
+      </label>
       <button type="button" class="primary" id="new-device">Add device</button>
       <button type="button" class="ghost" data-cap="list_status" data-fields="">Refresh status</button>
     </div>
     <section class="grid">${cards}</section>
     ${state.metrics && state.metrics.length && typeof sparkline === "function" ? `<div class="card">${sparkline(state.metrics)}</div>` : ""}
     <div id="editor-slot">${state.editing ? editorHtml() : ""}</div>`;
+  const filter = $("kind-filter");
+  if (filter) {
+    filter.value = kind;
+    filter.addEventListener("change", () => {
+      state.kindFilter = filter.value;
+      render();
+    });
+  }
 }
 
 function renderHistory() {
@@ -334,6 +397,13 @@ function render() {
   if (state.page === "power") renderPower();
   if (state.page === "history") renderHistory();
   if (state.page === "settings") renderSettings();
+  if (state.page === "devices" && state.focus && window.findHardware) {
+    const record = window.findHardware(state.focus.kind, state.focus.id);
+    if (record) {
+      $("page-kicker").textContent = window.hardwareKindLabel(state.focus.kind);
+      $("page-title").textContent = record.name;
+    }
+  }
 }
 
 async function refreshDevices() {
@@ -406,12 +476,14 @@ function devicePayload(form) {
 }
 
 async function onClick(event) {
-  const pageButton = event.target.closest("[data-page]");
+  if (event.target.closest("input, select, textarea, label")) return;
+  const pageButton = event.target.closest("button[data-page], a[data-page]");
   if (pageButton) {
     await show(pageButton.dataset.page);
     return;
   }
   if (event.target.id === "new-device") {
+    state.focus = null;
     state.editing = "new";
     render();
     return;
@@ -426,7 +498,7 @@ async function onClick(event) {
     showBanner("Token copied.");
     return;
   }
-  const button = event.target.closest("[data-cap]");
+  const button = event.target.closest("button[data-cap], a[data-cap]");
   if (!button || button.type === "submit") return;
   if (window.handlePowerCap && await window.handlePowerCap(button)) return;
   const id = Number(button.dataset.id);
@@ -549,6 +621,37 @@ async function onSubmit(event) {
     } catch (error) {
       showBanner(error.message, true, error.existing);
     }
+    return;
+  }
+  if (form.id === "filter-form") {
+    event.preventDefault();
+    const data = new FormData(form);
+    const params = new URLSearchParams();
+    const q = String(data.get("q") || "").trim();
+    const tag = String(data.get("tag") || "").trim();
+    if (q) params.set("q", q);
+    if (tag) params.set("tag", tag);
+    state.deviceQuery = q;
+    try {
+      state.devices = await api("GET", `/api/v1/devices${params.toString() ? `?${params}` : ""}`);
+      render();
+    } catch (error) {
+      showBanner(error.message, true, error.existing);
+    }
+    return;
+  }
+  if (form.id === "history-form") {
+    event.preventDefault();
+    const data = new FormData(form);
+    const params = new URLSearchParams();
+    if (data.get("device_id")) params.set("device_id", String(data.get("device_id")));
+    if (data.get("limit")) params.set("limit", String(data.get("limit")));
+    try {
+      state.actions = await api("GET", `/api/v1/actions?${params}`);
+      render();
+    } catch (error) {
+      showBanner(error.message, true, error.existing);
+    }
   }
 }
 
@@ -583,9 +686,9 @@ async function boot() {
   if (state.booted) return;
   state.booted = true;
   window.setInterval(() => {
-    if (state.page !== "devices" || !state.token || state.editing) return;
+    if (state.page !== "devices" || !state.token || state.editing || state.focus) return;
     refreshDevices().then(() => {
-      if (!state.editing && state.page === "devices") render();
+      if (!state.editing && !state.focus && state.page === "devices") render();
     }).catch(() => {});
   }, 10000);
 }
@@ -632,32 +735,54 @@ window.removeProfile = async function (el) {
   renderPower();
 };
 
+document.addEventListener("submit", (event) => {
+  // A form submit reloads the page, and boot opens Devices.
+  event.preventDefault();
+}, true);
 document.body.addEventListener("click", (event) => {
+  if (event.target.id === "back-inventory") {
+    state.focus = null;
+    render();
+    return;
+  }
+  const save = event.target.closest("[data-save]");
+  if (save && window.saveHardware) {
+    window.saveHardware(save).catch((error) => showBanner(error.message, true, error.existing));
+    return;
+  }
+  const field = event.target.closest("input, select, textarea, label");
+  if (field && !event.target.closest("button, a")) return;
   const opener = event.target.closest("[data-open-kind]");
   if (opener) {
     const kind = opener.dataset.openKind;
     const id = Number(opener.dataset.id);
+    state.editing = null;
     if (kind === "device") {
+      state.focus = null;
       state.editing = id;
       show("devices").catch((error) => showBanner(error.message, true, error.existing));
     } else {
-      show("power").catch((error) => showBanner(error.message, true, error.existing));
+      state.focus = { kind, id };
+      show("devices").catch((error) => showBanner(error.message, true, error.existing));
     }
     return;
   }
-  const nav = event.target.closest("[data-page]");
+  const nav = event.target.closest("button[data-page], a[data-page]");
   if (nav && nav.closest("aside")) {
+    state.focus = null;
     show(nav.dataset.page).catch((error) => showBanner(error.message, true, error.existing));
     return;
   }
   const control = event.target.closest("button[data-cap], a[data-cap]");
-  if (!control || control.type === "submit") return;
-  const handler = window.CONTROL_HANDLERS && window.CONTROL_HANDLERS[control.dataset.cap];
-  if (!handler) {
-    onClick(event).catch((error) => showBanner(error.message, true, error.existing));
-    return;
+  if (control && control.type !== "submit") {
+    const handler = window.CONTROL_HANDLERS && window.CONTROL_HANDLERS[control.dataset.cap];
+    if (handler) {
+      Promise.resolve(handler(control)).catch((error) => showBanner(error.message, true, error.existing));
+      return;
+    }
   }
-  Promise.resolve(handler(control)).catch((error) => showBanner(error.message, true, error.existing));
+  if (control && control.type === "submit") return;
+  onClick(event).catch((error) => showBanner(error.message, true, error.existing));
 });
 document.body.addEventListener("submit", (event) => {
   onSubmit(event).catch((error) => showBanner(error.message, true, error.existing));

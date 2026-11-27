@@ -66,6 +66,36 @@ def test_session_survives_until_logout_or_rotation(client, hub):
     assert again.json()["setup_required"] is False
 
 
+def test_pdu_outlet_names_are_read_and_local_overrides_win(client, monkeypatch):
+    def names(self):
+        return {1: "NAS", 2: "Desk"}
+
+    monkeypatch.setattr("wakehub.clients.synaccess.SynaccessClient.read_outlet_names", names)
+    created = client.post("/api/v1/pdus", json={"name": "Rack", "host": "10.8.0.8", "outlet_names": {"1": "Custom"}})
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["device_outlet_names"] == {"1": "NAS", "2": "Desk"}
+    assert body["outlet_names"]["1"] == "Custom"
+    from wakehub.endpoints import outlet_labels
+
+    labels = outlet_labels({"device_outlet_names": '{"1": "NAS", "2": "Desk"}', "outlet_names": '{"1": "Custom"}'})
+    assert labels == {1: "Custom", 2: "Desk"}
+    refreshed = client.post(f"/api/v1/pdus/{body['id']}/outlet-names")
+    assert refreshed.status_code == 200, refreshed.text
+    assert refreshed.json()["outlet_names"]["1"] == "Custom"
+    assert refreshed.json()["device_outlet_names"]["2"] == "Desk"
+
+    def missing(self):
+        from wakehub.errors import UpstreamError
+
+        raise UpstreamError("the PDU did not return outlet names")
+
+    monkeypatch.setattr("wakehub.clients.synaccess.SynaccessClient.read_outlet_names", missing)
+    offline = client.post("/api/v1/pdus", json={"name": "Quiet", "host": "10.8.0.9"})
+    assert offline.status_code == 201, offline.text
+    assert offline.json()["device_outlet_names"] == {}
+
+
 def test_credential_profile_is_stored_encrypted_and_selectable(client):
     created = client.post("/api/v1/credential-profiles", json={"name": "rack", "username": "admin", "password": "secret-pw"})
     assert created.status_code == 201

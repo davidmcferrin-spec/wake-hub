@@ -54,6 +54,7 @@ CAPABILITIES: tuple[Capability, ...] = (
     Capability("update_pdu", "Edit a PDU", "PATCH", "/api/v1/pdus/{pdu_id}", "update_pdu"),
     Capability("remove_pdu", "Remove a PDU", "DELETE", "/api/v1/pdus/{pdu_id}", "remove_pdu"),
     Capability("list_pdu_outlets", "List PDU outlets and bank current", "GET", "/api/v1/pdus/{pdu_id}/outlets", "list_pdu_outlets"),
+    Capability("refresh_pdu_outlet_names", "Read outlet names from the PDU", "POST", "/api/v1/pdus/{pdu_id}/outlet-names", "refresh_pdu_outlet_names"),
     Capability("set_pdu_outlet", "Switch a PDU outlet", "POST", "/api/v1/pdus/{pdu_id}/outlets/{outlet}", "set_pdu_outlet"),
     Capability("list_amt", "List Intel AMT endpoints", "GET", "/api/v1/amt", "list_amt"),
     Capability("add_amt", "Add an Intel AMT endpoint", "POST", "/api/v1/amt", "add_amt"),
