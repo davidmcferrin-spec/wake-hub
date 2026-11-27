@@ -101,7 +101,7 @@ def register(server) -> None:
     @server.tool()
     @expose
     def amt_power(amt_id: int, action: str, confirm: bool = False) -> dict[str, Any]:
-        """Change AMT power. action is on, shutdown (graceful off), off_hard, reboot (reset), or cycle. shutdown, off, off_hard, reboot, and cycle require confirm=true. Works whether or not the endpoint is linked to a computer."""
+        """Change AMT power. action is on (2), off (8, hard off), reboot (10, reset), cycle (5), or shutdown (12, graceful). off, reboot, cycle, and shutdown require confirm=true. off_hard is refused: use off. An action the firmware does not list in AvailableRequestedPowerStates is refused. Works whether or not the endpoint is linked to a computer."""
         return actions.amt_power(get_hub(), amt_id, action, confirm=confirm, source="mcp")
 
     @server.tool()

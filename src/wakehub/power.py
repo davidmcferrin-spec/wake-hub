@@ -187,8 +187,8 @@ def effect_note(kind: str, action: str) -> str:
     """Short phrase for the command client_command reports."""
     command = client_command(kind, action)
     if kind == "amt":
-        # CIM RequestPowerStateChange: 8 is the hard power off, 12 is the soft graceful off, 6 is power off hard.
-        return {2: "power on", 5: "power cycle", 6: "power off hard", 8: "hard power off", 10: "reset", 12: "soft graceful off"}[command["code"]]
+        # 2 on, 5 power cycle, 8 hard off, 10 reset, 12 graceful shutdown.
+        return {2: "power on", 5: "power cycle", 8: "hard power off", 10: "reset", 12: "soft graceful off"}[command["code"]]
     if kind == "ups":
         from wakehub.clients.ups import OIDS
 
@@ -220,7 +220,6 @@ def effect_table() -> dict[str, dict[str, str]]:
     for action, kinds in _ACTION_KINDS.items():
         for kind in kinds:
             table.setdefault(kind, {})[action] = effect_note(kind, action)
-    table.setdefault("amt", {})["off_hard"] = effect_note("amt", "off_hard")
     return table
 
 
@@ -437,8 +436,8 @@ def plug_status(hub: Hub, plug_id: int) -> dict[str, Any]:
 
 def amt_power(hub: Hub, amt_id: int, action: str, *, confirm: bool, source: str) -> dict[str, Any]:
     if action == "off_hard":
-        require_confirm("off", confirm)
-    elif action in {"off", "cycle", "reboot", "shutdown"}:
+        raise WakeHubError("use off")
+    if action in {"off", "cycle", "reboot", "shutdown"}:
         require_confirm(action, confirm)
     row, client = amt_client(hub, amt_id)
     try:

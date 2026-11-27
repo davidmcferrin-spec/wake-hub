@@ -14,10 +14,10 @@ from urllib.request import HTTPDigestAuthHandler, HTTPPasswordMgrWithDefaultReal
 from wakehub.errors import UpstreamError, WakeHubError
 from wakehub.inventory import host_for_url
 
+# CIM RequestPowerStateChange values Intel AMT actually accepts. 8 is the hard off. 12 is graceful.
 POWER_COMMANDS = {
     "on": 2,
     "cycle": 5,
-    "off_hard": 6,
     "off": 8,
     "reboot": 10,
     "shutdown": 12,
@@ -28,7 +28,6 @@ POWER_NAMES = {
     3: "sleep_light",
     4: "sleep_deep",
     5: "power_cycle",
-    6: "off_hard",
     7: "hibernate",
     8: "off",
     9: "power_cycle_hard",
@@ -116,14 +115,21 @@ def parse_power_state(body: str) -> dict:
     }
 
 
-def parse_method_return(body: str) -> int:
+def return_error(action: str | None, value: int) -> str:
+    if action == "shutdown":
+        return "AMT refused graceful shutdown (needs the Intel LMS/OS agent running); use Off"
+    name = action or "power change"
+    return f"AMT refused {name} (return {value})"
+
+
+def parse_method_return(body: str, action: str | None = None) -> int:
     root = _root(body)
     value = _first_int(root, "ReturnValue")
     if value is None:
         fault = _first_text(root, "Text") or _first_text(root, "Reason")
         raise UpstreamError(fault or "AMT did not return a method result")
     if value != 0:
-        raise UpstreamError(f"AMT RequestPowerStateChange returned {value}")
+        raise UpstreamError(return_error(action, value))
     return value
 
 
@@ -191,15 +197,17 @@ class AmtClient:
         return parse_power_state(body)
 
     def request_power(self, action: str) -> dict:
+        if action == "off_hard":
+            raise WakeHubError("use off")
         if action not in POWER_COMMANDS:
-            raise WakeHubError("AMT action must be on, off, off_hard, cycle, reboot, or shutdown")
+            raise WakeHubError("AMT action must be on, off, cycle, reboot, or shutdown")
         code = POWER_COMMANDS[action]
-        if action == "shutdown":
-            current = self.power_state()
-            if current["available"] and 12 not in current["available"]:
-                raise WakeHubError("this AMT firmware does not advertise graceful shutdown")
+        current = self.power_state()
+        available = current.get("available") or []
+        if available and code not in available:
+            raise WakeHubError(f"AMT does not advertise {action} (power-state {code})")
         self._post(build_power_change(self.uri, code))
-        parsed = parse_method_return(self._last_body)
+        parsed = parse_method_return(self._last_body, action)
         return {"action": action, "power_state": code, "return_value": parsed}
 
     def _post(self, payload: str) -> str:

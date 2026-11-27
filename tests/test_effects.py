@@ -12,7 +12,6 @@ CASES = [
     ("amt", "reboot", "reset"),
     ("amt", "cycle", "power cycle"),
     ("amt", "shutdown", "soft graceful off"),
-    ("amt", "off_hard", "power off hard"),
     ("plug", "on", "turns the plug on"),
     ("plug", "off", "cuts power"),
     ("plug", "reboot", "power cycle"),
@@ -75,8 +74,11 @@ def test_every_supported_pair_is_in_the_table():
     table = effect_table()
     assert table["ups"]["off"] == table["ups"]["shutdown"] == "cuts power"
     assert table["amt"]["off"] == "hard power off"
+    assert table["amt"]["reboot"] == "reset"
+    assert table["amt"]["cycle"] == "power cycle"
     assert table["amt"]["shutdown"] == "soft graceful off"
-    assert table["amt"]["off_hard"] == "power off hard"
+    assert POWER_COMMANDS == {"on": 2, "cycle": 5, "off": 8, "reboot": 10, "shutdown": 12}
+    assert "off_hard" not in POWER_COMMANDS
 
 
 def test_device_payload_includes_the_effect_table(client):

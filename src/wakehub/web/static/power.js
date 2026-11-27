@@ -298,18 +298,18 @@ function statusPill(key, label) {
 window.hardwareControls = function (kind, item, full) {
   const id = item.id;
   if (kind === "amt") {
-    const more = full ? `
-        <button type="button" class="danger" data-cap="amt_power" data-fields="action,confirm" data-id="${id}" data-action="off_hard">Off hard</button>
-        <button type="button" class="danger" data-cap="amt_power" data-fields="action,confirm" data-id="${id}" data-action="cycle">Power cycle</button>
-        <button type="button" class="ghost" data-cap="amt_power_state" data-fields="" data-id="${id}">Read status</button>` : `
-        <button type="button" class="ghost" data-cap="amt_power_state" data-fields="" data-id="${id}">Status</button>`;
+    const status = full
+      ? `<button type="button" class="ghost" data-cap="amt_power_state" data-fields="" data-id="${id}">Read status</button>`
+      : `<button type="button" class="ghost" data-cap="amt_power_state" data-fields="" data-id="${id}">Status</button>`;
     return `
       ${statusPill(`amt-${id}`, "Checking")}
-      <div class="row-actions">
-        <button type="button" class="primary" data-cap="amt_power" data-fields="action,confirm" data-id="${id}" data-action="on">Power on</button>
-        <button type="button" class="danger" data-cap="amt_power" data-fields="action,confirm" data-id="${id}" data-action="shutdown">Off</button>
-        <button type="button" class="danger" data-cap="amt_power" data-fields="action,confirm" data-id="${id}" data-action="reboot">Reset</button>
-        ${more}
+      <div class="row-actions" data-amt-actions="${id}">
+        <button type="button" class="primary" data-cap="amt_power" data-fields="action,confirm" data-id="${id}" data-action="on" data-amt-code="2">Power on</button>
+        <button type="button" class="danger" data-cap="amt_power" data-fields="action,confirm" data-id="${id}" data-action="off" data-amt-code="8">Off</button>
+        <button type="button" class="danger" data-cap="amt_power" data-fields="action,confirm" data-id="${id}" data-action="reboot" data-amt-code="10">Reset</button>
+        <button type="button" class="danger" data-cap="amt_power" data-fields="action,confirm" data-id="${id}" data-action="shutdown" data-amt-code="12">Shut down</button>
+        <button type="button" class="danger" data-cap="amt_power" data-fields="action,confirm" data-id="${id}" data-action="cycle" data-amt-code="5">Power cycle</button>
+        ${status}
       </div>`;
   }
   if (kind === "pdu") {
@@ -679,9 +679,21 @@ function hardwareName(kind, id, fallback) {
 
 function amtConfirm(id, action) {
   const name = hardwareName("amt", id, "AMT");
-  const verb = { shutdown: "Shut down", off: "Turn off", off_hard: "Hard off", reboot: "Reset", cycle: "Power cycle" }[action] || action;
+  const verb = { shutdown: "Shut down", off: "Turn off", reboot: "Reset", cycle: "Power cycle" }[action] || action;
   const note = typeof effectNote === "function" ? effectNote("amt", action) : "";
   return note ? `${verb} ${name} via AMT (${note})?` : `${verb} ${name} via AMT?`;
+}
+
+function applyAmtAvailable(id, available) {
+  if (!available || !available.length) return;
+  state.amtAvailable = state.amtAvailable || {};
+  state.amtAvailable[id] = available;
+  document.querySelectorAll(`button[data-cap=amt_power][data-id="${id}"]`).forEach((button) => {
+    const code = Number(button.dataset.amtCode);
+    const supported = available.map(Number).includes(code);
+    button.disabled = !supported;
+    if (!supported) button.title = `AMT does not advertise this action (power-state ${code})`;
+  });
 }
 
 function jetVerb(action) {
@@ -765,6 +777,7 @@ window.handlePowerCap = async function handlePowerCap(button) {
         const data = await api("GET", `/api/v1/amt/${id}/power`);
         const text = `${data.name || "AMT"} is ${data.power_name || "unknown"}`;
         if (slot) slot.textContent = text;
+        applyAmtAvailable(id, data.available || []);
         showBanner(text);
       } catch (error) {
         if (slot) slot.textContent = error.message;

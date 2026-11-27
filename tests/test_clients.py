@@ -104,6 +104,47 @@ def test_amt_wsman_round_trip():
     assert state["power_name"] == "off"
     assert 12 in state["available"]
     assert parse_method_return("<ReturnValue>0</ReturnValue>") == 0
+    from wakehub.clients.amt import AmtClient, POWER_COMMANDS, return_error
+    from wakehub.errors import UpstreamError, WakeHubError
+
+    assert return_error("shutdown", 2) == "AMT refused graceful shutdown (needs the Intel LMS/OS agent running); use Off"
+    assert return_error("off", 4) == "AMT refused off (return 4)"
+    try:
+        parse_method_return("<ReturnValue>2</ReturnValue>", action="shutdown")
+    except UpstreamError as exc:
+        assert "Intel LMS" in str(exc)
+    else:
+        raise AssertionError("nonzero ReturnValue was accepted")
+    calls = []
+
+    def poster(_uri, payload):
+        if "Enumerate" in payload:
+            return 200, """<body><PowerState>2</PowerState>
+              <AvailableRequestedPowerStates>2</AvailableRequestedPowerStates>
+              <AvailableRequestedPowerStates>8</AvailableRequestedPowerStates>
+              <AvailableRequestedPowerStates>10</AvailableRequestedPowerStates>
+            </body>"""
+        calls.append(payload)
+        return 200, "<ReturnValue>0</ReturnValue>"
+
+    client = AmtClient("10.0.0.8", "admin", "secret", poster=poster)
+    assert POWER_COMMANDS["off"] == 8
+    sent = client.request_power("off")
+    assert sent["power_state"] == 8
+    assert "<n1:PowerState>8</n1:PowerState>" in calls[-1]
+    try:
+        client.request_power("shutdown")
+    except WakeHubError as exc:
+        assert "does not advertise shutdown" in str(exc)
+        assert "12" in str(exc)
+    else:
+        raise AssertionError("unadvertised shutdown was sent")
+    try:
+        client.request_power("off_hard")
+    except WakeHubError as exc:
+        assert str(exc) == "use off"
+    else:
+        raise AssertionError("off_hard was accepted")
 
 
 def test_jetkvm_rpc_and_signaling():

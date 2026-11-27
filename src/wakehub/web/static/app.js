@@ -17,6 +17,7 @@ const state = {
   selection: [],
   methodPicks: {},
   effects: null,
+  amtAvailable: {},
 };
 
 const titles = {
@@ -1200,6 +1201,9 @@ function render() {
     }
   }
   restoreTransient(transient);
+  Object.entries(state.amtAvailable || {}).forEach(([id, available]) => {
+    if (typeof applyAmtAvailable === "function") applyAmtAvailable(id, available);
+  });
 }
 
 async function refreshDevices() {
@@ -1948,6 +1952,7 @@ document.body.addEventListener("click", (event) => {
         if (control.isConnected) {
           control.disabled = false;
           control.removeAttribute("aria-busy");
+          if (control.dataset.cap === "amt_power" && state.amtAvailable) applyAmtAvailable(control.dataset.id, state.amtAvailable[control.dataset.id] || []);
         }
       });
       return;

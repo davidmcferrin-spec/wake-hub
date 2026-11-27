@@ -373,7 +373,6 @@ button.sr-only {
 
 .more .menu {
   position: fixed;
-  z-index: 30;
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -386,10 +385,18 @@ button.sr-only {
   box-shadow: var(--shadow);
   max-height: calc(100vh - 1rem);
   overflow: auto;
+  z-index: 50;
 }
 
+.more .menu > * { flex-shrink: 0; }
+
 .more .menu button,
-.more .menu label { justify-content: flex-start; margin: 0; }
+.more .menu label { justify-content: flex-start; margin: 0; flex-shrink: 0; }
+
+body:has(.more .menu:not(.hidden)) .banner {
+  top: var(--s4);
+  bottom: auto;
+}
 
 .outlet-line { display: grid; grid-template-columns: minmax(6rem, 1fr) auto auto auto; gap: var(--s2); align-items: center; }
 
