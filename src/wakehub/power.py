@@ -70,7 +70,7 @@ def dispatch_device(
         return plug_power(hub, chosen["plug_id"], mapped, confirm=confirm, source=source)
     if chosen["kind"] == "amt":
         try:
-            return amt_power(hub, chosen["amt_id"], action, confirm=confirm, source=source)
+            result = amt_power(hub, chosen["amt_id"], action, confirm=confirm, source=source)
         except Exception as exc:
             if method not in {None, "", "auto"} or action != "on" or not _amt_unreachable(exc):
                 raise
@@ -78,6 +78,9 @@ def dispatch_device(
             if fallback is None:
                 raise
             return fallback
+        if isinstance(result, dict):
+            result["name"] = row["name"]
+        return result
     if chosen["kind"] == "jetkvm":
         endpoint, client = jetkvm_client(hub, chosen["jetkvm_id"])
         client.close()
@@ -113,12 +116,9 @@ def dispatch_device(
 
 
 def _amt_unreachable(exc: Exception) -> bool:
-    from wakehub.errors import UpstreamError
+    from wakehub.errors import AmtUnreachable
 
-    if not isinstance(exc, UpstreamError):
-        return False
-    text = str(exc).lower()
-    return "request failed" in text or "timed out" in text or "timeout" in text or "unreachable" in text
+    return isinstance(exc, AmtUnreachable)
 
 
 def _fallback_from_amt(hub: Hub, row, source: str) -> dict[str, Any] | None:

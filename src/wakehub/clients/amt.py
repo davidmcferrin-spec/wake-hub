@@ -6,12 +6,15 @@ Self-signed certificates are allowed when the endpoint says so.
 
 from __future__ import annotations
 
+import errno
+import socket
 import ssl
+import urllib.error
 import uuid
 import xml.etree.ElementTree as ET
 from urllib.request import HTTPDigestAuthHandler, HTTPPasswordMgrWithDefaultRealm, Request, build_opener
 
-from wakehub.errors import UpstreamError, WakeHubError
+from wakehub.errors import AmtUnreachable, UpstreamError, WakeHubError
 from wakehub.inventory import host_for_url
 
 # CIM RequestPowerStateChange values Intel AMT actually accepts. 8 is the hard off. 12 is graceful.
@@ -209,8 +212,11 @@ class AmtClient:
         current = None
         try:
             current = self.power_state()
+        except AmtUnreachable:
+            # One timeout is enough. A second command would wait the full timeout again.
+            raise
         except Exception:
-            # A status read must not block the command. The ReturnValue reports the outcome.
+            # A status read that got an HTTP answer must not block the command.
             current = None
         if current:
             state = current.get("power_state")
@@ -240,6 +246,16 @@ class AmtClient:
                 with self._opener.open(request, timeout=self._timeout) as response:
                     status = response.status
                     body = response.read().decode("utf-8", errors="replace")
+            except urllib.error.HTTPError as exc:
+                # HTTPError is an OSError. Catching it here keeps a 401 or 500 from looking like a dead host.
+                status = exc.code
+                body = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
+            except urllib.error.URLError as exc:
+                if _connection_failure(exc.reason):
+                    raise AmtUnreachable(f"AMT unreachable: {exc.reason}") from exc
+                raise UpstreamError(f"AMT request failed: {exc}") from exc
+            except (TimeoutError, socket.timeout, ConnectionError) as exc:
+                raise AmtUnreachable(f"AMT unreachable: {exc}") from exc
             except OSError as exc:
                 raise UpstreamError(f"AMT request failed: {exc}") from exc
         self._last_body = body
@@ -248,3 +264,11 @@ class AmtClient:
         if status >= 400:
             raise UpstreamError(f"AMT HTTP {status}")
         return body
+
+
+def _connection_failure(reason: object) -> bool:
+    if isinstance(reason, (TimeoutError, socket.timeout, ConnectionError, socket.gaierror)):
+        return True
+    if isinstance(reason, OSError) and reason.errno in {errno.ECONNREFUSED, errno.ETIMEDOUT, errno.EHOSTUNREACH, errno.ENETUNREACH}:
+        return True
+    return isinstance(reason, str) and "timed out" in reason.lower()

@@ -817,7 +817,7 @@ window.handlePowerCap = async function handlePowerCap(button) {
         clearAmtHints(id);
       }
       const slot = document.getElementById(`amt-status-${id}`);
-      const text = `${data.name || "AMT"} ${action}`;
+      const text = data.reason ? `${data.name || "AMT"}: ${data.reason}` : `${data.name || "AMT"} ${action}`;
       if (slot) slot.textContent = text;
       showBanner(text);
       return true;
@@ -1051,7 +1051,7 @@ async function sendPower(el) {
   const destructive = action !== "on";
   if (destructive && !window.confirm(powerConfirm(device, action, method))) return;
   const result = await api("POST", `/api/v1/devices/${id}/power`, { action, method, confirm: destructive });
-  showBanner(result.reason || reachText(result));
+  showBanner(reachText(result));
   await refreshDevices();
   render();
 }

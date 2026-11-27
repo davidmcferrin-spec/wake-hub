@@ -1,6 +1,6 @@
 import pytest
 
-from wakehub.errors import UpstreamError
+from wakehub.errors import AmtUnreachable
 
 
 class _AlreadyOn:
@@ -17,7 +17,7 @@ class _Unreachable:
         pass
 
     def request_power(self, _action):
-        raise UpstreamError("AMT request failed: timed out")
+        raise AmtUnreachable("AMT unreachable: timed out")
 
 
 def test_wake_on_a_running_machine_is_ok(client, monkeypatch):

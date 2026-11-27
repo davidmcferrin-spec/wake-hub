@@ -51,6 +51,10 @@ class UpstreamError(WakeHubError):
     code = "upstream"
 
 
+class AmtUnreachable(UpstreamError):
+    """The AMT host never accepted a connection, so Auto wake may try another method."""
+
+
 # Turning a machine off, or cycling power, must be explicit on the API and MCP.
 DESTRUCTIVE_ACTIONS = frozenset({"off", "cycle", "reboot", "shutdown"})
 

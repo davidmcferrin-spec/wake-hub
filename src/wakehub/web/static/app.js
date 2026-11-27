@@ -1427,7 +1427,7 @@ async function onClick(event) {
 
 function reachText(result) {
   const name = (result && result.name) || "This device";
-  if (result && result.reason) return result.reason;
+  if (result && result.reason) return `${name}: ${result.reason}`;
   if (result && result.amt_id != null) return `${name}: AMT command sent`;
   if (result && result.reachable === true) return `${name} answered in ${result.elapsed_s}s`;
   if (result && result.reachable === false) return `${name}: packet sent, host did not answer`;
