@@ -684,15 +684,36 @@ function amtConfirm(id, action) {
   return note ? `${verb} ${name} via AMT (${note})?` : `${verb} ${name} via AMT?`;
 }
 
-function applyAmtAvailable(id, available) {
-  if (!available || !available.length) return;
-  state.amtAvailable = state.amtAvailable || {};
-  state.amtAvailable[id] = available;
+const AMT_HINT = "firmware doesn't list this right now";
+
+function clearAmtHints(id) {
+  if (state.amtAvailable) delete state.amtAvailable[id];
   document.querySelectorAll(`button[data-cap=amt_power][data-id="${id}"]`).forEach((button) => {
-    const code = Number(button.dataset.amtCode);
-    const supported = available.map(Number).includes(code);
-    button.disabled = !supported;
-    if (!supported) button.title = `AMT does not advertise this action (power-state ${code})`;
+    button.disabled = false;
+    if (button.dataset.amtHint === "1") {
+      button.removeAttribute("title");
+      delete button.dataset.amtHint;
+    }
+  });
+}
+
+function applyAmtAvailable(id, available) {
+  const listed = Array.isArray(available) ? available.map(Number) : [];
+  if (!listed.length) {
+    clearAmtHints(id);
+    return;
+  }
+  state.amtAvailable = state.amtAvailable || {};
+  state.amtAvailable[id] = listed;
+  document.querySelectorAll(`button[data-cap=amt_power][data-id="${id}"]`).forEach((button) => {
+    button.disabled = false;
+    if (!listed.includes(Number(button.dataset.amtCode))) {
+      button.title = AMT_HINT;
+      button.dataset.amtHint = "1";
+    } else if (button.dataset.amtHint === "1") {
+      button.removeAttribute("title");
+      delete button.dataset.amtHint;
+    }
   });
 }
 
@@ -780,6 +801,7 @@ window.handlePowerCap = async function handlePowerCap(button) {
         applyAmtAvailable(id, data.available || []);
         showBanner(text);
       } catch (error) {
+        clearAmtHints(id);
         if (slot) slot.textContent = error.message;
         throw error;
       }
@@ -788,7 +810,12 @@ window.handlePowerCap = async function handlePowerCap(button) {
       const action = button.dataset.action;
       const destructive = action !== "on";
       if (destructive && !window.confirm(amtConfirm(id, action))) return true;
-      const data = await api("POST", `/api/v1/amt/${id}/power`, { action, confirm: destructive });
+      let data;
+      try {
+        data = await api("POST", `/api/v1/amt/${id}/power`, { action, confirm: destructive });
+      } finally {
+        clearAmtHints(id);
+      }
       const slot = document.getElementById(`amt-status-${id}`);
       const text = `${data.name || "AMT"} ${action}`;
       if (slot) slot.textContent = text;
@@ -1024,7 +1051,7 @@ async function sendPower(el) {
   const destructive = action !== "on";
   if (destructive && !window.confirm(powerConfirm(device, action, method))) return;
   const result = await api("POST", `/api/v1/devices/${id}/power`, { action, method, confirm: destructive });
-  showBanner(result.noop ? result.reason : reachText(result));
+  showBanner(result.reason || reachText(result));
   await refreshDevices();
   render();
 }

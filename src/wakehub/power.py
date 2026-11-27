@@ -69,7 +69,15 @@ def dispatch_device(
             raise WakeHubError(f"a plug cannot {action}")
         return plug_power(hub, chosen["plug_id"], mapped, confirm=confirm, source=source)
     if chosen["kind"] == "amt":
-        return amt_power(hub, chosen["amt_id"], action, confirm=confirm, source=source)
+        try:
+            return amt_power(hub, chosen["amt_id"], action, confirm=confirm, source=source)
+        except Exception as exc:
+            if method not in {None, "", "auto"} or action != "on" or not _amt_unreachable(exc):
+                raise
+            fallback = _fallback_from_amt(hub, row, source)
+            if fallback is None:
+                raise
+            return fallback
     if chosen["kind"] == "jetkvm":
         endpoint, client = jetkvm_client(hub, chosen["jetkvm_id"])
         client.close()
@@ -102,6 +110,39 @@ def dispatch_device(
             raise WakeHubError(f"a UPS cannot {action}")
         return ups_action(hub, chosen["ups_id"], mapped, confirm=confirm, source=source)
     raise WakeHubError(f"unknown power method {chosen['kind']}")
+
+
+def _amt_unreachable(exc: Exception) -> bool:
+    from wakehub.errors import UpstreamError
+
+    if not isinstance(exc, UpstreamError):
+        return False
+    text = str(exc).lower()
+    return "request failed" in text or "timed out" in text or "timeout" in text or "unreachable" in text
+
+
+def _fallback_from_amt(hub: Hub, row, source: str) -> dict[str, Any] | None:
+    methods = json.loads(row["methods"] or "[]")
+    passed = False
+    for item in methods:
+        kind = item.get("kind")
+        if kind == "amt":
+            passed = True
+            continue
+        if not passed or kind not in _ACTION_KINDS["on"]:
+            continue
+        if kind == "wol":
+            from wakehub.inventory import send_wake_packet
+
+            result = send_wake_packet(hub, int(row["id"]), source=source)
+            result["method"] = "wol"
+            result["reason"] = "AMT unreachable, sent WOL"
+            return result
+        result = dispatch_device(hub, int(row["id"]), action="on", method=str(kind), confirm=False, source=source)
+        if isinstance(result, dict):
+            result["reason"] = f"AMT unreachable, sent {kind}"
+        return result
+    return None
 
 
 # Order in the device's methods list is the priority. A kind is skipped when it cannot do the action.
@@ -445,8 +486,9 @@ def amt_power(hub: Hub, amt_id: int, action: str, *, confirm: bool, source: str)
     except Exception as exc:
         record_action(hub, source=source, action=f"amt_{action}", ok=False, detail=str(exc), target_kind="amt", target_id=amt_id, target_name=row["name"])
         raise
-    record_action(hub, source=source, action=f"amt_{action}", ok=True, detail=action, target_kind="amt", target_id=amt_id, target_name=row["name"])
     result["amt_id"] = amt_id
+    result["name"] = row["name"]
+    record_action(hub, source=source, action=f"amt_{action}", ok=True, detail=result.get("reason") or action, target_kind="amt", target_id=amt_id, target_name=row["name"])
     return result
 
 

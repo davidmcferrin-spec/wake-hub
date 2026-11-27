@@ -108,6 +108,8 @@ def test_amt_wsman_round_trip():
     from wakehub.errors import UpstreamError, WakeHubError
 
     assert return_error("shutdown", 2) == "AMT refused graceful shutdown (needs the Intel LMS/OS agent running); use Off"
+    assert return_error("shutdown", 1).startswith("AMT refused graceful shutdown")
+    assert return_error("shutdown", 4) == "AMT refused shutdown (return 4)"
     assert return_error("off", 4) == "AMT refused off (return 4)"
     try:
         parse_method_return("<ReturnValue>2</ReturnValue>", action="shutdown")
@@ -145,6 +147,46 @@ def test_amt_wsman_round_trip():
         assert str(exc) == "use off"
     else:
         raise AssertionError("off_hard was accepted")
+    running = []
+
+    def already_on(_uri, payload):
+        if "Enumerate" in payload:
+            return 200, """<body><PowerState>2</PowerState>
+              <AvailableRequestedPowerStates>8</AvailableRequestedPowerStates>
+              <AvailableRequestedPowerStates>5</AvailableRequestedPowerStates>
+            </body>"""
+        running.append(payload)
+        return 200, "<ReturnValue>0</ReturnValue>"
+
+    awake = AmtClient("10.0.0.8", "admin", "secret", poster=already_on)
+    noop = awake.request_power("on")
+    assert noop["noop"] is True
+    assert noop["reason"] == "already on"
+    assert running == []
+    off_host = []
+
+    def already_off(_uri, payload):
+        if "Enumerate" in payload:
+            return 200, "<body><PowerState>8</PowerState><AvailableRequestedPowerStates>2</AvailableRequestedPowerStates></body>"
+        off_host.append(payload)
+        return 200, "<ReturnValue>0</ReturnValue>"
+
+    quiet = AmtClient("10.0.0.8", "admin", "secret", poster=already_off)
+    assert quiet.request_power("off")["reason"] == "already off"
+    assert quiet.request_power("shutdown")["reason"] == "already off"
+    assert off_host == []
+    sent_anyway = []
+
+    def status_down(_uri, payload):
+        if "Enumerate" in payload:
+            raise OSError("timed out")
+        sent_anyway.append(payload)
+        return 200, "<ReturnValue>0</ReturnValue>"
+
+    blind = AmtClient("10.0.0.8", "admin", "secret", poster=status_down)
+    cycle = blind.request_power("cycle")
+    assert cycle["power_state"] == 5
+    assert "<n1:PowerState>5</n1:PowerState>" in sent_anyway[-1]
 
 
 def test_jetkvm_rpc_and_signaling():

@@ -1426,9 +1426,13 @@ async function onClick(event) {
 }
 
 function reachText(result) {
-  if (result.reachable === true) return `${result.name} answered in ${result.elapsed_s}s`;
-  if (result.reachable === false) return `${result.name}: packet sent, host did not answer`;
-  return `${result.name}: packet sent (no host to probe)`;
+  const name = (result && result.name) || "This device";
+  if (result && result.reason) return result.reason;
+  if (result && result.amt_id != null) return `${name}: AMT command sent`;
+  if (result && result.reachable === true) return `${name} answered in ${result.elapsed_s}s`;
+  if (result && result.reachable === false) return `${name}: packet sent, host did not answer`;
+  if (result && result.sent) return `${name}: packet sent (no host to probe)`;
+  return `${name}: command sent`;
 }
 
 async function onSubmit(event) {
@@ -1952,7 +1956,6 @@ document.body.addEventListener("click", (event) => {
         if (control.isConnected) {
           control.disabled = false;
           control.removeAttribute("aria-busy");
-          if (control.dataset.cap === "amt_power" && state.amtAvailable) applyAmtAvailable(control.dataset.id, state.amtAvailable[control.dataset.id] || []);
         }
       });
       return;

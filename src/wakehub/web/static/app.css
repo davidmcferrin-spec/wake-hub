@@ -394,8 +394,7 @@ button.sr-only {
 .more .menu label { justify-content: flex-start; margin: 0; flex-shrink: 0; }
 
 body:has(.more .menu:not(.hidden)) .banner {
-  top: var(--s4);
-  bottom: auto;
+  display: none;
 }
 
 .outlet-line { display: grid; grid-template-columns: minmax(6rem, 1fr) auto auto auto; gap: var(--s2); align-items: center; }

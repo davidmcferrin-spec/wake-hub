@@ -83,7 +83,7 @@ def test_every_hardware_type_shows_its_controls(live_server, hub):
         browser.close()
 
 
-def test_amt_card_disables_actions_the_firmware_does_not_advertise(live_server, hub):
+def test_amt_card_hint_clears_after_an_action_and_a_failed_read(live_server, hub):
     import json
 
     from playwright.sync_api import sync_playwright
@@ -96,12 +96,23 @@ def test_amt_card_disables_actions_the_firmware_does_not_advertise(live_server, 
         json={"name": "Bare AMT", "host": "10.4.0.3", "password": "secret-amt"},
     ).json()
     body = json.dumps({"name": "Bare AMT", "power_state": 2, "power_name": "on", "available": [2, 8, 10], "amt_id": created["id"]})
+    mode = {"get": "ok"}
 
     def fulfill(route):
-        if route.request.method == "GET" and route.request.url.rstrip("/").endswith("/power"):
-            route.fulfill(status=200, content_type="application/json", body=body)
-        else:
+        if not route.request.url.rstrip("/").endswith("/power"):
             route.fallback()
+            return
+        if route.request.method == "POST":
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({"action": "off", "power_state": 8, "name": "Bare AMT", "amt_id": created["id"]}),
+            )
+            return
+        if mode["get"] == "fail":
+            route.fulfill(status=502, content_type="application/json", body=json.dumps({"error": {"message": "AMT request failed: timed out"}}))
+            return
+        route.fulfill(status=200, content_type="application/json", body=body)
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
@@ -120,10 +131,19 @@ def test_amt_card_disables_actions_the_firmware_does_not_advertise(live_server, 
         assert off.count() >= 1
         assert shutdown.count() >= 1
         assert page.locator("button[data-action=off_hard]").count() == 0
+        page.on("dialog", lambda dialog: dialog.accept())
         page.click("button[data-cap=amt_power_state]")
-        page.wait_for_function("() => document.querySelector('button[data-action=shutdown]').disabled")
+        page.wait_for_function("() => document.querySelector('button[data-action=shutdown]').title.includes('firmware')")
         assert off.first.is_enabled()
-        assert shutdown.first.is_disabled()
+        assert shutdown.first.is_enabled()
+        page.locator("button[data-cap=amt_power][data-action=off]").click()
+        page.wait_for_function("() => !document.querySelector('button[data-action=shutdown]').title")
+        mode["get"] = "ok"
+        page.click("button[data-cap=amt_power_state]")
+        page.wait_for_function("() => document.querySelector('button[data-action=shutdown]').title.includes('firmware')")
+        mode["get"] = "fail"
+        page.click("button[data-cap=amt_power_state]")
+        page.wait_for_function("() => !document.querySelector('button[data-action=shutdown]').title")
         browser.close()
 
 

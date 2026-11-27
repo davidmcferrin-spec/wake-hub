@@ -115,8 +115,12 @@ def parse_power_state(body: str) -> dict:
     }
 
 
+# 1 Not Supported and 2 Unspecified are what graceful shutdown returns when the OS agent is absent.
+_LMS_RETURNS = {1, 2}
+
+
 def return_error(action: str | None, value: int) -> str:
-    if action == "shutdown":
+    if action == "shutdown" and value in _LMS_RETURNS:
         return "AMT refused graceful shutdown (needs the Intel LMS/OS agent running); use Off"
     name = action or "power change"
     return f"AMT refused {name} (return {value})"
@@ -202,10 +206,22 @@ class AmtClient:
         if action not in POWER_COMMANDS:
             raise WakeHubError("AMT action must be on, off, cycle, reboot, or shutdown")
         code = POWER_COMMANDS[action]
-        current = self.power_state()
-        available = current.get("available") or []
-        if available and code not in available:
-            raise WakeHubError(f"AMT does not advertise {action} (power-state {code})")
+        current = None
+        try:
+            current = self.power_state()
+        except Exception:
+            # A status read must not block the command. The ReturnValue reports the outcome.
+            current = None
+        if current:
+            state = current.get("power_state")
+            available = current.get("available") or []
+            # The advertised list is relative to the current state, so "on" is absent while the host is already on.
+            if action == "on" and state == POWER_COMMANDS["on"]:
+                return {"action": action, "power_state": state, "noop": True, "reason": "already on", "return_value": 0}
+            if action in {"off", "shutdown"} and state == POWER_COMMANDS["off"]:
+                return {"action": action, "power_state": state, "noop": True, "reason": "already off", "return_value": 0}
+            if action == "shutdown" and available and code not in available:
+                raise WakeHubError(f"AMT does not advertise {action} (power-state {code})")
         self._post(build_power_change(self.uri, code))
         parsed = parse_method_return(self._last_body, action)
         return {"action": action, "power_state": code, "return_value": parsed}
