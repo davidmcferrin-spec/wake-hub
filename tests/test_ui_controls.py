@@ -65,7 +65,7 @@ def test_every_hardware_type_shows_its_controls(live_server, hub):
         expect(page, "Hall UPS", ["Status", "Bank on", "Bank off"])
         expect(page, "Den Roku", ["On", "Off", "Toggle", "Status"])
         bare = _card(page, "Bare AMT")
-        bare.locator("summary", has_text="More").click()
+        bare.locator(".more-toggle").click()
         bare.locator("button", has_text="Open").click()
         page.wait_for_selector("#back-inventory")
         for label in ["Power on", "Off", "Reset", "Off hard", "Power cycle", "Read status"]:

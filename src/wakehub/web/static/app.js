@@ -186,10 +186,10 @@ function recordCard(spec) {
       ${spec.body || ""}
       <div class="row-actions actions">
         ${spec.primary || ""}
-        <details class="more">
-          <summary class="ghost">More</summary>
-          <div class="menu">${spec.more || ""}</div>
-        </details>
+        <div class="more">
+          <button type="button" class="ghost more-toggle">More</button>
+          <div class="menu hidden">${spec.more || ""}</div>
+        </div>
       </div>
     </article>`;
 }
@@ -964,7 +964,7 @@ function writeRoute(page, slug) {
 }
 
 function captureTransient() {
-  const menus = [...document.querySelectorAll("article.card details.more[open]")].map((node) => {
+  const menus = [...document.querySelectorAll("article.card .more .menu:not(.hidden)")].map((node) => {
     const card = node.closest("article.card");
     const marked = card && card.querySelector("[data-id]");
     return card ? `${card.dataset.kind}:${marked ? marked.dataset.id : ""}` : "";
@@ -978,7 +978,7 @@ function captureTransient() {
       name: active.getAttribute("name") || "",
       cap: (active.dataset && active.dataset.cap) || "",
       dataId: (active.dataset && active.dataset.id) || "",
-      summary: active.tagName === "SUMMARY",
+      summary: active.classList && active.classList.contains("more-toggle"),
       start: typeof active.selectionStart === "number" ? active.selectionStart : null,
       end: typeof active.selectionEnd === "number" ? active.selectionEnd : null,
     };
@@ -997,12 +997,53 @@ function cardByKey(key) {
   });
 }
 
+function contentBounds() {
+  const margin = 8;
+  const bounds = { left: margin, top: margin, right: window.innerWidth - margin, bottom: window.innerHeight - margin };
+  const sidebar = document.querySelector(".sidebar");
+  if (!sidebar) return bounds;
+  const box = sidebar.getBoundingClientRect();
+  if (box.width < 1 || box.height < 1) return bounds;
+  const onLeft = box.left <= margin && box.height > window.innerHeight * 0.45;
+  if (onLeft) bounds.left = Math.max(bounds.left, box.right + margin);
+  else if (box.width > window.innerWidth * 0.6 && box.bottom < window.innerHeight * 0.45) bounds.top = Math.max(bounds.top, box.bottom + margin);
+  return bounds;
+}
+
+function placeMenu(wrap) {
+  const menu = wrap.querySelector(".menu");
+  const toggle = wrap.querySelector(".more-toggle");
+  if (!menu || !toggle || menu.classList.contains("hidden")) return;
+  const anchor = toggle.getBoundingClientRect();
+  const bounds = contentBounds();
+  menu.style.maxWidth = `${Math.max(120, bounds.right - bounds.left)}px`;
+  const width = Math.min(menu.offsetWidth, bounds.right - bounds.left);
+  const height = menu.offsetHeight;
+  const roomRight = bounds.right - anchor.left;
+  const roomLeft = anchor.right - bounds.left;
+  let left = roomRight >= width || roomRight >= roomLeft ? anchor.left : anchor.right - width;
+  left = Math.max(bounds.left, Math.min(left, bounds.right - width));
+  let top = anchor.bottom + 6;
+  if (top + height > bounds.bottom) top = Math.max(bounds.top, anchor.top - height - 6);
+  if (top < bounds.top) top = bounds.top;
+  menu.style.left = `${Math.round(left)}px`;
+  menu.style.top = `${Math.round(top)}px`;
+  const placed = menu.getBoundingClientRect();
+  if (placed.bottom > bounds.bottom) menu.style.top = `${Math.round(Math.max(bounds.top, bounds.bottom - placed.height))}px`;
+  if (placed.right > bounds.right) menu.style.left = `${Math.round(Math.max(bounds.left, bounds.right - placed.width))}px`;
+  menu.dataset.placed = "1";
+}
+
 function restoreTransient(saved) {
   if (!saved) return;
   saved.menus.forEach((key) => {
     const card = cardByKey(key);
-    const menu = card && card.querySelector("details.more");
-    if (menu) menu.open = true;
+    const wrap = card && card.querySelector(".more");
+    const menu = wrap && wrap.querySelector(".menu");
+    if (menu) {
+      menu.classList.remove("hidden");
+      placeMenu(wrap);
+    }
   });
   saved.methods.forEach((key) => {
     const split = key.indexOf(":");
@@ -1019,7 +1060,7 @@ function restoreTransient(saved) {
       const marked = node.querySelector("[data-id]");
       return marked && marked.dataset.id === focus.dataId;
     });
-    target = card && card.querySelector("details.more summary");
+    target = card && card.querySelector(".more-toggle");
   }
   if (!target && focus.cap && focus.dataId) target = document.querySelector(`[data-cap="${focus.cap}"][data-id="${focus.dataId}"]`);
   if (!target && focus.name && /^[A-Za-z0-9_-]+$/.test(focus.name)) target = document.querySelector(`#view [name="${focus.name}"]`);
@@ -1620,11 +1661,27 @@ window.addEventListener("hashchange", () => {
   show(route.page, route.slug).catch((error) => showBanner(error.message, true, error.existing));
 });
 
+window.addEventListener("resize", () => {
+  document.querySelectorAll(".more .menu:not(.hidden)").forEach((menu) => placeMenu(menu.parentElement));
+});
+
 document.body.addEventListener("click", (event) => {
-  const menuButton = event.target.closest && event.target.closest("details.more button, details.more a");
+  const toggle = event.target.closest && event.target.closest(".more-toggle");
+  if (toggle) {
+    const wrap = toggle.closest(".more");
+    const menu = wrap.querySelector(".menu");
+    const opening = menu.classList.contains("hidden");
+    document.querySelectorAll(".more .menu").forEach((node) => node.classList.add("hidden"));
+    if (opening) {
+      menu.classList.remove("hidden");
+      placeMenu(wrap);
+    }
+    return;
+  }
+  const menuButton = event.target.closest && event.target.closest(".more .menu button, .more .menu a");
   if (menuButton) {
-    const details = menuButton.closest("details.more");
-    if (details) details.open = false;
+    const menu = menuButton.closest(".menu");
+    if (menu) menu.classList.add("hidden");
   }
   const completion = event.target.closest("[data-complete-tag]");
   if (completion) {

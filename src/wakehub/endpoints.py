@@ -246,11 +246,15 @@ def add_pdu(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
     bind_identity(hub, "pdu", item_id, fields["host"])
     remember_profile(hub, "pdus", item_id, payload)
     _apply_tags(hub, "pdus", item_id, payload)
-    try:
-        refresh_pdu_outlet_names(hub, item_id)
-    except Exception:
-        # Adding the record still succeeds when the PDU is offline or has no name API.
-        pass
+
+    def _read_names() -> None:
+        try:
+            # A dead address must not sit on hub.lock. This runs after the save commits.
+            refresh_pdu_outlet_names(hub, item_id, timeout=1.5)
+        except Exception:
+            pass
+
+    hub.after_commit(_read_names)
     return public_pdu(_row(hub, "pdu", item_id), hub)
 
 
@@ -318,8 +322,8 @@ def sync_pdu_outlets(hub: Hub, pdu_id: int, count: int, names: dict[int, str]) -
             hub.write("UPDATE pdu_outlets SET name = ? WHERE id = ?", (name, existing["id"]))
 
 
-def refresh_pdu_outlet_names(hub: Hub, pdu_id: int) -> dict[str, Any]:
-    _current, client = pdu_client(hub, pdu_id)
+def refresh_pdu_outlet_names(hub: Hub, pdu_id: int, *, timeout: float | None = None) -> dict[str, Any]:
+    _current, client = pdu_client(hub, pdu_id, timeout=timeout)
     names: dict[int, str] = {}
     count = 0
     try:
@@ -384,7 +388,7 @@ def _resolved_login(hub: Hub, row, username_key: str = "username", secret_key: s
     return str(row[username_key] or ""), _plain(hub, row[secret_key])
 
 
-def pdu_client(hub: Hub, pdu_id: int) -> tuple[Any, SynaccessClient]:
+def pdu_client(hub: Hub, pdu_id: int, *, timeout: float | None = None) -> tuple[Any, SynaccessClient]:
     row = _row(hub, "pdu", pdu_id)
     username, password = _resolved_login(hub, row)
     client = SynaccessClient(
@@ -394,6 +398,7 @@ def pdu_client(hub: Hub, pdu_id: int) -> tuple[Any, SynaccessClient]:
         port=row["port"],
         use_tls=bool(row["use_tls"]),
         insecure_tls=bool(row["insecure_tls"]),
+        **({} if timeout is None else {"timeout": timeout}),
     )
     return row, client
 

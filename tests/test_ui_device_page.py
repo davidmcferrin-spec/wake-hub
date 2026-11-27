@@ -40,7 +40,7 @@ def test_open_shows_the_device_page_and_edit_saves_the_amt(live_server, hub, mon
         page.click("#back-inventory")
         page.wait_for_selector("#device-search")
         card = _card(page, "Office PC")
-        card.locator("summary", has_text="More").click()
+        card.locator(".more-toggle").click()
         card.get_by_role("button", name="Open", exact=True).click()
         page.wait_for_function("location.hash.indexOf('#/devices/') === 0")
         assert page.locator("#device-form").count() == 0
@@ -59,7 +59,7 @@ def test_open_shows_the_device_page_and_edit_saves_the_amt(live_server, hub, mon
         assert decrypt(hub.cipher, hub.query_one("SELECT password_enc FROM amt_endpoints WHERE id = ?", (amt["id"],))["password_enc"]) == "new-secret"
         assert httpx.get(f"{base}/devices/{device['id']}", headers=headers).json()["reach_timeout"] == 12
         card = _card(page, "Office PC")
-        card.locator("summary", has_text="More").click()
+        card.locator(".more-toggle").click()
         card.get_by_role("button", name="Edit").click()
         page.wait_for_selector("#device-form")
         page.fill("#reach_timeout", "")

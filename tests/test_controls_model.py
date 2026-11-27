@@ -288,6 +288,65 @@ def test_a_failed_save_does_not_keep_a_partial_method_change(client, hub):
     assert client.get(f"/api/v1/devices/{device['id']}").json()["host"] == "192.168.0.61"
 
 
+def test_a_new_plug_without_a_host_is_rejected(client):
+    device = client.post("/api/v1/devices", json={"name": "UNRAID", "mac": "02:00:00:00:00:71", "host": "192.168.0.71"}).json()
+    refused = client.patch(
+        f"/api/v1/devices/{device['id']}",
+        json={"methods": [{"kind": "plug", "host": ""}, {"kind": "wol"}]},
+    )
+    assert refused.status_code == 400, refused.text
+    assert "host" in refused.json()["error"]["message"]
+    assert [item["kind"] for item in client.get(f"/api/v1/devices/{device['id']}").json()["methods"]] == ["wol"]
+
+
+def test_a_slow_pdu_fetch_does_not_block_another_request(live_server, hub, monkeypatch):
+    import threading
+    import time
+
+    import httpx
+
+    from wakehub.errors import UpstreamError
+
+    started = threading.Event()
+
+    def slow(self):
+        started.set()
+        time.sleep(1.2)
+        raise UpstreamError("slow pdu")
+
+    def no_status(self, names=None):
+        raise UpstreamError("slow")
+
+    monkeypatch.setattr("wakehub.clients.synaccess.SynaccessClient.read_outlet_names", slow)
+    monkeypatch.setattr("wakehub.clients.synaccess.SynaccessClient.status", no_status)
+    headers = {"Authorization": f"Bearer {hub.token}"}
+    device = httpx.post(
+        f"{live_server}/api/v1/devices",
+        headers=headers,
+        json={"name": "UNRAID", "mac": "02:00:00:00:00:81", "host": "192.168.0.81"},
+    ).json()
+    result = {}
+
+    def save():
+        result["response"] = httpx.patch(
+            f"{live_server}/api/v1/devices/{device['id']}",
+            headers=headers,
+            json={"methods": [{"kind": "pdu", "host": "10.255.255.1", "password": "secret"}, {"kind": "wol"}]},
+            timeout=10,
+        )
+
+    thread = threading.Thread(target=save)
+    thread.start()
+    assert started.wait(3)
+    began = time.monotonic()
+    settings = httpx.get(f"{live_server}/api/v1/settings", headers=headers, timeout=3)
+    elapsed = time.monotonic() - began
+    assert settings.status_code == 200
+    assert elapsed < 0.5, elapsed
+    thread.join(8)
+    assert result["response"].status_code == 200, result["response"].text
+
+
 def test_scan_offers_add_amt_to_the_matching_device(hub):
     hub.write(
         "INSERT INTO devices (name, mac, host, broadcast, wol_port, notes, tags, enabled, reach_mode, reach_timeout, reach_timeout_set, wake_strategy, power_method, methods, created_at, updated_at) VALUES ('UNRAID', '02:00:00:00:00:97', '192.168.0.97', '255.255.255.255', 9, '', '[]', 1, 'icmp', 30, 0, 'wol_only', 'auto', ?, 't', 't')",

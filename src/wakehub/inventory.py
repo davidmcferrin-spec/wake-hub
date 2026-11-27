@@ -310,7 +310,7 @@ def sync_device_methods(
         record_id = item.get(key)
         creating = not record_id
         if creating and not str(item.get("host") or "").strip():
-            continue
+            raise WakeHubError(f"a new {kind} method needs a host")
         payload = _method_payload(item, str(kind), device_name, creating=creating)
         if record_id:
             record_id = int(record_id)

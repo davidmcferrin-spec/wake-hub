@@ -26,6 +26,7 @@ class Hub:
         self.settings = settings
         self.lock = threading.RLock()
         self._in_transaction = 0
+        self._after_commit: list = []
         self._background_stop = threading.Event()
         self._workers: list[threading.Thread] = []
         self._closed = False
@@ -189,21 +190,38 @@ class Hub:
             if self._in_transaction == 0:
                 self.db.commit()
 
+    def after_commit(self, callback) -> None:
+        """Run callback after the open transaction commits. It must not assume hub.lock is held."""
+        if self._in_transaction:
+            self._after_commit.append(callback)
+        else:
+            callback()
+
     @contextmanager
     def transaction(self):
-        """Hold every write until the block finishes, and undo them all if it raises."""
+        """Hold every write until the block finishes, and undo them all if it raises.
+
+        The lock covers the database work only. Callbacks registered with after_commit
+        run after it is released, so a network read cannot stall other requests.
+        """
+        callbacks: list = []
         with self.lock:
             self._in_transaction += 1
             try:
                 yield
                 if self._in_transaction == 1:
                     self.db.commit()
+                    callbacks = self._after_commit
+                    self._after_commit = []
             except Exception:
                 if self._in_transaction == 1:
                     self.db.rollback()
+                    self._after_commit = []
                 raise
             finally:
                 self._in_transaction -= 1
+        for callback in callbacks:
+            callback()
 
 
 def set_hub(hub: Hub) -> None:

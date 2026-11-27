@@ -38,7 +38,7 @@ def test_editing_each_hardware_type_stays_put_and_saves(live_server, hub):
         assert page.inner_text("#page-title") == "Hardware"
         for original, renamed, _row in created:
             card = page.locator("article.card", has_text=original)
-            card.locator("summary", has_text="More").click()
+            card.locator(".more-toggle").click()
             card.get_by_role("button", name="Edit", exact=True).click()
             form = page.locator("form.hardware-edit")
             form.wait_for()
@@ -71,7 +71,7 @@ def test_editing_each_hardware_type_stays_put_and_saves(live_server, hub):
         assert "PDU renamed" in page.inner_text("#view")
         assert "AMT renamed" not in page.inner_text("#view")
         renamed = page.locator("article.card", has_text="PDU renamed")
-        renamed.locator("summary", has_text="More").click()
+        renamed.locator(".more-toggle").click()
         renamed.get_by_role("button", name="Edit").click()
         page.wait_for_selector("form.hardware-edit")
         assert page.inner_text("#page-title") == "PDU renamed"

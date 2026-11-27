@@ -319,6 +319,18 @@ button.sr-only {
 
 .card .actions > button { max-width: 100%; }
 
+.card.detail h3 { margin: 0.45rem 0 0.15rem; font-size: 1rem; }
+
+.card.detail ol { margin: 0; }
+
+.card.detail .actions { margin-top: 0.1rem; }
+
+@media (min-width: 1100px) {
+  .card[data-kind="device"] .actions { flex-wrap: nowrap; }
+  .card[data-kind="device"] .actions > button,
+  .card[data-kind="device"] .actions .more-toggle { padding-left: 0.65rem; padding-right: 0.65rem; }
+}
+
 .tablist label.add-type { white-space: nowrap; flex: 0 0 auto; }
 
 .tablist label.add-type select { width: auto; min-width: 7.5rem; }
@@ -338,19 +350,16 @@ button.sr-only {
 
 .method-row[open] summary { margin-bottom: var(--s2); }
 
-details.more { position: relative; }
+.more { position: relative; }
 
-details.more .menu {
-  position: absolute;
-  z-index: 5;
-  right: 0;
-  top: calc(100% + 0.35rem);
+.more .menu {
+  position: fixed;
+  z-index: 30;
   display: flex;
   flex-direction: column;
   align-items: stretch;
   gap: var(--s2);
-  min-width: 12rem;
-  max-width: min(18rem, 100vw);
+  min-width: 11rem;
   padding: var(--s2);
   background: var(--card);
   border: 1px solid var(--line);
@@ -358,12 +367,12 @@ details.more .menu {
   box-shadow: var(--shadow);
 }
 
-details.more .menu button,
-details.more .menu label { justify-content: flex-start; }
+.more .menu button,
+.more .menu label { justify-content: flex-start; }
 
 .outlet-line { display: grid; grid-template-columns: minmax(6rem, 1fr) auto auto auto; gap: var(--s2); align-items: center; }
 
-details.more summary { list-style: none; height: var(--control); display: inline-flex; align-items: center; padding: 0 0.9rem; border: 1px solid var(--line); border-radius: 999px; cursor: pointer; background: #fff; }
+.more-toggle { height: var(--control); }
 
 .hardware-list { display: flex; flex-direction: column; gap: var(--s3); margin-top: var(--s4); }
 

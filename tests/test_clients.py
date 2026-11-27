@@ -56,6 +56,7 @@ def test_synaccess_outlet_names_come_from_json_or_the_setup_page(monkeypatch):
     assert parse_outlet_names('{"outlets": [{"index": 0, "name": "NAS"}]}') == {1: "NAS"}
     html = '<input type="text" name="name1" value="NAS"><input value="Desk" name="name2">'
     assert parse_outlet_names(html) == {1: "NAS", 2: "Desk"}
+    assert parse_outlet_names('<input type="text" name="name1" value="NAS &amp; Desk">') == {1: "NAS & Desk"}
     assert parse_outlet_names('var outletname = ["NAS", "Desk"];') == {1: "NAS", 2: "Desk"}
 
     def handler(request):
