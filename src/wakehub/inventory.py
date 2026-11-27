@@ -42,10 +42,10 @@ def utcnow() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def _tags(values: list[str]) -> list[str]:
-    from wakehub.tags import normalize_tags
+def _tags(hub: Hub, values: list[str]) -> list[str]:
+    from wakehub.tags import canonical_tags
 
-    return normalize_tags(values)
+    return canonical_tags(hub, values)
 
 
 def normalize_methods(methods: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
@@ -394,7 +394,7 @@ def add_device(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
             "wol_port": port,
             "secureon_enc": secureon_enc,
             "notes": notes,
-            "tags": json.dumps(_tags(list(payload.get("tags") or []))),
+            "tags": json.dumps(_tags(hub, list(payload.get("tags") or []))),
             "enabled": 1 if payload.get("enabled", True) else 0,
             "reach_mode": reach_mode,
             "reach_port": reach_port,
@@ -456,7 +456,7 @@ def update_device(hub: Hub, device_id: int, payload: dict[str, Any]) -> dict[str
             raise WakeHubError("notes must be 2000 characters or fewer")
         fields["notes"] = payload["notes"]
     if "tags" in payload and payload["tags"] is not None:
-        fields["tags"] = json.dumps(_tags(list(payload["tags"])))
+        fields["tags"] = json.dumps(_tags(hub, list(payload["tags"])))
     if "enabled" in payload and payload["enabled"] is not None:
         fields["enabled"] = 1 if payload["enabled"] else 0
     if "reach_mode" in payload and payload["reach_mode"] is not None:

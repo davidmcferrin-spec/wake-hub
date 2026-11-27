@@ -319,8 +319,8 @@ function renderScan() {
 function outletShown(outlet) {
   const wanted = (typeof state !== "undefined" && state.tagFilter) || [];
   if (!wanted.length) return true;
-  const owned = (outlet.tags || []).map((tag) => String(tag).toLowerCase());
-  return wanted.every((tag) => owned.includes(String(tag).toLowerCase()));
+  const owned = (outlet.tags || []).map((tag) => tagKey(tag));
+  return wanted.every((tag) => owned.includes(tagKey(tag)));
 }
 
 function displayOutletName(name, number) {

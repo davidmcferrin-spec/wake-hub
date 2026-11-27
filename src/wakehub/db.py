@@ -265,5 +265,9 @@ def connect(path: Path) -> sqlite3.Connection:
     _ensure_column(conn, "salvos", "slug", "TEXT")
     _ensure_column(conn, "salvos", "last_run", "TEXT")
     _backfill_salvo_slugs(conn)
+    # Office and office used to be stored as two tags. Keep the oldest spelling.
+    from wakehub.tags import migrate_tag_case
+
+    migrate_tag_case(conn)
     conn.commit()
     return conn

@@ -175,9 +175,13 @@ window.pollStatus = pollStatus;
 
 function tagChips(tags) {
   return `<div class="tags">${(tags || []).map((tag) => {
-    const active = (state.tagFilter || []).some((item) => item.toLowerCase() === String(tag).toLowerCase());
+    const active = (state.tagFilter || []).some((item) => tagKey(item) === tagKey(tag));
     return `<button type="button" class="tag${active ? " active" : ""}" data-tag="${escapeHtml(tag)}">#${escapeHtml(tag)}</button>`;
   }).join("")}</div>`;
+}
+
+function tagKey(value) {
+  return String(value || "").replace(/^#+/, "").trim().toLowerCase();
 }
 
 function parseSearch(text) {
@@ -775,9 +779,9 @@ function deviceCardsHtml() {
   const wanted = state.tagFilter || [];
   const matches = (item) => {
     const text = !query || `${item.name} ${item.host || ""}`.toLowerCase().includes(query);
-    const owned = (item.tags || []).map((tag) => String(tag).toLowerCase());
-    const outletTags = (item.outlets || []).flatMap((outlet) => outlet.tags || []).map((tag) => String(tag).toLowerCase());
-    const tagged = !wanted.length || wanted.every((tag) => owned.includes(String(tag).toLowerCase()) || outletTags.includes(String(tag).toLowerCase()));
+    const owned = (item.tags || []).map(tagKey);
+    const outletTags = (item.outlets || []).flatMap((outlet) => outlet.tags || []).map(tagKey);
+    const tagged = !wanted.length || wanted.every((tag) => owned.includes(tagKey(tag)) || outletTags.includes(tagKey(tag)));
     return text && tagged;
   };
   const computers = (kind === "all" || kind === "device" ? state.devices.filter(matches) : []).map(deviceCard).join("");
@@ -948,8 +952,8 @@ function suggestTags(input) {
     box.replaceChildren();
     return;
   }
-  const prefix = match[1].toLowerCase();
-  const options = (state.tags || []).filter((tag) => tag.toLowerCase().startsWith(prefix)).slice(0, 8);
+  const prefix = tagKey(match[1]);
+  const options = (state.tags || []).filter((tag) => tagKey(tag).startsWith(prefix)).slice(0, 8);
   box.innerHTML = options.map((tag) => `<button type="button" class="ghost" data-complete-tag="${escapeHtml(tag)}">#${escapeHtml(tag)}</button>`).join("");
 }
 
@@ -1933,10 +1937,10 @@ document.body.addEventListener("click", (event) => {
   const chip = event.target.closest("[data-tag]");
   if (chip && chip.dataset.tag) {
     const tag = chip.dataset.tag;
-    const key = tag.toLowerCase();
-    const has = (state.tagFilter || []).some((item) => item.toLowerCase() === key);
+    const key = tagKey(tag);
+    const has = (state.tagFilter || []).some((item) => tagKey(item) === key);
     state.tagFilter = has
-      ? state.tagFilter.filter((item) => item.toLowerCase() !== key)
+      ? state.tagFilter.filter((item) => tagKey(item) !== key)
       : [...(state.tagFilter || []), tag];
     refreshDevices().then(() => render()).catch((error) => showBanner(error.message, true, error.existing));
     return;
