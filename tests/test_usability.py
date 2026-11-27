@@ -176,7 +176,7 @@ def test_reread_keeps_a_name_set_in_wake_hub_and_records_a_failed_read(client, h
     from wakehub.clients.synaccess import parse_status
     from wakehub.errors import UpstreamError
 
-    current = {"names": {1: "Attic POE", 2: "HDMI Streaming", 3: "Home PC"}}
+    current = {"names": {1: "Lamp", 2: "Printer", 3: "Media"}}
 
     def names(self):
         return dict(current["names"])
@@ -186,18 +186,18 @@ def test_reread_keeps_a_name_set_in_wake_hub_and_records_a_failed_read(client, h
 
     monkeypatch.setattr("wakehub.clients.synaccess.SynaccessClient.read_outlet_names", names)
     monkeypatch.setattr("wakehub.clients.synaccess.SynaccessClient.status", status)
-    created = client.post("/api/v1/pdus", json={"name": "NP-1601DU", "host": "192.168.0.8", "outlet_names": {"2": "Work HP"}})
+    created = client.post("/api/v1/pdus", json={"name": "NP-1601DU", "host": "192.168.0.8", "outlet_names": {"2": "Desk"}})
     assert created.status_code == 201, created.text
     body = created.json()
-    assert body["outlets"][0]["name"] == "Attic POE"
-    assert body["outlets"][1]["name"] == "Work HP"
-    hub.write("UPDATE pdu_outlets SET name = ? WHERE pdu_id = ? AND number = ?", ("Internet Fiber Jack", body["id"], 3))
-    current["names"] = {1: "Attic POE", 2: "HDMI Streaming", 3: "Home PC"}
+    assert body["outlets"][0]["name"] == "Lamp"
+    assert body["outlets"][1]["name"] == "Desk"
+    hub.write("UPDATE pdu_outlets SET name = ? WHERE pdu_id = ? AND number = ?", ("Server", body["id"], 3))
+    current["names"] = {1: "Lamp", 2: "Printer", 3: "Media"}
     kept = client.post(f"/api/v1/pdus/{body['id']}/outlet-names")
     assert kept.status_code == 200, kept.text
     outlets = {item["number"]: item["name"] for item in kept.json()["outlets"]}
-    assert outlets[2] == "Work HP"
-    assert outlets[3] == "Internet Fiber Jack"
+    assert outlets[2] == "Desk"
+    assert outlets[3] == "Server"
 
     def missing(self):
         raise UpstreamError("Couldn't read outlet names from the PDU (/outletsetup.htm HTTP 200: <html>login)")
@@ -207,8 +207,8 @@ def test_reread_keeps_a_name_set_in_wake_hub_and_records_a_failed_read(client, h
     assert failed.status_code == 200, failed.text
     assert failed.json()["names_error"].startswith("Couldn't read outlet names from the PDU")
     again = {item["number"]: item["name"] for item in failed.json()["outlets"]}
-    assert again[1] == "Attic POE"
-    assert again[2] == "Work HP"
+    assert again[1] == "Lamp"
+    assert again[2] == "Desk"
 
 
 def test_outlet_status_does_not_read_names_or_rewrite_a_repeat_failure(client, hub, monkeypatch):
@@ -252,6 +252,69 @@ def test_outlet_status_does_not_read_names_or_rewrite_a_repeat_failure(client, h
     assert "Basic abc" not in body
     assert "sid=1" not in body
     assert "/outlets.htm" in body
+
+
+def test_a_reverted_device_name_does_not_keep_the_old_learned_name(client, hub, monkeypatch):
+    from wakehub.clients.synaccess import parse_status
+
+    def names(self):
+        self.outlet_count = 2
+        return {1: "Media"}
+
+    def status(self, labels=None):
+        return parse_status("11,0.2,22", labels)
+
+    monkeypatch.setattr("wakehub.clients.synaccess.SynaccessClient.read_outlet_names", names)
+    monkeypatch.setattr("wakehub.clients.synaccess.SynaccessClient.status", status)
+    created = client.post("/api/v1/pdus", json={"name": "Rack", "host": "10.8.0.18"})
+    assert created.status_code == 201, created.text
+    pdu_id = created.json()["id"]
+    assert created.json()["outlets"][0]["name"] == "Media"
+
+    def reverted(self):
+        self.outlet_count = 2
+        return {}
+
+    monkeypatch.setattr("wakehub.clients.synaccess.SynaccessClient.read_outlet_names", reverted)
+    hub.write(
+        "UPDATE pdus SET device_outlet_names = ? WHERE id = ?",
+        ('{"1": "Media"}', pdu_id),
+    )
+    refreshed = client.post(f"/api/v1/pdus/{pdu_id}/outlet-names")
+    assert refreshed.status_code == 200, refreshed.text
+    names_now = {item["number"]: item["name"] for item in refreshed.json()["outlets"]}
+    assert names_now[1] == "Outlet 1"
+
+
+def test_name_refresh_does_not_also_read_status_when_the_page_lists_every_outlet(client, monkeypatch):
+    calls = []
+
+    class Recording:
+        def __init__(self, *args, **kwargs):
+            self.outlet_count = 0
+            self.name_pages = []
+
+        def read_outlet_names(self):
+            calls.append("names")
+            self.outlet_count = 16
+            self.name_pages = [{"path": "/pwr.htm", "status": 200, "content_type": "text/html", "body": "Lamp"}]
+            return {1: "Lamp", 2: "Printer"}
+
+        def status(self, *args, **kwargs):
+            calls.append("status")
+            raise AssertionError("name refresh should not read status.xml")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("wakehub.endpoints.SynaccessClient", Recording)
+    created = client.post("/api/v1/pdus", json={"name": "NP", "host": "192.168.0.18", "outlet_names": {"2": "Desk"}})
+    assert created.status_code == 201, created.text
+    outlets = {item["number"]: item["name"] for item in created.json()["outlets"]}
+    assert outlets[1] == "Lamp"
+    assert outlets[2] == "Desk"
+    assert outlets[4] == "Outlet 4"
+    assert calls == ["names"]
 
 
 def test_credential_profile_is_stored_encrypted_and_selectable(client):

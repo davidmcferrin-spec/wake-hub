@@ -25,7 +25,7 @@ log = logging.getLogger("wakehub.synaccess")
 @dataclass(frozen=True)
 class Outlet:
     number: int
-    on: bool
+    on: bool | None
     name: str
 
 
@@ -35,6 +35,8 @@ class PduStatus:
     bank_amps: tuple[float, ...]
     temperature_c: float | None
     raw: str
+    bank_ranges: tuple[str, ...] = ()
+    temperature_text: str = ""
 
 
 def synaccess_realm(header: str) -> bool:
@@ -100,6 +102,68 @@ def parse_status(body: str, names: dict[int, str] | None = None) -> PduStatus:
     return PduStatus(outlets=outlets, bank_amps=currents, temperature_c=temperature, raw=text)
 
 
+def parse_status_xml(body: str, names: dict[int, str] | None = None, outlet_count: int | None = None) -> PduStatus:
+    # rly0 is outlet 1. rly16 is an extra relay on the NP-1601DU, not a 17th outlet.
+    relays: dict[int, bool | None] = {}
+    for match in re.finditer(r"<rly(\d+)>([^<]*)</rly\1>", body or "", re.IGNORECASE):
+        index = int(match.group(1))
+        if index >= 16:
+            continue
+        value = html.unescape(match.group(2)).strip()
+        if value == "1":
+            relays[index] = True
+        elif value == "0":
+            relays[index] = False
+        else:
+            relays[index] = None
+    if not relays:
+        raise UpstreamError("status.xml did not include outlet relays")
+    limit = outlet_count if outlet_count else max(relays) + 1
+    labels = names or {}
+    outlets = tuple(
+        Outlet(number=index + 1, on=relays[index], name=labels.get(index + 1) or f"Outlet {index + 1}")
+        for index in range(min(limit, 16))
+        if index in relays
+    )
+    ranges: list[str] = []
+    amps: list[float] = []
+    for tag in ("ac0", "ac1"):
+        text = _xml_text(body, tag)
+        if not text:
+            continue
+        ranges.append(text)
+        first = text.split("-", 1)[0].strip()
+        if _is_float(first):
+            amps.append(float(first))
+    temperature_text, temperature = _temperature_text(_xml_text(body, "tp0"))
+    return PduStatus(
+        outlets=outlets,
+        bank_amps=tuple(amps),
+        temperature_c=temperature,
+        raw=body or "",
+        bank_ranges=tuple(ranges),
+        temperature_text=temperature_text,
+    )
+
+
+def _xml_text(body: str, tag: str) -> str:
+    match = re.search(rf"<{tag}>([^<]*)</{tag}>", body or "", re.IGNORECASE)
+    return html.unescape(match.group(1)).strip() if match else ""
+
+
+def _temperature_text(raw: str) -> tuple[str, float | None]:
+    if not raw or raw.upper() in {"X", "XX"}:
+        return "", None
+    celsius, _sep, fahrenheit = raw.partition("/")
+    celsius = celsius.strip()
+    if not _is_float(celsius):
+        return raw, None
+    text = f"{celsius}°C"
+    if fahrenheit.strip() and _is_float(fahrenheit.strip()):
+        text = f"{text} / {fahrenheit.strip()}°F"
+    return text, float(celsius)
+
+
 def _is_float(value: str) -> bool:
     try:
         float(value)
@@ -138,18 +202,47 @@ _LOGIN_WORD = re.compile(r"\blogin\b|\bsign in\b", re.IGNORECASE)
 LOGIN_MESSAGE = "The PDU web UI requires a session login; outlet names could not be read"
 AUTH_MESSAGE = "The PDU rejected the username or password"
 _LOGGED_NAME_READS: dict[str, str] = {}
+_LOGGED_A5: set[str] = set()
+
+
+def firmware_default_name(label: str, number: int) -> bool:
+    # The NP-1601DU fills an unnamed outlet with Outlet4, Outlet10, and so on.
+    compact = re.sub(r"\s+", "", label or "").lower()
+    return compact == f"outlet{number}"
+
+
+def _usable_name(label: str, number: int) -> str:
+    text = html.unescape(label or "").strip()
+    if not text or text.lower() in _JUNK_NAME or firmware_default_name(text, number):
+        return ""
+    return text
 
 
 def parse_outlet_names(body: str) -> dict[int, str]:
-    text = body.strip()
+    names, _span = collect_outlet_names(body)
+    return names
+
+
+def collect_outlet_names(body: str) -> tuple[dict[int, str], int]:
+    # The whole page is parsed. The 8 KB cut is only for the diagnostics copy.
+    text = (body or "").strip()
     if not text:
-        return {}
+        return {}, 0
     if text[0] in "[{":
         try:
-            return _names_from_json(json.loads(text))
+            names = _names_from_json(json.loads(text))
         except json.JSONDecodeError:
-            pass
-    return _names_from_html(text)
+            names = {}
+        else:
+            return names, max(names) if names else 0
+    names, span = _names_from_inputs(text)
+    if names or span:
+        return names, span
+    names, span = _names_from_table(text)
+    if names or span:
+        return names, span
+    names = _names_from_array(text)
+    return names, max(names) if names else 0
 
 
 def _names_from_json(data: object) -> dict[int, str]:
@@ -212,18 +305,9 @@ def redact_diagnostics(text: str, secret: str = "", username: str = "") -> str:
     return cleaned[:8192]
 
 
-def _names_from_html(text: str) -> dict[int, str]:
-    names = _names_from_inputs(text)
-    if names:
-        return names
-    names = _names_from_table(text)
-    if names:
-        return names
-    return _names_from_array(text)
-
-
-def _names_from_inputs(text: str) -> dict[int, str]:
+def _names_from_inputs(text: str) -> tuple[dict[int, str], int]:
     names: dict[int, str] = {}
+    span = 0
     for match in re.finditer(r"<input\b([^>]*)>", text, re.IGNORECASE):
         attrs: dict[str, str] = {}
         for attr in re.finditer(
@@ -234,11 +318,21 @@ def _names_from_inputs(text: str) -> dict[int, str]:
         kind = attrs.get("type", "text").lower()
         if kind not in {"text", ""}:
             continue
-        found = _OUTLET_INPUT.match(attrs.get("name", ""))
-        label = html.unescape(attrs.get("value", "")).strip()
-        if found and label and label.lower() not in _JUNK_NAME:
-            names[int(found.group(1))] = label
-    return names
+        raw_name = attrs.get("name", "")
+        # pwr.htm names outlets ON0..ON15. ON0 is outlet 1.
+        on = re.fullmatch(r"ON(\d+)", raw_name, re.IGNORECASE)
+        if on:
+            number = int(on.group(1)) + 1
+        else:
+            found = _OUTLET_INPUT.match(raw_name)
+            if not found:
+                continue
+            number = int(found.group(1))
+        span = max(span, number)
+        label = _usable_name(attrs.get("value", ""), number)
+        if label:
+            names[number] = label
+    return names, span
 
 
 def _cell_text(cell: str) -> str:
@@ -253,11 +347,11 @@ def _table_with_name(text: str) -> str:
     return ""
 
 
-def _names_from_table(text: str) -> dict[int, str]:
+def _names_from_table(text: str) -> tuple[dict[int, str], int]:
     # Stay inside the table that has the Name header. A following table is a different list.
     table = _table_with_name(text)
     if not table:
-        return {}
+        return {}, 0
     rows = []
     for chunk in re.split(r"</tr\s*>", table, flags=re.IGNORECASE):
         # Some firmware omits the opening <tr> on later rows.
@@ -279,26 +373,32 @@ def _names_from_table(text: str) -> dict[int, str]:
                 break
         break
     if header is None or name_col is None:
-        return {}
+        return {}, 0
     names: dict[int, str] = {}
+    span = 0
     for cells in rows[header + 1 :]:
         if name_col >= len(cells):
             continue
-        label = cells[name_col]
-        if not label or label.lower() in _JUNK_NAME:
-            # An empty Name cell stays empty. Do not borrow a cell from another column.
+        number = _outlet_number(cells, outlet_col)
+        if not number:
             continue
-        number = None
-        if outlet_col is not None and outlet_col < len(cells) and cells[outlet_col].isdigit():
-            number = int(cells[outlet_col])
-        else:
-            for cell in cells:
-                if cell.isdigit():
-                    number = int(cell)
-                    break
-        if number and number >= 1 and number not in names:
+        span = max(span, number)
+        label = _usable_name(cells[name_col], number)
+        if label and number not in names:
             names[number] = label
-    return names
+    return names, span
+
+
+def _outlet_number(cells: list[str], outlet_col: int | None) -> int:
+    if outlet_col is not None and outlet_col < len(cells):
+        match = re.match(r"(\d+)", cells[outlet_col].strip())
+        if match:
+            return int(match.group(1))
+    for cell in cells:
+        match = re.fullmatch(r"(\d+)", cell.strip())
+        if match:
+            return int(match.group(1))
+    return 0
 
 
 def _quoted_strings(body: str) -> list[str]:
@@ -402,7 +502,9 @@ class SynaccessClient:
         self._username = username or ""
         self._secret = password or ""
         self._timeout = timeout
+        self.outlet_count = 0
         self.name_pages: list[dict[str, object]] = []
+        self.status_pages: list[dict[str, object]] = []
         self._http = http or httpx.Client(
             auth=(username, password),
             timeout=timeout,
@@ -414,7 +516,53 @@ class SynaccessClient:
             self._http.close()
 
     def status(self, names: dict[int, str] | None = None) -> PduStatus:
-        return parse_status(self._command("$A5"), names)
+        # status.xml is the page this firmware's own UI polls. $A5 is only the fallback.
+        self.status_pages = []
+        origin = self._base.split("/cmd.cgi", 1)[0]
+        try:
+            response = self._http.get(origin + "/status.xml", timeout=min(2.0, self._timeout))
+        except httpx.HTTPError as exc:
+            raise UpstreamError(f"Synaccess status.xml request failed: {exc}") from exc
+        self.status_pages.append(
+            {
+                "path": "/status.xml",
+                "status": response.status_code,
+                "content_type": response.headers.get("content-type", ""),
+                "body": redact_diagnostics(response.text or "", self._secret, self._username),
+            }
+        )
+        if response.status_code < 400:
+            try:
+                return parse_status_xml(response.text or "", names, getattr(self, "_relay_limit", None))
+            except UpstreamError:
+                pass
+        elif response.status_code != 404:
+            raise UpstreamError(f"Synaccess status.xml HTTP {response.status_code}")
+        try:
+            raw = self._command("$A5")
+        except UpstreamError as exc:
+            self._log_a5_once(str(exc))
+            raise
+        self.status_pages.append(
+            {
+                "path": "/cmd.cgi?$A5",
+                "status": 200,
+                "content_type": "text/plain",
+                "body": redact_diagnostics(raw, self._secret, self._username),
+            }
+        )
+        try:
+            return parse_status(raw, names)
+        except UpstreamError:
+            self._log_a5_once(raw)
+            raise
+
+    def _log_a5_once(self, raw: str) -> None:
+        origin = self._base.split("/cmd.cgi", 1)[0]
+        if origin in _LOGGED_A5:
+            return
+        _LOGGED_A5.add(origin)
+        log.info("PDU $A5 status was not understood: %s", (raw or "")[:500])
 
     def set_outlet(self, outlet: int, on: bool) -> None:
         parse_result(self._command(f"$A3 {int(outlet)} {1 if on else 0}"))
@@ -428,7 +576,7 @@ class SynaccessClient:
     def read_outlet_names(self) -> dict[int, str]:
         # Names are not in $A5. Try the web pages and keep the first one that has them.
         origin = self._base.split("/cmd.cgi", 1)[0]
-        paths = ("/outletsetup.htm", "/outlets.htm", "/outlet.htm", "/api/outlets", "/setup.htm", "/")
+        paths = ("/pwr.htm", "/", "/index.htm")
         self.name_pages = []
         first_useful: dict[str, object] | None = None
         first_page: dict[str, object] | None = None
@@ -459,8 +607,11 @@ class SynaccessClient:
                 first_page = page
             if response.status_code != 404 and first_useful is None:
                 first_useful = page
-            names = parse_outlet_names(body) if response.status_code < 400 else {}
-            if names:
+            names, span = collect_outlet_names(body) if response.status_code < 400 else ({}, 0)
+            if span:
+                self.outlet_count = max(self.outlet_count, span)
+            # A page that lists outlets, even with only Outlet4-style defaults, is the answer.
+            if names or span:
                 return names
         chosen = first_useful or first_page
         self._log_name_miss(origin, chosen)

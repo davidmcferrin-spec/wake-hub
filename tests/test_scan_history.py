@@ -12,6 +12,24 @@ def _wait(client, scan_id):
     return body
 
 
+def test_ssdp_updates_a_pinged_host_to_roku(client, monkeypatch):
+    monkeypatch.setattr("wakehub.scan.ping", lambda ip, _timeout=1: ip == "10.77.0.5")
+    monkeypatch.setattr("wakehub.scan._arp_table", lambda: {})
+    monkeypatch.setattr("wakehub.scan._mdns_names", lambda: {})
+    monkeypatch.setattr("wakehub.scan._roku_ssdp", lambda: {"10.77.0.5"})
+    monkeypatch.setattr("wakehub.scan._port_open", lambda _ip, _port: False)
+    monkeypatch.setattr("wakehub.scan._http_kinds", lambda _ip: [])
+    monkeypatch.setattr("wakehub.scan._hostname", lambda _ip: "")
+    monkeypatch.setattr("wakehub.scan._snmp_cyberpower", lambda _ip: False)
+    started = client.post("/api/v1/scans", json={"cidr": "10.77.0.4/30"})
+    assert started.status_code == 202, started.text
+    body = _wait(client, started.json()["id"])
+    assert body["status"] == "done", body
+    host = next(item for item in body["hosts"] if item["ip"] == "10.77.0.5")
+    assert host["detail"]["suggestion"]["type"] == "roku"
+    assert len([item for item in body["hosts"] if item["ip"] == "10.77.0.5"]) == 1
+
+
 def test_scan_history_can_be_deleted_without_removing_devices(client, monkeypatch):
     def fake(_cidr, progress):
         progress(1, 1)

@@ -98,6 +98,62 @@ def test_every_capability_is_on_the_api_mcp_and_ui(client):
     assert missing == []
 
 
+def test_every_ui_button_is_a_capability(client):
+    pieces = []
+    for path in sorted(STATIC.iterdir()):
+        if path.suffix == ".js":
+            pieces.append(path.read_text())
+    controls = _ui_controls("\n".join(pieces))
+    known = {item.id for item in CAPABILITIES}
+    extra = sorted(set(controls) - known)
+    assert extra == [], extra
+
+
+def test_poll_dispatch_reaches_scan_and_history():
+    source = (STATIC / "app.js").read_text()
+    body = source.split("async function pollStatus", 1)[1].split("window.pollStatus = pollStatus", 1)[0]
+    for name in ("pollScan", "pollHistory"):
+        assert name in body, name
+        head = body.split(name, 1)[0]
+        for match in re.finditer(r"if\s*\((.*?)\)\s*return\s*;", head, re.S):
+            condition = match.group(1)
+            if "state.page" not in condition and "page" not in condition:
+                continue
+            assert '"scan"' in condition and '"history"' in condition, condition
+
+
+def _api_clicks_missing_a_capability(text: str) -> list[str]:
+    # A consuming tail would hide the next class check, so each window stops there.
+    marks = list(re.finditer(r'classList\.contains\("([^"]+)"\)', text))
+    missing = []
+    for index, match in enumerate(marks):
+        name = match.group(1)
+        end = marks[index + 1].start() if index + 1 < len(marks) else match.end() + 600
+        tail = text[match.end():min(end, match.end() + 600)]
+        if "api(" not in tail and "/api/v1" not in tail:
+            continue
+        buttons = re.findall(rf"<button\b[^>]*\b{re.escape(name)}\b[^>]*>", text)
+        if not buttons or any("data-cap=" not in tag for tag in buttons):
+            missing.append(name)
+    return missing
+
+
+def test_direct_api_clicks_declare_a_capability():
+    bare = """
+    if (event.target.classList.contains("method-row")) { keep going; }
+    if (event.target.classList && event.target.classList.contains("test-method")) {
+      api("POST", "/api/v1/test", { kind: "wol" });
+    }
+    <button type="button" class="ghost test-method">Test</button>
+    """
+    assert _api_clicks_missing_a_capability(bare) == ["test-method"]
+    pieces = []
+    for path in sorted(STATIC.iterdir()):
+        if path.suffix == ".js":
+            pieces.append(path.read_text())
+    assert _api_clicks_missing_a_capability("\n".join(pieces)) == []
+
+
 def test_every_api_operation_is_a_capability(client):
     schema = client.get("/openapi.json").json()
     covered = {(cap.method.lower(), cap.path) for cap in CAPABILITIES}

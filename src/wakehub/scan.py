@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import ipaddress
 import json
 import select
@@ -127,34 +128,55 @@ def start_scan(hub: Hub, cidr: str | None = None, discover: Discover | None = No
     return get_scan(hub, scan_id)
 
 
+def _save_found_host(hub: Hub, scan_id: int, host: dict[str, Any]) -> None:
+    # A later phase, such as SSDP, can enrich a host that was already written.
+    fields = (
+        host.get("mac"),
+        host.get("hostname") or "",
+        host.get("vendor") or vendor(host.get("mac")),
+        json.dumps(host.get("kinds") or []),
+        json.dumps(host.get("detail") or {}),
+    )
+    existing = hub.query_one(
+        "SELECT id FROM scan_hosts WHERE scan_id = ? AND ip = ?",
+        (scan_id, host.get("ip")),
+    )
+    if existing:
+        hub.write(
+            "UPDATE scan_hosts SET mac = ?, hostname = ?, vendor = ?, kinds = ?, detail = ? WHERE id = ?",
+            (*fields, existing["id"]),
+        )
+        return
+    hub.write(
+        """
+        INSERT INTO scan_hosts (scan_id, ip, mac, hostname, vendor, kinds, detail)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (scan_id, host.get("ip"), *fields),
+    )
+
+
 def _run(hub: Hub, scan_id: int, cidr: str, discover: Discover) -> None:
     def progress(done: int, total: int) -> None:
         if hub.stopping():
             return
         hub.write("UPDATE scans SET progress = ?, total = ? WHERE id = ?", (done, total, scan_id))
 
-    try:
-        hosts = discover(cidr, progress)
+    def on_found(host: dict[str, Any]) -> None:
         if hub.stopping():
             return
-        for host in hosts:
-            if hub.stopping():
-                return
-            hub.write(
-                """
-                INSERT INTO scan_hosts (scan_id, ip, mac, hostname, vendor, kinds, detail)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    scan_id,
-                    host.get("ip"),
-                    host.get("mac"),
-                    host.get("hostname") or "",
-                    host.get("vendor") or vendor(host.get("mac")),
-                    json.dumps(host.get("kinds") or []),
-                    json.dumps(host.get("detail") or {}),
-                ),
-            )
+        _save_found_host(hub, scan_id, host)
+
+    live = "on_found" in inspect.signature(discover).parameters
+    try:
+        hosts = discover(cidr, progress, on_found=on_found) if live else discover(cidr, progress)
+        if hub.stopping():
+            return
+        if not live:
+            for host in hosts:
+                if hub.stopping():
+                    return
+                _save_found_host(hub, scan_id, host)
         if hub.stopping():
             return
         hub.write(
@@ -381,14 +403,19 @@ def add_from_scan(hub: Hub, scan_id: int, host_id: int, kind: str, payload: dict
     raise WakeHubError("kind must be device, pdu, amt, jetkvm, plug, ups, or roku")
 
 
-def discover_subnet(cidr: str, progress: Callable[[int, int], None]) -> list[dict[str, Any]]:
+def discover_subnet(
+    cidr: str,
+    progress: Callable[[int, int], None],
+    *,
+    on_found: Callable[[dict[str, Any]], None] | None = None,
+) -> list[dict[str, Any]]:
     network = _network(cidr)
     hosts = [str(ip) for ip in network.hosts()] or [str(network.network_address)]
     total = len(hosts)
     found: dict[str, dict[str, Any]] = {}
     done = 0
 
-    def inspect(ip: str, arp: dict[str, str], names: list[str], answered: bool) -> dict[str, Any] | None:
+    def _inspect_host(ip: str, arp: dict[str, str], names: list[str], answered: bool) -> dict[str, Any] | None:
         if not answered and ip not in arp:
             return None
         mac = arp.get(ip, "")
@@ -421,9 +448,11 @@ def discover_subnet(cidr: str, progress: Callable[[int, int], None]) -> list[dic
                 if done % 16 == 0 or done == total:
                     progress(done, total)
                 continue
-            described = inspect(ip, arp, names_by_ip.get(ip, []), answered or ip in arp)
+            described = _inspect_host(ip, arp, names_by_ip.get(ip, []), answered or ip in arp)
             if described:
                 found[ip] = described
+                if on_found:
+                    on_found(described)
             if done % 16 == 0 or done == total:
                 progress(done, total)
         for ip, mac in arp.items():
@@ -434,9 +463,11 @@ def discover_subnet(cidr: str, progress: Callable[[int, int], None]) -> list[dic
                     continue
             except ValueError:
                 continue
-            described = inspect(ip, arp, names_by_ip.get(ip, []), False)
+            described = _inspect_host(ip, arp, names_by_ip.get(ip, []), False)
             if described:
                 found[ip] = described
+                if on_found:
+                    on_found(described)
         for ip in roku_ips:
             own_names = names_by_ip.get(ip, [])
             if ip in found:
@@ -454,13 +485,15 @@ def discover_subnet(cidr: str, progress: Callable[[int, int], None]) -> list[dic
                     )
                     found[ip]["kinds"] = kinds
                     found[ip]["detail"] = finger
+                    if on_found:
+                        on_found(found[ip])
                 continue
             try:
                 if ipaddress.ip_address(ip) not in network:
                     continue
             except ValueError:
                 continue
-            described = inspect(ip, arp, own_names, True)
+            described = _inspect_host(ip, arp, own_names, True)
             if described:
                 described["detail"]["suggestion"] = suggest(
                     vendor=described.get("vendor") or "",
@@ -471,6 +504,8 @@ def discover_subnet(cidr: str, progress: Callable[[int, int], None]) -> list[dic
                     ssdp=True,
                 )
                 found[ip] = described
+                if on_found:
+                    on_found(described)
     return list(found.values())
 
 

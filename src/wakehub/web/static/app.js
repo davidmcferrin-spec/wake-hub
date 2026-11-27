@@ -146,7 +146,8 @@ function applyDevicePills() {
 async function pollStatus(force) {
   if (state.pollInFlight || state.confirming || document.hidden || !state.token) return;
   if (!force && Date.now() < (state.pollHold || 0)) return;
-  if (state.page !== "devices" && state.page !== "power") return;
+  const page = state.page;
+  if (page !== "devices" && page !== "power" && page !== "scan" && page !== "history") return;
   state.pollInFlight = true;
   state.pollHold = Date.now() + 400;
   try {
@@ -156,9 +157,13 @@ async function pollStatus(force) {
       status.forEach((item) => { state.status[item.device_id] = item; });
       applyDevicePills();
     }
-    if (window.loadLivePdus) await window.loadLivePdus();
-    if (window.loadOperateStatus) await window.loadOperateStatus();
-    if (window.pollAmt) window.pollAmt();
+    if (state.page === "devices" || state.page === "power") {
+      if (window.loadLivePdus) await window.loadLivePdus();
+      if (window.loadOperateStatus) await window.loadOperateStatus();
+      if (window.pollAmt) window.pollAmt();
+    }
+    if (state.page === "scan" && window.pollScan) await window.pollScan();
+    if (state.page === "history" && window.pollHistory) await window.pollHistory();
   } catch (_error) {
     /* a status poll leaves the page where the operator left it */
   } finally {
@@ -370,7 +375,7 @@ function methodRow(method, open) {
     <div class="row-actions">
       <button type="button" class="ghost" data-move="up">Up</button>
       <button type="button" class="ghost" data-move="down">Down</button>
-      <button type="button" class="ghost test-method">Test</button>
+      <button type="button" class="ghost test-method" data-cap="test_target" data-fields="broadcast,community,confirm,host,insecure_tls,kind,mac,password,plug_kind,port,snmp_version,use_tls,username">Test</button>
       <button type="button" class="danger" data-remove-method="1">Remove</button>
     </div>
   </details>`;
@@ -948,24 +953,66 @@ function suggestTags(input) {
   box.innerHTML = options.map((tag) => `<button type="button" class="ghost" data-complete-tag="${escapeHtml(tag)}">#${escapeHtml(tag)}</button>`).join("");
 }
 
-function renderHistory() {
-  const rows = state.actions.map((item) => `
-    <tr>
+function sourceLabel(source) {
+  return { ui: "UI", api: "API", mcp: "MCP" }[source] || source || "";
+}
+
+function historyRow(item) {
+  return `<tr data-action-id="${item.id}">
       <td>${escapeHtml(item.created_at)}</td>
-      <td>${escapeHtml(item.source)}</td>
+      <td>${escapeHtml(sourceLabel(item.source))}</td>
       <td>${escapeHtml(item.target_name || "")}</td>
       <td>${escapeHtml(item.action)}</td>
       <td>${item.ok ? "ok" : "failed"}</td>
       <td>${escapeHtml(item.detail)}</td>
-    </tr>`).join("");
+    </tr>`;
+}
+
+window.pollHistory = async function () {
+  if (state.historyQuiet && Date.now() < state.historyQuiet) return;
+  const form = document.getElementById("history-form");
+  if (!form) return;
+  const filter = state.historyFilter || { device_id: "", limit: "100" };
+  const limit = Math.max(1, Number(filter.limit) || 100);
+  const params = new URLSearchParams();
+  if (filter.device_id) params.set("device_id", String(filter.device_id));
+  params.set("limit", String(limit));
+  try {
+    const rows = await api("GET", `/api/v1/actions?${params}`);
+    state.actions = rows;
+    let table = document.getElementById("history-table");
+    if (!table && rows.length) {
+      const empty = document.querySelector("#view .empty");
+      if (empty) empty.remove();
+      form.insertAdjacentHTML("afterend", `<table id="history-table"><thead><tr><th>Time</th><th>Source</th><th>Target</th><th>Action</th><th>Result</th><th>Detail</th></tr></thead><tbody></tbody></table>`);
+      table = document.getElementById("history-table");
+    }
+    const body = table && table.querySelector("tbody");
+    if (!body) return;
+    const have = new Set([...body.querySelectorAll("[data-action-id]")].map((row) => row.dataset.actionId));
+    const newer = rows.filter((item) => !have.has(String(item.id)));
+    const scroller = document.scrollingElement;
+    const top = scroller ? scroller.scrollTop : 0;
+    for (let index = newer.length - 1; index >= 0; index -= 1) {
+      body.insertAdjacentHTML("afterbegin", historyRow(newer[index]));
+    }
+    while (body.children.length > limit) body.lastElementChild.remove();
+    if (scroller) scroller.scrollTop = top;
+  } catch (_error) {
+    state.historyQuiet = Date.now() + 20000;
+  }
+};
+
+function renderHistory() {
+  const rows = state.actions.map((item) => historyRow(item)).join("");
   $("view").innerHTML = `
     <form id="history-form" class="toolbar">
-      <input name="device_id" type="number" placeholder="device id" aria-label="Device id">
-      <input name="limit" type="number" value="100" aria-label="Limit">
+      <input name="device_id" type="number" placeholder="device id" aria-label="Device id" value="${escapeHtml((state.historyFilter && state.historyFilter.device_id) || "")}">
+      <input name="limit" type="number" value="${escapeHtml((state.historyFilter && state.historyFilter.limit) || "100")}" aria-label="Limit">
       <button type="submit" data-cap="list_actions" data-fields="device_id,limit">Refresh log</button>
     </form>
     ${rows
-      ? `<table><thead><tr><th>Time</th><th>Source</th><th>Target</th><th>Action</th><th>Result</th><th>Detail</th></tr></thead><tbody>${rows}</tbody></table>`
+      ? `<table id="history-table"><thead><tr><th>Time</th><th>Source</th><th>Target</th><th>Action</th><th>Result</th><th>Detail</th></tr></thead><tbody>${rows}</tbody></table>`
       : `<div class="empty"><p>Nothing has been switched yet. Wake a device and the result will show here.</p></div>`}`;
 }
 
@@ -1599,6 +1646,7 @@ async function onSubmit(event) {
     if (data.get("device_id")) params.set("device_id", String(data.get("device_id")));
     if (data.get("limit")) params.set("limit", String(data.get("limit")));
     try {
+      state.historyFilter = { device_id: data.get("device_id") || "", limit: data.get("limit") || "100" };
       state.actions = await api("GET", `/api/v1/actions?${params}`);
       render();
     } catch (error) {

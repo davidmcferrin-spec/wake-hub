@@ -88,7 +88,8 @@ function hardwareFields(kind, record) {
     const saveTags = editing
       ? `<button type="button" data-cap="update_pdu_outlet" data-fields="tags" data-pdu="${current.id}" data-outlet="1">Save tags</button>`
       : "";
-    return `${name}${hostPort}${tls}${login}${fromDevice}${namesError}<label>Local outlet names<input name="outlet_names" value="${names}" placeholder="1=NAS, 2=Desk"></label>${outletTags}${saveTags}${saved}${tagsField}`;
+    const limit = `<p class="sub">A netBooter keeps only the first 16 characters of an outlet name.</p>`;
+    return `${name}${hostPort}${tls}${login}${fromDevice}${namesError}${limit}<label>Local outlet names<input name="outlet_names" value="${names}" placeholder="1=NAS, 2=Desk"></label>${outletTags}${saveTags}${saved}${tagsField}`;
   }
   if (kind === "roku") {
     const help = editing ? "" : `<button type="button" class="ghost icon-button" id="roku-help" aria-expanded="false" aria-controls="roku-help-text">Info</button><p id="roku-help-text" class="sub hidden">Control by mobile apps must be enabled on the TV. Some models need network standby turned on to power back on.</p>`;
@@ -198,24 +199,64 @@ window.saveHardware = async function (button) {
   }
 };
 
-function renderScan() {
-  const typed = document.getElementById("cidr");
-  const kept = typed ? typed.value : "";
-  const interfaces = state.interfaces || [];
-  const primary = interfaces.find((item) => item.primary) || interfaces[0];
-  const cidrValue = kept || (primary ? primary.cidr : "");
-  const options = interfaces.map((item) => `<option value="${escapeHtml(item.cidr)}"${item.primary ? " selected" : ""}>${escapeHtml(item.name)} ${escapeHtml(item.cidr)}</option>`).join("");
-  const picker = interfaces.length > 1
-    ? `<label>Subnet <select id="cidr-pick" aria-label="Choose a subnet">${options}</select></label>`
-    : "";
-  const hosts = state.scan ? state.scan.hosts : [];
+function scanPhase(scan) {
+  if (!scan) return "";
+  if (scan.status === "running") return "probing";
+  if (scan.status === "done") return "finished";
+  if (scan.status === "error") return "failed";
+  return scan.status || "";
+}
+
+function scanLine(scan, found) {
+  const total = Number(scan.total || 0);
+  const done = Number(scan.progress || 0);
+  const pct = total ? Math.round((100 * done) / total) : 0;
+  const foundText = found === "" || found == null ? "" : `, ${found} found`;
+  return `${scan.cidr || ""} · ${done} of ${total} probed${foundText}, ${scanPhase(scan)}, ${pct}%`;
+}
+
+window.pollScan = async function () {
+  if (state.scanQuiet && Date.now() < state.scanQuiet) return;
+  try {
+    const scans = await api("GET", "/api/v1/scans");
+    state.scans = scans;
+    scans.forEach((scan) => {
+      const line = document.querySelector(`[data-scan-row="${scan.id}"] .scan-line`);
+      if (line) line.textContent = scanLine(scan, "");
+    });
+    const running = scans.find((scan) => scan.status === "running");
+    const focusId = running ? running.id : (state.scan && state.scan.id);
+    if (!focusId) return;
+    const detail = await api("GET", `/api/v1/scans/${focusId}`);
+    state.scan = detail;
+    const found = (detail.hosts || []).length;
+    const text = scanLine(detail, found);
+    const progress = document.getElementById("scan-progress");
+    if (progress && progress.textContent !== text) progress.textContent = text;
+    const row = document.querySelector(`[data-scan-row="${detail.id}"] .scan-line`);
+    if (row) row.textContent = text;
+    const slot = document.getElementById("scan-hosts");
+    const marker = (detail.hosts || []).map((host) => host.id).join(",");
+    if (slot && slot.dataset.hosts !== marker) {
+      slot.dataset.hosts = marker;
+      slot.innerHTML = hostSections(detail);
+      const empty = document.getElementById("scan-empty");
+      if (empty && marker) empty.remove();
+    }
+  } catch (_error) {
+    state.scanQuiet = Date.now() + 20000;
+  }
+};
+
+function hostSections(scan) {
+  const hosts = scan && scan.hosts ? scan.hosts : [];
   const groups = {};
   hosts.forEach((host) => {
     const suggestion = (host.detail && host.detail.suggestion) || { type: "unknown", confidence: "low", reason: "", prefill: { kind: "device" } };
     const key = suggestion.type || "unknown";
     (groups[key] ||= []).push({ host, suggestion });
   });
-  const sections = Object.keys(groups).sort().map((key) => {
+  return Object.keys(groups).sort().map((key) => {
     const cards = groups[key].map(({ host, suggestion }) => {
       const matches = host.matches || (host.known ? [host.known] : []);
       const addKind = (suggestion.prefill && suggestion.prefill.kind) || "device";
@@ -226,9 +267,9 @@ function renderScan() {
       const links = matches.map((item) => `<button type="button" class="ghost" data-open-kind="${escapeHtml(item.kind)}" data-id="${item.id}">Open ${escapeHtml(item.name)}</button>`).join("");
       const attach = host.attach;
       const addLabel = attach ? attach.label : "Add";
-      const add = blocked.length ? "" : `<button type="button" class="ghost" data-cap="add_from_scan" data-fields="community,device_id,kind,name,password,plug_kind,username" data-scan="${state.scan.id}" data-host="${host.id}" data-kind="${escapeHtml(addKind)}" data-device-id="${attach ? attach.device_id : ""}" data-plug-kind="${escapeHtml((suggestion.prefill && suggestion.prefill.plug_kind) || "")}">${escapeHtml(addLabel)}</button>`;
+      const add = blocked.length ? "" : `<button type="button" class="ghost" data-cap="add_from_scan" data-fields="community,device_id,kind,name,password,plug_kind,username" data-scan="${scan.id}" data-host="${host.id}" data-kind="${escapeHtml(addKind)}" data-device-id="${attach ? attach.device_id : ""}" data-plug-kind="${escapeHtml((suggestion.prefill && suggestion.prefill.plug_kind) || "")}">${escapeHtml(addLabel)}</button>`;
       return `
-      <article class="card">
+      <article class="card" data-host-id="${host.id}">
         <header><h2>${escapeHtml(host.ip)}</h2><span class="pill">${escapeHtml(suggestion.confidence || "")}</span></header>
         <p class="meta">${escapeHtml(host.hostname || "")} ${escapeHtml(host.vendor || "unknown vendor")} · ${escapeHtml(host.mac || "no MAC")} · ${escapeHtml(known)}</p>
         <p class="sub">${escapeHtml(suggestion.reason || "")}</p>
@@ -237,9 +278,22 @@ function renderScan() {
     }).join("");
     return `<section><h2>${escapeHtml(key)}</h2><div class="grid">${cards}</div></section>`;
   }).join("");
+}
+
+function renderScan() {
+  const typed = document.getElementById("cidr");
+  const kept = typed ? typed.value : "";
+  const interfaces = state.interfaces || [];
+  const primary = interfaces.find((item) => item.primary) || interfaces[0];
+  const cidrValue = kept || (primary ? primary.cidr : "");
+  const options = interfaces.map((item) => `<option value="${escapeHtml(item.cidr)}"${item.primary ? " selected" : ""}>${escapeHtml(item.name)} ${escapeHtml(item.cidr)}</option>`).join("");
+  const picker = interfaces.length > 1
+    ? `<label>Subnet <select id="cidr-pick" aria-label="Choose a subnet">${options}</select></label>`
+    : "";
+  const sections = hostSections(state.scan);
   const scans = state.scans.map((scan) => `
-    <div class="row-actions">
-      <button type="button" class="ghost" data-cap="scan_results" data-fields="" data-id="${scan.id}">${escapeHtml(scan.cidr)} · ${escapeHtml(scan.status)} ${scan.progress}/${scan.total}</button>
+    <div class="row-actions" data-scan-row="${scan.id}">
+      <button type="button" class="ghost" data-cap="scan_results" data-fields="" data-id="${scan.id}"><span class="scan-line">${escapeHtml(scanLine(scan, ""))}</span></button>
       <button type="button" data-cap="rescan" data-fields="replace" data-id="${scan.id}" data-replace="1">Re-scan</button>
       <button type="button" class="danger" data-cap="delete_scan" data-fields="" data-id="${scan.id}">Delete</button>
     </div>
@@ -255,7 +309,9 @@ function renderScan() {
       <button type="button" class="danger" data-cap="clear_scans" data-fields="confirm">Clear scan history</button>
     </form>
     <div class="stack">${scans || ""}</div>
-    ${sections || `<div class="empty"><p>No scans yet. Enter your network, such as 192.168.1.0/24, and scan.</p></div>`}`
+    <p id="scan-progress" class="sub">${state.scan ? escapeHtml(scanLine(state.scan, (state.scan.hosts || []).length)) : ""}</p>
+    <div id="scan-hosts">${sections}</div>
+    ${sections ? "" : `<div class="empty" id="scan-empty"><p>No scans yet. Enter your network, such as 192.168.1.0/24, and scan.</p></div>`}`;
   const pick = $("cidr-pick");
   if (pick) pick.addEventListener("change", () => { $("cidr").value = pick.value; });
 }
@@ -267,16 +323,23 @@ function outletShown(outlet) {
   return wanted.every((tag) => owned.includes(String(tag).toLowerCase()));
 }
 
+function displayOutletName(name, number) {
+  const compact = String(name || "").replace(/\s+/g, "").toLowerCase();
+  if (!name || compact === `outlet${number}`) return `Outlet ${number}`;
+  return name;
+}
+
 function outletStateLabel(outlet) {
   const stateText = outlet.on === true ? "on" : outlet.on === false ? "off" : "state unknown";
-  return `${outlet.name} · ${stateText}`;
+  return `${displayOutletName(outlet.name, outlet.number)} · ${stateText}`;
 }
 
 function outletRow(pduId, outlet) {
   if (!outletShown(outlet)) return "";
   const pdu = ((state.power && state.power.pdus) || []).find((row) => Number(row.id) === Number(pduId));
   const pduName = pdu && pdu.name ? pdu.name : "PDU";
-  const button = (action, label, tone) => `<button type="button" class="${tone}" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${pduId}" data-pdu-name="${escapeHtml(pduName)}" data-outlet="${outlet.number}" data-outlet-name="${escapeHtml(outlet.name)}" data-action="${action}">${label}</button>`;
+  const shownName = displayOutletName(outlet.name, outlet.number);
+  const button = (action, label, tone) => `<button type="button" class="${tone}" data-cap="set_pdu_outlet" data-fields="action,confirm" data-pdu="${pduId}" data-pdu-name="${escapeHtml(pduName)}" data-outlet="${outlet.number}" data-outlet-name="${escapeHtml(shownName)}" data-action="${action}">${label}</button>`;
   return `<div class="outlet-line" data-outlet-row="${outlet.number}">
     <span class="outlet-state" data-outlet-state>${escapeHtml(outletStateLabel(outlet))}</span>
     <div class="outlet-ops">
@@ -314,6 +377,16 @@ window.bindOutlets = function (root) {
   });
 };
 
+function pduMeterText(data) {
+  const ranges = (data.bank_ranges || []).filter((value) => String(value).trim());
+  const banks = ranges.length ? ranges : (data.bank_amps || []);
+  const bits = [];
+  if (banks.length) bits.push(`Banks ${banks.map((value) => `${value} A`).join(", ")}`);
+  if (data.temperature_text) bits.push(data.temperature_text);
+  else if (data.temperature_c != null) bits.push(`${data.temperature_c}°C`);
+  return bits.join(" · ");
+}
+
 function setLivePill(key, label, tone) {
   const node = document.querySelector(`[data-live-status="${key}"]`);
   if (!node || (node.textContent === label && node.className === tone)) return;
@@ -333,7 +406,9 @@ window.loadLivePdus = async function () {
       const data = await api("GET", `/api/v1/pdus/${id}/outlets`);
       delete state.pduQuietUntil[id];
       setLivePill(`pdu-${id}`, "Online", "pill up");
-      if (bank) bank.textContent = `Bank current ${(data.bank_amps || []).map((value) => `${value} A`).join(", ") || "unknown"}.`;
+      const meter = document.getElementById(`pdu-meter-${id}`);
+      if (meter) meter.textContent = pduMeterText(data);
+      if (bank) bank.textContent = pduMeterText(data) || "Bank current unknown.";
       const shown = (data.outlets || []).filter(outletShown);
       const rows = [...node.querySelectorAll("[data-outlet-row]")];
       const sameShape = rows.length === shown.length && rows.every((row, index) => row.dataset.outletRow === String(shown[index].number));
@@ -392,6 +467,7 @@ window.hardwareControls = function (kind, item, full) {
     })() ? "open" : "";
     return `
       ${statusPill(`pdu-${id}`, "Checking")}
+      <p class="sub pdu-meter" id="pdu-meter-${id}"></p>
       <details class="outlets" id="pdu-${id}" data-pdu-live="${id}" ${open}>
         <summary>Outlets</summary>
         ${rows || `<p class="sub">No outlets stored yet.</p>`}
@@ -869,11 +945,7 @@ window.handlePowerCap = async function handlePowerCap(button) {
       const replace = button.dataset.replace !== "0";
       state.scan = await api("POST", `/api/v1/scans/${id}/rescan`, { replace });
       showBanner(replace ? "Re-scan started. Earlier results for this subnet were removed." : "Re-scan started. Earlier results were kept.");
-      window.setTimeout(async () => {
-        await refreshScans();
-        if (state.scan) state.scan = await api("GET", `/api/v1/scans/${state.scan.id}`);
-        if (state.page === "scan") renderScan();
-      }, 1200);
+      if (window.pollStatus) window.pollStatus(true);
     } else if (cap === "add_from_scan") {
       const body = { kind: button.dataset.kind };
       if (button.dataset.plugKind) body.plug_kind = button.dataset.plugKind;
@@ -1070,10 +1142,7 @@ document.body.addEventListener("submit", async (event) => {
     if (form.id === "scan-form") {
       state.scan = await api("POST", "/api/v1/scans", { cidr: data.cidr || null, replace: Boolean(form.elements.replace && form.elements.replace.checked) });
       showBanner("Scan started");
-      window.setTimeout(async () => {
-        await refreshScans();
-        if (state.page === "scan") renderScan();
-      }, 1200);
+      if (window.pollStatus) window.pollStatus(true);
     } else if (form.id === "pdu-form") {
       await api("POST", "/api/v1/pdus", payloadFrom(form));
     } else if (form.id === "amt-form") {
