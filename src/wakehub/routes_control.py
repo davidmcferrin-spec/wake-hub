@@ -53,7 +53,7 @@ from wakehub.power import (
 )
 from wakehub.salvos import add_salvo, duplicate_salvo, get_salvo, list_salvos, remove_salvo, run_salvo, update_salvo
 from wakehub.tags import list_tags
-from wakehub.scan import add_from_scan, get_scan, list_scans, start_scan
+from wakehub.scan import add_from_scan, clear_scans, delete_scan, get_scan, list_scans, rescan, start_scan
 from fastapi import Request
 
 
@@ -281,6 +281,15 @@ class SalvoRunIn(BaseModel):
 
 class ScanIn(BaseModel):
     cidr: str | None = None
+    replace: bool = False
+
+
+class ClearScansIn(BaseModel):
+    confirm: bool = False
+
+
+class RescanIn(BaseModel):
+    replace: bool = True
 
 
 class TestIn(BaseModel):
@@ -592,9 +601,13 @@ def control_router() -> APIRouter:
         remove_profile(get_hub(), profile_id)
         return Response(status_code=204)
 
+    @router.post("/scans/clear", tags=["scan"])
+    def clear_scan_history(body: ClearScansIn) -> dict[str, Any]:
+        return clear_scans(get_hub(), confirm=body.confirm)
+
     @router.post("/scans", tags=["scan"], status_code=202)
     def create_scan(body: ScanIn) -> dict[str, Any]:
-        return start_scan(get_hub(), body.cidr)
+        return start_scan(get_hub(), body.cidr, replace=body.replace)
 
     @router.get("/scans", tags=["scan"])
     def scans() -> list[dict[str, Any]]:
@@ -607,6 +620,14 @@ def control_router() -> APIRouter:
     @router.post("/scans/{scan_id}/hosts/{host_id}/add", tags=["scan"], status_code=201)
     def adopt(scan_id: int, host_id: int, body: AddFromScanIn) -> dict[str, Any]:
         return add_from_scan(get_hub(), scan_id, host_id, body.kind, body.model_dump(exclude={"kind"}, exclude_none=True))
+
+    @router.delete("/scans/{scan_id}", tags=["scan"], status_code=200)
+    def remove_scan(scan_id: int) -> dict[str, Any]:
+        return delete_scan(get_hub(), scan_id)
+
+    @router.post("/scans/{scan_id}/rescan", tags=["scan"], status_code=202)
+    def rescan_one(scan_id: int, body: RescanIn) -> dict[str, Any]:
+        return rescan(get_hub(), scan_id, replace=body.replace)
 
     @router.get("/metrics", tags=["metrics"])
     def metrics(

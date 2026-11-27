@@ -325,9 +325,27 @@ def register(server) -> None:
 
     @server.tool()
     @expose
-    def scan_subnet(cidr: str | None = None) -> dict[str, Any]:
-        """Start a background subnet scan. Omit cidr to use this host's subnet. Requires host networking for ARP. Returns the scan id immediately; poll scan_results."""
-        return scansvc.start_scan(get_hub(), cidr)
+    def scan_subnet(cidr: str | None = None, replace: bool = False) -> dict[str, Any]:
+        """Start a background subnet scan. Omit cidr to use this host's subnet. replace=true removes finished scans of that same subnet first and does not remove inventory devices. Requires host networking for ARP. Returns the scan id immediately; poll scan_results."""
+        return scansvc.start_scan(get_hub(), cidr, replace=replace)
+
+    @server.tool()
+    @expose
+    def delete_scan(scan_id: int) -> dict[str, Any]:
+        """Delete one finished scan and its discovered hosts. Inventory devices are not removed. A running scan cannot be deleted."""
+        return scansvc.delete_scan(get_hub(), scan_id)
+
+    @server.tool()
+    @expose
+    def clear_scans(confirm: bool = False) -> dict[str, Any]:
+        """Delete every finished scan and its discovered hosts. Requires confirm=true. Inventory devices are not removed. A scan that is still running is left in place."""
+        return scansvc.clear_scans(get_hub(), confirm=confirm)
+
+    @server.tool()
+    @expose
+    def rescan(scan_id: int, replace: bool = True) -> dict[str, Any]:
+        """Run a past scan again with the same subnet. replace=true removes finished results for that subnet first. replace=false keeps them and starts a new scan. Inventory devices are not removed."""
+        return scansvc.rescan(get_hub(), scan_id, replace=replace)
 
     @server.tool()
     @expose

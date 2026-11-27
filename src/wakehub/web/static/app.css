@@ -196,6 +196,8 @@ button[type="submit"], .primary, .ghost, .danger {
   border-color: #f0d0cb;
 }
 
+.stack { display: flex; flex-direction: column; gap: 0.45rem; margin-bottom: 0.9rem; }
+
 .toolbar, .row-actions, .inline {
   display: flex;
   flex-wrap: wrap;

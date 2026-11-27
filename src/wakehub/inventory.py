@@ -611,6 +611,8 @@ def public_settings(hub: Hub) -> dict[str, Any]:
         "metrics_poll_seconds": int(hub.setting("metrics_poll_seconds", "60") or 60),
         "metrics_retention_days": int(hub.setting("metrics_retention_days", "30") or 30),
         "session_days": int(hub.setting("session_days", "30") or 30),
+        "scan_keep": int(hub.setting("scan_keep", "0") or 0),
+        "scan_keep_days": int(hub.setting("scan_keep_days", "0") or 0),
         "duplicate_records": _duplicate_records(hub),
     }
 
@@ -649,6 +651,16 @@ def update_settings(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
         if days < 1 or days > 365:
             raise WakeHubError("session length must be between 1 and 365 days")
         hub._write_setting("session_days", str(days))
+    if payload.get("scan_keep") is not None:
+        keep = int(payload["scan_keep"])
+        if keep < 0 or keep > 500:
+            raise WakeHubError("scan history length must be between 0 and 500")
+        hub._write_setting("scan_keep", str(keep))
+    if payload.get("scan_keep_days") is not None:
+        days = int(payload["scan_keep_days"])
+        if days < 0 or days > 3650:
+            raise WakeHubError("scan history age must be between 0 and 3650 days")
+        hub._write_setting("scan_keep_days", str(days))
     if payload.get("cors_origins") is not None:
         origins = payload["cors_origins"]
         if isinstance(origins, str):
@@ -656,6 +668,10 @@ def update_settings(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(origins, list) or not origins:
             raise WakeHubError("cors_origins must be a list of origins, or *")
         hub._write_setting("cors_origins", ",".join(str(item).strip() for item in origins if str(item).strip()))
+    if payload.get("scan_keep") is not None or payload.get("scan_keep_days") is not None:
+        from wakehub.scan import prune_scans
+
+        prune_scans(hub)
     return public_settings(hub)
 
 

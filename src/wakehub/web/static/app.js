@@ -623,11 +623,15 @@ function renderSettings() {
       <input id="poll" name="metrics_poll_seconds" type="number" value="${settings.metrics_poll_seconds || 60}">
       <label for="retention">Metrics retention days</label>
       <input id="retention" name="metrics_retention_days" type="number" value="${settings.metrics_retention_days || 30}">
+      <label for="scan-keep">Keep the last N scans (0 keeps all)</label>
+      <input id="scan-keep" name="scan_keep" type="number" min="0" max="500" value="${settings.scan_keep || 0}">
+      <label for="scan-keep-days">Drop scans older than N days (0 keeps every age)</label>
+      <input id="scan-keep-days" name="scan_keep_days" type="number" min="0" max="3650" value="${settings.scan_keep_days || 0}">
       <label class="check"><input type="checkbox" name="clear_ui_password"> Remove the UI password</label>
       <div class="row-actions" style="margin-top:0.8rem">
         <label for="session-days">Remember this browser (days)</label>
         <input id="session-days" name="session_days" type="number" min="1" max="365" value="${settings.session_days || 30}">
-        <button type="submit" data-cap="update_settings" data-fields="clear_ui_password,cors_origins,metrics_poll_seconds,metrics_retention_days,session_days,ui_password">Save settings</button>
+        <button type="submit" data-cap="update_settings" data-fields="clear_ui_password,cors_origins,metrics_poll_seconds,metrics_retention_days,scan_keep,scan_keep_days,session_days,ui_password">Save settings</button>
         <button type="button" class="ghost" data-cap="ui_logout" data-fields="">Sign out</button>
       </div>
     </form>`;
@@ -869,6 +873,8 @@ async function onSubmit(event) {
       metrics_poll_seconds: Number(data.metrics_poll_seconds || 60),
       metrics_retention_days: Number(data.metrics_retention_days || 30),
       session_days: Number(data.session_days || 30),
+      scan_keep: Number(data.scan_keep || 0),
+      scan_keep_days: Number(data.scan_keep_days || 0),
     };
     if (data.ui_password) payload.ui_password = data.ui_password;
     try {

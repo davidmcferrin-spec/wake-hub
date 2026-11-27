@@ -125,6 +125,8 @@ class SettingsIn(BaseModel):
     metrics_poll_seconds: int | None = None
     metrics_retention_days: int | None = None
     session_days: int | None = None
+    scan_keep: int | None = None
+    scan_keep_days: int | None = None
 
 
 class LoginIn(BaseModel):

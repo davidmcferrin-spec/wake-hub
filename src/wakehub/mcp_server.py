@@ -200,6 +200,8 @@ def build_server() -> MCPServer:
         metrics_poll_seconds: int | None = None,
         metrics_retention_days: int | None = None,
         session_days: int | None = None,
+        scan_keep: int | None = None,
+        scan_keep_days: int | None = None,
     ) -> dict[str, Any]:
         """Change settings. Set ui_password to require a password in the browser. clear_ui_password removes it. cors_origins is the list of allowed browser origins. An empty list blocks cross-origin calls."""
         payload: dict[str, Any] = {"clear_ui_password": clear_ui_password}
@@ -213,6 +215,10 @@ def build_server() -> MCPServer:
             payload["metrics_retention_days"] = metrics_retention_days
         if session_days is not None:
             payload["session_days"] = session_days
+        if scan_keep is not None:
+            payload["scan_keep"] = scan_keep
+        if scan_keep_days is not None:
+            payload["scan_keep_days"] = scan_keep_days
         return records.update_settings(get_hub(), payload)
 
     @server.tool()

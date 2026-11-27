@@ -213,17 +213,23 @@ function renderScan() {
     return `<section><h2>${escapeHtml(key)}</h2><div class="grid">${cards}</div></section>`;
   }).join("");
   const scans = state.scans.map((scan) => `
-    <button type="button" class="ghost" data-cap="scan_results" data-fields="" data-id="${scan.id}">${escapeHtml(scan.cidr)} · ${escapeHtml(scan.status)} ${scan.progress}/${scan.total}</button>
-  `).join(" ");
+    <div class="row-actions">
+      <button type="button" class="ghost" data-cap="scan_results" data-fields="" data-id="${scan.id}">${escapeHtml(scan.cidr)} · ${escapeHtml(scan.status)} ${scan.progress}/${scan.total}</button>
+      <button type="button" data-cap="rescan" data-fields="replace" data-id="${scan.id}" data-replace="1">Re-scan</button>
+      <button type="button" class="danger" data-cap="delete_scan" data-fields="" data-id="${scan.id}">Delete</button>
+    </div>
+  `).join("");
   $("view").innerHTML = `
-    <p class="lede">The subnet is taken from this host. Docker, veth and bridge interfaces are skipped. Pick another when the machine has more than one LAN.</p>
+    <p class="lede">The subnet is taken from this host. Docker, veth and bridge interfaces are skipped. Pick another when the machine has more than one LAN. Deleting a scan does not remove devices already added to the inventory.</p>
     <form id="scan-form" class="toolbar">
       ${picker}
       <label>CIDR <input id="cidr" name="cidr" value="${escapeHtml(primary ? primary.cidr : "")}" aria-label="CIDR"></label>
-      <button type="submit" data-cap="scan_subnet" data-fields="cidr">Scan subnet</button>
+      <label class="check"><input type="checkbox" name="replace"> Replace earlier results for this subnet</label>
+      <button type="submit" data-cap="scan_subnet" data-fields="cidr,replace">Scan subnet</button>
       <button type="button" class="ghost" data-cap="list_interfaces" data-fields="">Refresh subnets</button>
+      <button type="button" class="danger" data-cap="clear_scans" data-fields="confirm">Clear scan history</button>
     </form>
-    <div class="row-actions">${scans || ""}</div>
+    <div class="stack">${scans || ""}</div>
     ${sections || `<div class="empty">Start a scan. Host networking is required for ARP and broadcast.</div>`}`;
   const pick = $("cidr-pick");
   if (pick) pick.addEventListener("change", () => { $("cidr").value = pick.value; });
@@ -437,11 +443,32 @@ function sparkline(rows) {
 window.handlePowerCap = async function handlePowerCap(button) {
   const cap = button.dataset.cap;
   const id = Number(button.dataset.id);
-  const known = ["scan_results", "add_from_scan", "list_pdu_outlets", "set_pdu_outlet", "refresh_pdu_outlet_names", "update_pdu", "remove_pdu", "amt_power_state", "update_amt", "remove_amt", "jetkvm_status", "jetkvm_power", "update_jetkvm", "remove_jetkvm", "plug_status", "plug_power", "update_plug", "remove_plug", "ups_status", "ups_action", "update_ups", "remove_ups", "roku_status", "roku_power", "update_roku", "remove_roku", "list_metrics"];
+  const known = ["scan_results", "add_from_scan", "delete_scan", "clear_scans", "rescan", "list_pdu_outlets", "set_pdu_outlet", "refresh_pdu_outlet_names", "update_pdu", "remove_pdu", "amt_power_state", "update_amt", "remove_amt", "jetkvm_status", "jetkvm_power", "update_jetkvm", "remove_jetkvm", "plug_status", "plug_power", "update_plug", "remove_plug", "ups_status", "ups_action", "update_ups", "remove_ups", "roku_status", "roku_power", "update_roku", "remove_roku", "list_metrics"];
   if (!known.includes(cap)) return false;
   try {
     if (cap === "scan_results") {
       state.scan = await api("GET", `/api/v1/scans/${id}`);
+    } else if (cap === "delete_scan") {
+      if (!window.confirm("Delete this scan? Devices already added stay in the inventory.")) return true;
+      await api("DELETE", `/api/v1/scans/${id}`);
+      if (state.scan && state.scan.id === id) state.scan = null;
+      await refreshScans();
+      showBanner("Scan deleted");
+    } else if (cap === "clear_scans") {
+      if (!window.confirm("Clear all scan history? Devices already added stay in the inventory.")) return true;
+      const result = await api("POST", "/api/v1/scans/clear", { confirm: true });
+      state.scan = null;
+      await refreshScans();
+      showBanner(`Cleared ${result.removed} scans`);
+    } else if (cap === "rescan") {
+      const replace = button.dataset.replace !== "0";
+      state.scan = await api("POST", `/api/v1/scans/${id}/rescan`, { replace });
+      showBanner(replace ? "Re-scan started. Earlier results for this subnet were removed." : "Re-scan started. Earlier results were kept.");
+      window.setTimeout(async () => {
+        await refreshScans();
+        if (state.scan) state.scan = await api("GET", `/api/v1/scans/${state.scan.id}`);
+        if (state.page === "scan") renderScan();
+      }, 1200);
     } else if (cap === "add_from_scan") {
       const body = { kind: button.dataset.kind };
       if (button.dataset.plugKind) body.plug_kind = button.dataset.plugKind;
@@ -552,7 +579,7 @@ document.body.addEventListener("submit", async (event) => {
   const data = Object.fromEntries(new FormData(form).entries());
   try {
     if (form.id === "scan-form") {
-      state.scan = await api("POST", "/api/v1/scans", { cidr: data.cidr || null });
+      state.scan = await api("POST", "/api/v1/scans", { cidr: data.cidr || null, replace: Boolean(form.elements.replace && form.elements.replace.checked) });
       showBanner("Scan started");
       window.setTimeout(async () => {
         await refreshScans();
@@ -660,6 +687,9 @@ window.CONTROL_HANDLERS = {
   run_salvo(el) { return window.runSalvo(el); },
   scan_subnet() { return show("scan"); },
   list_scans() { return show("scan"); },
+  delete_scan(el) { return window.handlePowerCap(el); },
+  clear_scans(el) { return window.handlePowerCap(el); },
+  rescan(el) { return window.handlePowerCap(el); },
   scan_results(el) { return window.handlePowerCap(el); },
   add_from_scan(el) { return window.handlePowerCap(el); },
   device_metrics(el) { return onClick({ target: el }); },

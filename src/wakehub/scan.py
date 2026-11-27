@@ -7,13 +7,14 @@ import json
 import socket
 import subprocess
 import threading
+from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable
 
 import httpx
 
 from wakehub.clients.synaccess import parse_status, synaccess_realm
-from wakehub.errors import Conflict, NotFound, WakeHubError
+from wakehub.errors import ConfirmationRequired, Conflict, NotFound, WakeHubError
 from wakehub.fingerprint import suggest
 from wakehub.hub import Hub
 from wakehub.inventory import add_device, host_for_url, utcnow
@@ -72,11 +73,13 @@ def default_cidr() -> str:
     return chosen["cidr"] if chosen else "192.168.1.0/24"
 
 
-def start_scan(hub: Hub, cidr: str | None = None, discover: Discover | None = None) -> dict[str, Any]:
+def start_scan(hub: Hub, cidr: str | None = None, discover: Discover | None = None, *, replace: bool = False) -> dict[str, Any]:
     running = hub.query_one("SELECT id FROM scans WHERE status = 'running'")
     if running is not None:
         raise Conflict("a scan is already running")
     network = _network(cidr or default_cidr())
+    if replace:
+        _delete_finished_for_cidr(hub, str(network))
     scan_id = hub.write(
         "INSERT INTO scans (cidr, status, progress, total, message, created_at) VALUES (?, 'running', 0, ?, '', ?)",
         (str(network), network.num_addresses, utcnow()),
@@ -118,6 +121,76 @@ def _run(hub: Hub, scan_id: int, cidr: str, discover: Discover) -> None:
             "UPDATE scans SET status = 'error', error = ?, finished_at = ? WHERE id = ?",
             (str(exc), utcnow(), scan_id),
         )
+    prune_scans(hub)
+
+
+def delete_scan(hub: Hub, scan_id: int) -> dict[str, Any]:
+    row = hub.query_one("SELECT id, status FROM scans WHERE id = ?", (scan_id,))
+    if row is None:
+        raise NotFound(f"scan {scan_id} was not found")
+    if row["status"] == "running":
+        raise Conflict("a running scan cannot be deleted")
+    # Inventory devices are a different table and are not touched.
+    hub.write("DELETE FROM scan_hosts WHERE scan_id = ?", (scan_id,))
+    hub.write("DELETE FROM scans WHERE id = ?", (scan_id,))
+    return {"removed": scan_id}
+
+
+def clear_scans(hub: Hub, *, confirm: bool) -> dict[str, Any]:
+    if confirm is not True:
+        raise ConfirmationRequired("clearing scan history needs confirm set to true")
+    rows = hub.query("SELECT id FROM scans WHERE status != 'running'")
+    removed = _delete_scan_ids(hub, [row["id"] for row in rows])
+    running = hub.query_one("SELECT id FROM scans WHERE status = 'running'")
+    return {"removed": removed, "kept_running": running["id"] if running else None}
+
+
+def rescan(hub: Hub, scan_id: int, *, replace: bool = True, discover: Discover | None = None) -> dict[str, Any]:
+    row = hub.query_one("SELECT id, cidr FROM scans WHERE id = ?", (scan_id,))
+    if row is None:
+        raise NotFound(f"scan {scan_id} was not found")
+    return start_scan(hub, row["cidr"], discover, replace=replace)
+
+
+def prune_scans(hub: Hub) -> int:
+    from wakehub.inventory import public_settings
+
+    settings = public_settings(hub)
+    keep = int(settings.get("scan_keep") or 0)
+    days = int(settings.get("scan_keep_days") or 0)
+    if keep <= 0 and days <= 0:
+        return 0
+    doomed: set[int] = set()
+    if days > 0:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).replace(microsecond=0).isoformat()
+        for row in hub.query(
+            """
+            SELECT id FROM scans
+            WHERE status != 'running' AND COALESCE(finished_at, created_at) < ?
+            """,
+            (cutoff,),
+        ):
+            doomed.add(row["id"])
+    if keep > 0:
+        finished = hub.query("SELECT id FROM scans WHERE status != 'running' ORDER BY id DESC")
+        for row in finished[keep:]:
+            doomed.add(row["id"])
+    return _delete_scan_ids(hub, doomed)
+
+
+def _delete_finished_for_cidr(hub: Hub, cidr: str) -> int:
+    rows = hub.query("SELECT id FROM scans WHERE cidr = ? AND status != 'running'", (cidr,))
+    return _delete_scan_ids(hub, [row["id"] for row in rows])
+
+
+def _delete_scan_ids(hub: Hub, scan_ids) -> int:
+    ids = [int(item) for item in scan_ids]
+    if not ids:
+        return 0
+    marks = ",".join("?" * len(ids))
+    hub.write(f"DELETE FROM scan_hosts WHERE scan_id IN ({marks})", tuple(ids))
+    hub.write(f"DELETE FROM scans WHERE id IN ({marks}) AND status != 'running'", tuple(ids))
+    return len(ids)
 
 
 def list_scans(hub: Hub) -> list[dict[str, Any]]:
