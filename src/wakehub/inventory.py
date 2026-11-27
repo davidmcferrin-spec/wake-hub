@@ -35,18 +35,9 @@ def utcnow() -> str:
 
 
 def _tags(values: list[str]) -> list[str]:
-    cleaned: list[str] = []
-    for value in values:
-        item = value.strip()
-        if not item:
-            continue
-        if len(item) > 32:
-            raise WakeHubError("a tag must be 32 characters or fewer")
-        if item not in cleaned:
-            cleaned.append(item)
-    if len(cleaned) > 20:
-        raise WakeHubError("a device can have at most 20 tags")
-    return cleaned
+    from wakehub.tags import normalize_tags
+
+    return normalize_tags(values)
 
 
 def normalize_methods(methods: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
@@ -69,6 +60,8 @@ def normalize_methods(methods: list[dict[str, Any]] | None) -> list[dict[str, An
             cleaned.append({"kind": "plug", "plug_id": int(item["plug_id"])})
         elif kind == "ups":
             cleaned.append({"kind": "ups", "ups_id": int(item["ups_id"])})
+        elif kind == "roku":
+            cleaned.append({"kind": "roku", "roku_id": int(item["roku_id"])})
         else:
             raise WakeHubError(f"unknown power method {kind}")
     return cleaned
@@ -153,13 +146,17 @@ def _get_row(hub: Hub, device_id: int) -> Any:
     return row
 
 
-def list_devices(hub: Hub, *, tag: str | None = None, q: str | None = None) -> list[dict[str, Any]]:
+def list_devices(hub: Hub, *, tag: str | None = None, tags: str | None = None, q: str | None = None) -> list[dict[str, Any]]:
+    from wakehub.tags import has_tags, normalize_tags
+
     rows = hub.query("SELECT * FROM devices ORDER BY name COLLATE NOCASE")
     devices = [_with_power(hub, public_device(row)) for row in rows]
-    if tag:
-        devices = [item for item in devices if tag in item["tags"]]
-    if q:
-        needle = q.lower()
+    text, inline = _query_tags(q)
+    wanted = normalize_tags([*(tags or "").split(","), *([tag] if tag else []), *inline])
+    if wanted:
+        devices = [item for item in devices if has_tags(item["tags"], wanted)]
+    if text:
+        needle = text.lower()
         devices = [
             item
             for item in devices
@@ -168,6 +165,19 @@ def list_devices(hub: Hub, *, tag: str | None = None, q: str | None = None) -> l
             or needle in (item["mac"] or "").lower()
         ]
     return devices
+
+
+def _query_tags(q: str | None) -> tuple[str, list[str]]:
+    if not q:
+        return "", []
+    tags: list[str] = []
+    words: list[str] = []
+    for part in q.split():
+        if part.startswith("#") and len(part) > 1:
+            tags.append(part)
+        else:
+            words.append(part)
+    return " ".join(words), tags
 
 
 def get_device(hub: Hub, device_id: int) -> dict[str, Any]:

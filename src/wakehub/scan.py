@@ -170,7 +170,7 @@ def get_scan(hub: Hub, scan_id: int) -> dict[str, Any]:
 
 
 def add_from_scan(hub: Hub, scan_id: int, host_id: int, kind: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    from wakehub.endpoints import add_amt, add_jetkvm, add_pdu, add_plug, add_ups
+    from wakehub.endpoints import add_amt, add_jetkvm, add_pdu, add_plug, add_roku, add_ups
 
     scan = get_scan(hub, scan_id)
     host = next((item for item in scan["hosts"] if item["id"] == host_id), None)
@@ -205,7 +205,9 @@ def add_from_scan(hub: Hub, scan_id: int, host_id: int, kind: str, payload: dict
         return add_plug(hub, {"name": name, "host": host["ip"], "kind": plug_kind, **extra})
     if kind == "ups":
         return add_ups(hub, {"name": name, "host": host["ip"], **extra})
-    raise WakeHubError("kind must be device, pdu, amt, jetkvm, plug, or ups")
+    if kind == "roku":
+        return add_roku(hub, {"name": name, "host": host["ip"], "port": int(extra.pop("port", None) or 8060), **extra})
+    raise WakeHubError("kind must be device, pdu, amt, jetkvm, plug, ups, or roku")
 
 
 def discover_subnet(cidr: str, progress: Callable[[int, int], None]) -> list[dict[str, Any]]:
@@ -232,9 +234,11 @@ def discover_subnet(cidr: str, progress: Callable[[int, int], None]) -> list[dic
     with ThreadPoolExecutor(max_workers=32) as pool:
         arp_job = pool.submit(_arp_table)
         mdns_job = pool.submit(_mdns_names)
+        ssdp_job = pool.submit(_roku_ssdp)
         pings = {pool.submit(ping, ip, 1): ip for ip in hosts}
         arp = arp_job.result()
         names = mdns_job.result()
+        roku_ips = ssdp_job.result()
         for job in as_completed(pings):
             ip = pings[job]
             done += 1
@@ -261,6 +265,39 @@ def discover_subnet(cidr: str, progress: Callable[[int, int], None]) -> list[dic
                 continue
             described = inspect(ip, arp, names, False)
             if described:
+                found[ip] = described
+        for ip in roku_ips:
+            if ip in found:
+                detail = found[ip].setdefault("detail", {})
+                suggestion = dict((detail.get("suggestion") or {}))
+                if suggestion.get("type") != "roku":
+                    kinds, finger = _fingerprint(ip, found[ip].get("mac") or "", names)
+                    finger["suggestion"] = suggest(
+                        vendor=found[ip].get("vendor") or "",
+                        mac=found[ip].get("mac") or "",
+                        ports=set(finger.get("ports") or []),
+                        http_kinds=kinds,
+                        mdns=names,
+                        ssdp=True,
+                    )
+                    found[ip]["kinds"] = kinds
+                    found[ip]["detail"] = finger
+                continue
+            try:
+                if ipaddress.ip_address(ip) not in network:
+                    continue
+            except ValueError:
+                continue
+            described = inspect(ip, arp, names, True)
+            if described:
+                described["detail"]["suggestion"] = suggest(
+                    vendor=described.get("vendor") or "",
+                    mac=described.get("mac") or "",
+                    ports=set((described.get("detail") or {}).get("ports") or []),
+                    http_kinds=described.get("kinds") or [],
+                    mdns=names,
+                    ssdp=True,
+                )
                 found[ip] = described
     return list(found.values())
 
@@ -304,7 +341,7 @@ def _fingerprint(ip: str, mac: str, mdns: list[str] | None = None) -> tuple[list
     kinds: list[str] = []
     ports: set[int] = set()
     with ThreadPoolExecutor(max_workers=4) as pool:
-        checks = {pool.submit(_port_open, ip, port): port for port in (16992, 16993, 9999, 161)}
+        checks = {pool.submit(_port_open, ip, port): port for port in (16992, 16993, 9999, 161, 8060)}
         for job in as_completed(checks):
             if job.result():
                 ports.add(checks[job])
@@ -320,6 +357,8 @@ def _fingerprint(ip: str, mac: str, mdns: list[str] | None = None) -> tuple[list
             kinds.append(kind)
     if 161 in ports and _snmp_cyberpower(ip) and "ups" not in kinds:
         kinds.append("ups")
+    if 8060 in ports and "roku" not in kinds:
+        kinds.append("roku")
     suggestion = suggest(vendor=vendor(mac), mac=mac, ports=ports, http_kinds=http, mdns=mdns or [])
     return kinds, {"ports": sorted(ports), "suggestion": suggestion}
 
@@ -356,6 +395,13 @@ def _http_kinds(ip: str) -> list[str]:
             root = client.get(f"http://{host}/")
             if any(token in root.text for token in ("CyberPower", "RCCARD", "RMCARD")):
                 kinds.append("ups")
+    except httpx.HTTPError:
+        pass
+    try:
+        with httpx.Client(timeout=0.6) as client:
+            info = client.get(f"http://{host_for_url(ip)}:8060/query/device-info")
+            if info.status_code == 200 and ("power-mode" in info.text or "Roku" in info.text):
+                kinds.append("roku")
     except httpx.HTTPError:
         return kinds
     return kinds
@@ -401,10 +447,17 @@ def _inventory_index(hub: Hub) -> dict[str, list[dict[str, Any]]]:
         ("jetkvm_endpoints", "jetkvm"),
         ("plugs", "plug"),
         ("ups_cards", "ups"),
+        ("rokus", "roku"),
     ):
         for row in hub.query(f"SELECT id, name, host, host_key FROM {table}"):
             remember(row["host_key"] or normalize_host(row["host"]), kind, row["id"], row["name"])
     return index
+
+
+def _roku_ssdp() -> set[str]:
+    from wakehub.clients.roku import discover_ecp
+
+    return {str(item["ip"]) for item in discover_ecp()}
 
 
 def _mdns_names() -> list[str]:

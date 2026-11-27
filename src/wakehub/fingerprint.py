@@ -15,6 +15,7 @@ def suggest(
     ports: set[int],
     http_kinds: list[str],
     mdns: list[str],
+    ssdp: bool = False,
 ) -> dict:
     """Pick one likely type. High means a signature matched; low means only a MAC."""
     names = [item.lower() for item in mdns]
@@ -24,6 +25,14 @@ def suggest(
     def add(rank: int, kind: str, confidence: str, reason: str, capabilities: list[str]) -> None:
         ranked.append((rank, kind, confidence, reason, capabilities))
 
+    if "roku" in http or ssdp:
+        add(100, "roku", "high", "Roku SSDP roku:ecp" if ssdp else "Roku ECP device-info", ["roku"])
+    elif _has(vendor, ("roku",)) and 8060 in ports:
+        add(90, "roku", "high", "Roku vendor with port 8060", ["roku"])
+    elif _has(vendor, ("roku",)):
+        add(50, "roku", "medium", "Roku MAC address", ["roku"])
+    elif 8060 in ports:
+        add(70, "roku", "medium", "Port 8060 is open", ["roku"])
     if "jetkvm" in http or any("jetkvm" in name for name in names):
         add(100, "jetkvm", "high", "JetKVM status page or mDNS", ["jetkvm"])
     if "synaccess" in http:
@@ -78,4 +87,5 @@ def _prefill_kind(kind: str) -> str:
         "shelly": "plug",
         "kasa": "plug",
         "ups": "ups",
+        "roku": "roku",
     }.get(kind, "device")

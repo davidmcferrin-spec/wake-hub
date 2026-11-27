@@ -361,8 +361,8 @@ def _api_router() -> APIRouter:
     router = APIRouter(prefix="/api/v1", dependencies=[Depends(require_bearer)])
 
     @router.get("/devices", tags=["devices"])
-    def devices(tag: str | None = None, q: str | None = None) -> list[dict[str, Any]]:
-        return list_devices(get_hub(), tag=tag, q=q)
+    def devices(tag: str | None = None, tags: str | None = None, q: str | None = None) -> list[dict[str, Any]]:
+        return list_devices(get_hub(), tag=tag, tags=tags, q=q)
 
     @router.post("/devices", tags=["devices"], status_code=201)
     def create_device(body: DeviceIn) -> dict[str, Any]:

@@ -40,9 +40,9 @@ def build_server() -> MCPServer:
 
     @server.tool()
     @expose
-    def list_devices(tag: str | None = None, q: str | None = None) -> list[dict[str, Any]]:
-        """List inventory devices, including disabled ones. Does not change power state. Filter with a tag or a name, host or MAC substring."""
-        return records.list_devices(get_hub(), tag=tag, q=q)
+    def list_devices(tag: str | None = None, tags: str | None = None, q: str | None = None) -> list[dict[str, Any]]:
+        """List inventory devices, including disabled ones. Does not change power state. Filter with a tag, a comma-separated tags list (all must match), or a name, host or MAC substring. q understands #tag."""
+        return records.list_devices(get_hub(), tag=tag, tags=tags, q=q)
 
     @server.tool()
     @expose

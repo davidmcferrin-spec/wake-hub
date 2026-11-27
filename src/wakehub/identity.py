@@ -19,6 +19,7 @@ TABLES = {
     "jetkvm": ("jetkvm_endpoints", False),
     "plug": ("plugs", False),
     "ups": ("ups_cards", False),
+    "roku": ("rokus", False),
 }
 
 LABELS = {
@@ -28,6 +29,7 @@ LABELS = {
     "jetkvm": "JetKVM",
     "plug": "plug",
     "ups": "UPS",
+    "roku": "Roku",
 }
 
 

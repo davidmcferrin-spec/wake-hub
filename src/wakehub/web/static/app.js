@@ -9,6 +9,8 @@ const state = {
   focus: null,
   kindFilter: "all",
   deviceQuery: "",
+  tagFilter: [],
+  tags: [],
 };
 
 const titles = {
@@ -108,6 +110,9 @@ function deviceLinks(device) {
     } else if (method.kind === "ups") {
       const item = (hardware.ups || []).find((row) => row.id === method.ups_id);
       lines.push(`<p class="sub">UPS ${escapeHtml(item ? item.name : "card")} can drop every load on that UPS. Those actions ask for confirmation.</p>`);
+    } else if (method.kind === "roku") {
+      const item = (hardware.rokus || []).find((row) => row.id === method.roku_id);
+      lines.push(`<p class="sub">Roku ${escapeHtml(item ? item.name : "TV")} uses External Control on port 8060. Control by mobile apps must be enabled. Power off asks for confirmation.</p>`);
     }
   }
   return `<div class="row-actions">${lines.join("")}</div>`;
@@ -122,8 +127,28 @@ function pill(device) {
   return '<span class="pill off">no host</span>';
 }
 
+function tagChips(tags) {
+  return `<div class="tags">${(tags || []).map((tag) => {
+    const active = (state.tagFilter || []).some((item) => item.toLowerCase() === String(tag).toLowerCase());
+    return `<button type="button" class="tag${active ? " active" : ""}" data-tag="${escapeHtml(tag)}">#${escapeHtml(tag)}</button>`;
+  }).join("")}</div>`;
+}
+
+function parseSearch(text) {
+  const tags = [];
+  const words = [];
+  String(text || "").split(/[\s,]+/).forEach((part) => {
+    if (part.startsWith("#") && part.length > 1) tags.push(part.slice(1));
+    else if (part) words.push(part);
+  });
+  return { q: words.join(" "), tags };
+}
+
+function searchValue() {
+  return [...(state.tagFilter || []).map((tag) => `#${String(tag).replace(/^#/, "")}`), state.deviceQuery || ""].filter(Boolean).join(" ");
+}
+
 function deviceCard(device) {
-  const tags = (device.tags || []).map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join("");
   return `
     <article class="card">
       <header>
@@ -134,7 +159,7 @@ function deviceCard(device) {
       ${powerBlock(device)}
       <p class="sub">Broadcast ${escapeHtml(device.broadcast)}:${device.wol_port}. Wake-on-LAN, and any PDU outlet, plug, AMT, JetKVM or UPS linked below, are controlled from this computer.</p>
       ${deviceLinks(device)}
-      <div class="tags">${tags}</div>
+      ${tagChips(device.tags)}
       <div class="row-actions">
         <label class="sub">Method <select class="method-picker" aria-label="Power method"><option value="auto">auto</option><option value="wol">wol</option><option value="pdu">pdu</option><option value="amt">amt</option><option value="jetkvm">jetkvm</option><option value="plug">plug</option><option value="ups">ups</option></select></label>
         <input class="wake-timeout" name="timeout" type="number" placeholder="timeout" aria-label="Wake timeout">
@@ -209,7 +234,7 @@ function editorHtml() {
         </div>
         <div>
           <label for="tags">Tags</label>
-          <input id="tags" name="tags" value="${escapeHtml((device && device.tags || []).join(", "))}" placeholder="desk, lab">
+          <input id="tags" name="tags" value="${escapeHtml((device && device.tags || []).map((tag) => String(tag).startsWith("#") ? tag : `#${tag}`).join(" "))}" placeholder="#Office #TV">
         </div>
         <div class="span-2">
           <label for="notes">Notes</label>
@@ -259,6 +284,7 @@ function hardwareInventory() {
     ...(power.jetkvms || []).map((item) => ({ kind: "jetkvm", label: "JetKVM", item })),
     ...(power.plugs || []).map((item) => ({ kind: "plug", label: "Plug", item })),
     ...(power.ups || []).map((item) => ({ kind: "ups", label: "UPS", item })),
+    ...(power.rokus || []).map((item) => ({ kind: "roku", label: "Roku", item })),
   ];
 }
 
@@ -271,6 +297,7 @@ function hardwareInventoryCard(entry) {
         <span class="pill">${entry.label}</span>
       </header>
       <p class="meta">${escapeHtml(item.host || "no host")}${item.port ? `:${item.port}` : ""}</p>
+      ${tagChips(item.tags)}
       <div class="row-actions">
         <button type="button" data-open-kind="${entry.kind}" data-id="${item.id}">Open</button>
       </div>
@@ -287,7 +314,13 @@ function renderDevices() {
   }
   const kind = state.kindFilter || "all";
   const query = (state.deviceQuery || "").toLowerCase();
-  const matches = (item) => !query || `${item.name} ${item.host || ""}`.toLowerCase().includes(query);
+  const wanted = state.tagFilter || [];
+  const matches = (item) => {
+    const text = !query || `${item.name} ${item.host || ""}`.toLowerCase().includes(query);
+    const owned = (item.tags || []).map((tag) => String(tag).toLowerCase());
+    const tagged = !wanted.length || wanted.every((tag) => owned.includes(String(tag).toLowerCase()));
+    return text && tagged;
+  };
   const computers = (kind === "all" || kind === "device" ? state.devices.filter(matches) : []).map(deviceCard).join("");
   const hardware = hardwareInventory()
     .filter((entry) => (kind === "all" || kind === entry.kind) && matches(entry.item))
@@ -297,10 +330,12 @@ function renderDevices() {
   $("view").innerHTML = `
     <div class="toolbar">
       <form id="filter-form" class="inline">
-        <input name="q" placeholder="Search" aria-label="Search" value="${escapeHtml(state.deviceQuery || "")}">
-        <input name="tag" placeholder="Tag" aria-label="Tag">
-        <button type="submit" data-cap="list_devices" data-fields="q,tag">Filter</button>
+        <input id="device-search" name="q" data-cap="list_tags" data-fields="" placeholder="Search or #Office" aria-label="Search" value="${escapeHtml(searchValue())}" autocomplete="off">
+        <button type="submit" data-cap="list_devices" data-fields="q,tag,tags">Search</button>
       </form>
+      <div id="tag-suggest" class="row-actions"></div>
+      <button type="button" data-cap="tag_action" data-fields="action,confirm,tags" data-action="wake">Wake tagged</button>
+      <button type="button" class="danger" data-cap="tag_action" data-fields="action,confirm,tags" data-action="off">Power off tagged</button>
       <label class="sub">Type
         <select id="kind-filter" aria-label="Type">
           <option value="all">All</option>
@@ -310,6 +345,7 @@ function renderDevices() {
           <option value="jetkvm">JetKVM</option>
           <option value="plug">Plug</option>
           <option value="ups">UPS</option>
+          <option value="roku">Roku</option>
         </select>
       </label>
       <button type="button" class="primary" id="new-device">Add device</button>
@@ -326,6 +362,21 @@ function renderDevices() {
       render();
     });
   }
+  const search = $("device-search");
+  if (search) search.addEventListener("input", () => suggestTags(search));
+}
+
+function suggestTags(input) {
+  const box = $("tag-suggest");
+  if (!box) return;
+  const match = input.value.match(/(?:^|\s)#([^\s#]*)$/);
+  if (!match) {
+    box.replaceChildren();
+    return;
+  }
+  const prefix = match[1].toLowerCase();
+  const options = (state.tags || []).filter((tag) => tag.toLowerCase().startsWith(prefix)).slice(0, 8);
+  box.innerHTML = options.map((tag) => `<button type="button" class="ghost" data-complete-tag="${escapeHtml(tag)}">#${escapeHtml(tag)}</button>`).join("");
 }
 
 function renderHistory() {
@@ -407,8 +458,16 @@ function render() {
 }
 
 async function refreshDevices() {
-  state.devices = await api("GET", "/api/v1/devices");
+  const params = new URLSearchParams();
+  if (state.deviceQuery) params.set("q", state.deviceQuery);
+  if (state.tagFilter && state.tagFilter.length) params.set("tags", state.tagFilter.join(","));
+  state.devices = await api("GET", `/api/v1/devices${params.toString() ? `?${params}` : ""}`);
   if (typeof refreshPower === "function") await refreshPower();
+  try {
+    state.tags = await api("GET", "/api/v1/tags");
+  } catch (_error) {
+    state.tags = state.tags || [];
+  }
   const status = await api("GET", "/api/v1/status");
   state.status = {};
   status.forEach((item) => { state.status[item.device_id] = item; });
@@ -455,7 +514,7 @@ function linkedMethods(data) {
 
 function devicePayload(form) {
   const data = formData(form);
-  const tags = data.tags ? data.tags.split(",").map((item) => item.trim()).filter(Boolean) : [];
+  const tags = data.tags ? data.tags.split(/[\s,]+/).map((item) => item.trim()).filter(Boolean) : [];
   const payload = {
     name: data.name,
     mac: data.mac || null,
@@ -625,15 +684,11 @@ async function onSubmit(event) {
   }
   if (form.id === "filter-form") {
     event.preventDefault();
-    const data = new FormData(form);
-    const params = new URLSearchParams();
-    const q = String(data.get("q") || "").trim();
-    const tag = String(data.get("tag") || "").trim();
-    if (q) params.set("q", q);
-    if (tag) params.set("tag", tag);
-    state.deviceQuery = q;
+    const parsed = parseSearch(String(new FormData(form).get("q") || ""));
+    state.deviceQuery = parsed.q;
+    state.tagFilter = parsed.tags;
     try {
-      state.devices = await api("GET", `/api/v1/devices${params.toString() ? `?${params}` : ""}`);
+      await refreshDevices();
       render();
     } catch (error) {
       showBanner(error.message, true, error.existing);
@@ -739,7 +794,46 @@ document.addEventListener("submit", (event) => {
   // A form submit reloads the page, and boot opens Devices.
   event.preventDefault();
 }, true);
+window.runTagAction = async function (el) {
+  const tags = state.tagFilter || [];
+  if (!tags.length) {
+    showBanner("Type a #tag or click a chip first.", true);
+    return;
+  }
+  const action = el.dataset.action || "wake";
+  const label = action === "wake" ? "Wake" : action === "off" ? "Power off" : "Power on";
+  if (!window.confirm(`${label} everything tagged ${tags.map((tag) => `#${tag}`).join(" and ")}?`)) return;
+  const result = await api("POST", "/api/v1/tags/action", { tags, action, confirm: true });
+  const failed = (result.results || []).filter((item) => !item.ok).length;
+  showBanner(result.matched ? `${label} sent to ${result.matched}${failed ? `, ${failed} failed` : ""}` : "No records use those tags.", failed > 0);
+  await refreshDevices();
+  render();
+};
+
 document.body.addEventListener("click", (event) => {
+  const completion = event.target.closest("[data-complete-tag]");
+  if (completion) {
+    const input = $("device-search");
+    if (input) {
+      input.value = input.value.replace(/(?:^|\s)#([^\s#]*)$/, (full, _fragment) => {
+        const prefix = full.startsWith(" ") || full.startsWith("#") ? full.slice(0, full.indexOf("#")) : "";
+        return `${prefix}#${completion.dataset.completeTag} `;
+      });
+      input.focus();
+    }
+    return;
+  }
+  const chip = event.target.closest("[data-tag]");
+  if (chip && chip.dataset.tag) {
+    const tag = chip.dataset.tag;
+    const key = tag.toLowerCase();
+    const has = (state.tagFilter || []).some((item) => item.toLowerCase() === key);
+    state.tagFilter = has
+      ? state.tagFilter.filter((item) => item.toLowerCase() !== key)
+      : [...(state.tagFilter || []), tag];
+    refreshDevices().then(() => render()).catch((error) => showBanner(error.message, true, error.existing));
+    return;
+  }
   if (event.target.id === "back-inventory") {
     state.focus = null;
     render();

@@ -9,12 +9,14 @@ from wakehub.clients.amt import AmtClient
 from wakehub.clients.jetkvm import JetKvmClient
 from wakehub.clients.kasa import KasaClient
 from wakehub.clients.shelly import ShellyClient
+from wakehub.clients.roku import RokuClient
 from wakehub.clients.synaccess import SynaccessClient
 from wakehub.clients.ups import PysnmpTransport, UpsClient
 from wakehub.credentials import remember_profile
 from wakehub.crypto import decrypt, encrypt
 from wakehub.errors import NotFound, WakeHubError
 from wakehub.identity import assert_available, bind_identity
+from wakehub.tags import normalize_tags
 from wakehub.hub import Hub
 from wakehub.inventory import host_for_url, utcnow, validate_host
 
@@ -24,6 +26,7 @@ TABLES = {
     "jetkvm": "jetkvm_endpoints",
     "plug": "plugs",
     "ups": "ups_cards",
+    "roku": "rokus",
 }
 
 
@@ -46,6 +49,16 @@ def _row(hub: Hub, kind: str, item_id: int):
     return row
 
 
+def _stored_tags(row) -> list[str]:
+    return json.loads(row["tags"] or "[]")
+
+
+def _apply_tags(hub: Hub, table: str, item_id: int, payload: dict[str, Any]) -> None:
+    if "tags" not in payload or payload["tags"] is None:
+        return
+    hub.write(f"UPDATE {table} SET tags = ? WHERE id = ?", (json.dumps(normalize_tags(payload["tags"])), item_id))
+
+
 def _stamp(fields: dict[str, Any]) -> dict[str, Any]:
     now = utcnow()
     fields["created_at"] = now
@@ -66,6 +79,7 @@ def public_pdu(row) -> dict[str, Any]:
         "outlet_names": json.loads(row["outlet_names"] or "{}"),
         "device_outlet_names": json.loads(row["device_outlet_names"] or "{}"),
         "credential_profile_id": row["credential_profile_id"],
+        "tags": _stored_tags(row),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -83,6 +97,7 @@ def public_amt(row) -> dict[str, Any]:
         "password_set": bool(row["password_enc"]),
         "credential_profile_id": row["credential_profile_id"],
         "device_id": row["device_id"],
+        "tags": _stored_tags(row),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -103,6 +118,7 @@ def public_jetkvm(row) -> dict[str, Any]:
         "poll_metrics": bool(row["poll_metrics"]),
         "device_id": row["device_id"],
         "console_url": _console(row),
+        "tags": _stored_tags(row),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -122,6 +138,7 @@ def public_plug(row) -> dict[str, Any]:
         "switch_id": row["switch_id"],
         "credential_profile_id": row["credential_profile_id"],
         "device_id": row["device_id"],
+        "tags": _stored_tags(row),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -142,6 +159,7 @@ def public_ups(row) -> dict[str, Any]:
         "v3_priv_set": bool(row["v3_priv_enc"]),
         "credential_profile_id": row["credential_profile_id"],
         "device_id": row["device_id"],
+        "tags": _stored_tags(row),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -207,6 +225,7 @@ def add_pdu(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
     )
     bind_identity(hub, "pdu", item_id, fields["host"])
     remember_profile(hub, "pdus", item_id, payload)
+    _apply_tags(hub, "pdus", item_id, payload)
     try:
         refresh_pdu_outlet_names(hub, item_id)
     except Exception:
@@ -243,6 +262,7 @@ def update_pdu(hub: Hub, pdu_id: int, payload: dict[str, Any]) -> dict[str, Any]
     )
     bind_identity(hub, "pdu", pdu_id, host)
     remember_profile(hub, "pdus", pdu_id, payload)
+    _apply_tags(hub, "pdus", pdu_id, payload)
     return public_pdu(_row(hub, "pdu", pdu_id))
 
 
@@ -344,6 +364,7 @@ def add_amt(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
     _link(hub, fields["device_id"], {"kind": "amt", "amt_id": item_id})
     bind_identity(hub, "amt", item_id, fields["host"])
     remember_profile(hub, "amt_endpoints", item_id, payload)
+    _apply_tags(hub, "amt_endpoints", item_id, payload)
     return public_amt(_row(hub, "amt", item_id))
 
 
@@ -375,6 +396,7 @@ def update_amt(hub: Hub, amt_id: int, payload: dict[str, Any]) -> dict[str, Any]
     )
     bind_identity(hub, "amt", amt_id, host)
     remember_profile(hub, "amt_endpoints", amt_id, payload)
+    _apply_tags(hub, "amt_endpoints", amt_id, payload)
     return public_amt(_row(hub, "amt", amt_id))
 
 
@@ -441,6 +463,7 @@ def add_jetkvm(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
     _link(hub, fields["device_id"], {"kind": "jetkvm", "jetkvm_id": item_id})
     bind_identity(hub, "jetkvm", item_id, fields["host"])
     remember_profile(hub, "jetkvm_endpoints", item_id, payload)
+    _apply_tags(hub, "jetkvm_endpoints", item_id, payload)
     return public_jetkvm(_row(hub, "jetkvm", item_id))
 
 
@@ -474,6 +497,7 @@ def update_jetkvm(hub: Hub, jetkvm_id: int, payload: dict[str, Any]) -> dict[str
     )
     bind_identity(hub, "jetkvm", jetkvm_id, host)
     remember_profile(hub, "jetkvm_endpoints", jetkvm_id, payload)
+    _apply_tags(hub, "jetkvm_endpoints", jetkvm_id, payload)
     return public_jetkvm(_row(hub, "jetkvm", jetkvm_id))
 
 
@@ -546,6 +570,7 @@ def add_plug(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
     _link(hub, fields["device_id"], {"kind": "plug", "plug_id": item_id})
     bind_identity(hub, "plug", item_id, fields["host"])
     remember_profile(hub, "plugs", item_id, payload)
+    _apply_tags(hub, "plugs", item_id, payload)
     return public_plug(_row(hub, "plug", item_id))
 
 
@@ -580,6 +605,7 @@ def update_plug(hub: Hub, plug_id: int, payload: dict[str, Any]) -> dict[str, An
     )
     bind_identity(hub, "plug", plug_id, host)
     remember_profile(hub, "plugs", plug_id, payload)
+    _apply_tags(hub, "plugs", plug_id, payload)
     return public_plug(_row(hub, "plug", plug_id))
 
 
@@ -657,6 +683,7 @@ def add_ups(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
     _link(hub, fields["device_id"], {"kind": "ups", "ups_id": item_id})
     bind_identity(hub, "ups", item_id, fields["host"])
     remember_profile(hub, "ups_cards", item_id, payload)
+    _apply_tags(hub, "ups_cards", item_id, payload)
     return public_ups(_row(hub, "ups", item_id))
 
 
@@ -692,6 +719,7 @@ def update_ups(hub: Hub, ups_id: int, payload: dict[str, Any]) -> dict[str, Any]
     )
     bind_identity(hub, "ups", ups_id, host)
     remember_profile(hub, "ups_cards", ups_id, payload)
+    _apply_tags(hub, "ups_cards", ups_id, payload)
     return public_ups(_row(hub, "ups", ups_id))
 
 
@@ -728,6 +756,78 @@ def ups_client(hub: Hub, ups_id: int) -> tuple[Any, UpsClient]:
         _plain(hub, row["v3_priv_enc"]),
     )
     return row, UpsClient(transport)
+
+
+def public_roku(row) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "host": row["host"],
+        "port": row["port"],
+        "device_id": row["device_id"],
+        "tags": _stored_tags(row),
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def list_rokus(hub: Hub) -> list[dict[str, Any]]:
+    return [public_roku(row) for row in hub.query("SELECT * FROM rokus ORDER BY name COLLATE NOCASE")]
+
+
+def add_roku(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
+    fields = _stamp(
+        {
+            "name": _require_name(payload),
+            "host": _require_host(payload),
+            "port": int(payload.get("port") or 8060),
+            "device_id": payload.get("device_id"),
+            "tags": json.dumps(normalize_tags(payload.get("tags"))),
+        }
+    )
+    assert_available(hub, "roku", fields["host"])
+    item_id = hub.write(
+        """
+        INSERT INTO rokus (name, host, port, device_id, tags, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (fields["name"], fields["host"], fields["port"], fields["device_id"], fields["tags"], fields["created_at"], fields["updated_at"]),
+    )
+    _link(hub, fields["device_id"], {"kind": "roku", "roku_id": item_id})
+    bind_identity(hub, "roku", item_id, fields["host"])
+    return public_roku(_row(hub, "roku", item_id))
+
+
+def update_roku(hub: Hub, roku_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    current = _row(hub, "roku", roku_id)
+    host = _updated_host(payload, current)
+    assert_available(hub, "roku", host, exclude_id=roku_id)
+    hub.write(
+        """
+        UPDATE rokus SET name=?, host=?, port=?, device_id=?, updated_at=? WHERE id=?
+        """,
+        (
+            payload.get("name") or current["name"],
+            host,
+            int(payload.get("port") if payload.get("port") is not None else current["port"]),
+            payload["device_id"] if "device_id" in payload else current["device_id"],
+            utcnow(),
+            roku_id,
+        ),
+    )
+    _apply_tags(hub, "rokus", roku_id, payload)
+    bind_identity(hub, "roku", roku_id, host)
+    return public_roku(_row(hub, "roku", roku_id))
+
+
+def remove_roku(hub: Hub, roku_id: int) -> None:
+    _row(hub, "roku", roku_id)
+    hub.write("DELETE FROM rokus WHERE id = ?", (roku_id,))
+
+
+def roku_client(hub: Hub, roku_id: int) -> tuple[Any, RokuClient]:
+    row = _row(hub, "roku", roku_id)
+    return row, RokuClient(row["host"], port=row["port"])
 
 
 def _link(hub: Hub, device_id: int | None, method: dict[str, Any]) -> None:

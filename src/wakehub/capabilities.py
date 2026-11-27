@@ -86,6 +86,14 @@ CAPABILITIES: tuple[Capability, ...] = (
     Capability("add_from_scan", "Add a discovered host", "POST", "/api/v1/scans/{scan_id}/hosts/{host_id}/add", "add_from_scan"),
     Capability("device_metrics", "Read electrical history for a device", "GET", "/api/v1/devices/{device_id}/metrics", "device_metrics"),
     Capability("list_metrics", "Read stored electrical samples", "GET", "/api/v1/metrics", "list_metrics"),
+    Capability("list_rokus", "List Roku devices", "GET", "/api/v1/rokus", "list_rokus"),
+    Capability("add_roku", "Add a Roku", "POST", "/api/v1/rokus", "add_roku"),
+    Capability("update_roku", "Edit a Roku", "PATCH", "/api/v1/rokus/{roku_id}", "update_roku"),
+    Capability("remove_roku", "Remove a Roku", "DELETE", "/api/v1/rokus/{roku_id}", "remove_roku"),
+    Capability("roku_status", "Read Roku power mode, model and name", "GET", "/api/v1/rokus/{roku_id}/status", "roku_status"),
+    Capability("roku_power", "Send a Roku power key", "POST", "/api/v1/rokus/{roku_id}/power", "roku_power"),
+    Capability("list_tags", "List tags used on devices and hardware", "GET", "/api/v1/tags", "list_tags"),
+    Capability("tag_action", "Wake or power records that share tags", "POST", "/api/v1/tags/action", "tag_action"),
 )
 
 

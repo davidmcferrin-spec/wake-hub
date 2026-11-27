@@ -8,6 +8,7 @@ from wakehub.clients.amt import AmtClient
 from wakehub.clients.jetkvm import JetKvmClient
 from wakehub.clients.kasa import KasaClient
 from wakehub.clients.shelly import ShellyClient
+from wakehub.clients.roku import RokuClient
 from wakehub.clients.synaccess import SynaccessClient
 from wakehub.clients.ups import PysnmpTransport, UpsClient
 from wakehub.credentials import profile_login
@@ -32,7 +33,9 @@ def test_target(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
             return _jetkvm(hub, payload)
         if kind == "ups":
             return _ups(hub, payload)
-        raise WakeHubError("kind must be wol, amt, pdu, plug, jetkvm, or ups")
+        if kind == "roku":
+            return _roku(payload)
+        raise WakeHubError("kind must be wol, amt, pdu, plug, jetkvm, ups, or roku")
     except WakeHubError as exc:
         return {"ok": False, "kind": kind, "sent": False, "message": exc.message}
 
@@ -156,3 +159,21 @@ def _ups(hub: Hub, payload: dict[str, Any]) -> dict[str, Any]:
     client = UpsClient(transport)
     status = client.status()
     return {"ok": True, "kind": "ups", "sent": False, "message": f"UPS answered, output {status.get('output_status') or 'unknown'}."}
+
+
+def _roku(payload: dict[str, Any]) -> dict[str, Any]:
+    client = RokuClient(validate_host(str(payload.get("host") or "")), port=int(payload.get("port") or 8060))
+    try:
+        info = client.device_info()
+    finally:
+        client.close()
+    name = info.get("name") or "Roku"
+    model = info.get("model") or "unknown model"
+    mode = info.get("power_mode") or "unknown"
+    return {
+        "ok": True,
+        "kind": "roku",
+        "sent": False,
+        "message": f"{name} ({model}) is {mode}. Control by mobile apps must be enabled. Some models need network standby to power back on.",
+        "detail": info,
+    }

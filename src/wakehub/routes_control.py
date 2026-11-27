@@ -11,11 +11,13 @@ from wakehub.endpoints import (
     add_jetkvm,
     add_pdu,
     add_plug,
+    add_roku,
     add_ups,
     list_amt,
     list_jetkvm,
     list_pdus,
     list_plugs,
+    list_rokus,
     list_ups,
     public_jetkvm,
     remove_amt,
@@ -23,11 +25,13 @@ from wakehub.endpoints import (
     refresh_pdu_outlet_names,
     remove_pdu,
     remove_plug,
+    remove_roku,
     remove_ups,
     update_amt,
     update_jetkvm,
     update_pdu,
     update_plug,
+    update_roku,
     update_ups,
 )
 from wakehub.hub import get_hub
@@ -40,10 +44,14 @@ from wakehub.power import (
     list_pdu_outlets,
     plug_power,
     plug_status,
+    roku_power,
+    roku_status,
     set_pdu_outlet,
+    tag_action,
     ups_action,
     ups_status,
 )
+from wakehub.tags import list_tags
 from wakehub.scan import add_from_scan, get_scan, list_scans, start_scan
 from fastapi import Request
 
@@ -58,6 +66,7 @@ class PduIn(BaseModel):
     password: str | None = None
     outlet_names: dict[str, str] | None = None
     credential_profile_id: int | None = None
+    tags: list[str] | None = None
 
 
 class PduPatch(BaseModel):
@@ -70,6 +79,7 @@ class PduPatch(BaseModel):
     password: str | None = None
     outlet_names: dict[str, str] | None = None
     credential_profile_id: int | None = None
+    tags: list[str] | None = None
 
 
 class OutletIn(BaseModel):
@@ -87,6 +97,7 @@ class AmtIn(BaseModel):
     password: str
     device_id: int | None = None
     credential_profile_id: int | None = None
+    tags: list[str] | None = None
 
 
 class AmtPatch(BaseModel):
@@ -99,6 +110,7 @@ class AmtPatch(BaseModel):
     password: str | None = None
     device_id: int | None = None
     credential_profile_id: int | None = None
+    tags: list[str] | None = None
 
 
 class JetIn(BaseModel):
@@ -113,6 +125,7 @@ class JetIn(BaseModel):
     poll_metrics: bool = False
     device_id: int | None = None
     credential_profile_id: int | None = None
+    tags: list[str] | None = None
 
 
 class JetPatch(BaseModel):
@@ -127,6 +140,7 @@ class JetPatch(BaseModel):
     poll_metrics: bool | None = None
     device_id: int | None = None
     credential_profile_id: int | None = None
+    tags: list[str] | None = None
 
 
 class JetPowerIn(BaseModel):
@@ -147,6 +161,7 @@ class PlugIn(BaseModel):
     switch_id: int = 0
     device_id: int | None = None
     credential_profile_id: int | None = None
+    tags: list[str] | None = None
 
 
 class PlugPatch(BaseModel):
@@ -161,6 +176,7 @@ class PlugPatch(BaseModel):
     switch_id: int | None = None
     device_id: int | None = None
     credential_profile_id: int | None = None
+    tags: list[str] | None = None
 
 
 class PlugPowerIn(BaseModel):
@@ -182,6 +198,7 @@ class UpsIn(BaseModel):
     v3_priv: str | None = None
     device_id: int | None = None
     credential_profile_id: int | None = None
+    tags: list[str] | None = None
 
 
 class UpsPatch(BaseModel):
@@ -197,6 +214,7 @@ class UpsPatch(BaseModel):
     v3_priv: str | None = None
     device_id: int | None = None
     credential_profile_id: int | None = None
+    tags: list[str] | None = None
 
 
 class UpsActionIn(BaseModel):
@@ -204,6 +222,33 @@ class UpsActionIn(BaseModel):
     confirm: bool = False
     delay_seconds: int | None = None
     outlet: int | None = None
+
+
+class RokuIn(BaseModel):
+    name: str
+    host: str
+    port: int = 8060
+    device_id: int | None = None
+    tags: list[str] | None = None
+
+
+class RokuPatch(BaseModel):
+    name: str | None = None
+    host: str | None = None
+    port: int | None = None
+    device_id: int | None = None
+    tags: list[str] | None = None
+
+
+class RokuPowerIn(BaseModel):
+    action: str
+    confirm: bool = False
+
+
+class TagActionIn(BaseModel):
+    tags: list[str]
+    action: str
+    confirm: bool = False
 
 
 class ScanIn(BaseModel):
@@ -414,6 +459,41 @@ def control_router() -> APIRouter:
             delay_seconds=body.delay_seconds,
             outlet=body.outlet,
         )
+
+    @router.get("/rokus", tags=["roku"])
+    def rokus() -> list[dict[str, Any]]:
+        return list_rokus(get_hub())
+
+    @router.post("/rokus", tags=["roku"], status_code=201)
+    def create_roku(body: RokuIn) -> dict[str, Any]:
+        return add_roku(get_hub(), body.model_dump())
+
+    @router.patch("/rokus/{roku_id}", tags=["roku"])
+    def patch_roku(roku_id: int, body: RokuPatch) -> dict[str, Any]:
+        return update_roku(get_hub(), roku_id, body.model_dump(exclude_unset=True))
+
+    @router.delete("/rokus/{roku_id}", tags=["roku"], status_code=204)
+    def delete_roku(roku_id: int):
+        remove_roku(get_hub(), roku_id)
+        from fastapi import Response
+
+        return Response(status_code=204)
+
+    @router.get("/rokus/{roku_id}/status", tags=["roku"])
+    def read_roku(roku_id: int) -> dict[str, Any]:
+        return roku_status(get_hub(), roku_id)
+
+    @router.post("/rokus/{roku_id}/power", tags=["roku"])
+    def roku_key(roku_id: int, body: RokuPowerIn, request: Request) -> dict[str, Any]:
+        return roku_power(get_hub(), roku_id, body.action, confirm=body.confirm, source=request_source(request))
+
+    @router.get("/tags", tags=["tags"])
+    def tags() -> list[str]:
+        return list_tags(get_hub())
+
+    @router.post("/tags/action", tags=["tags"])
+    def tags_action(body: TagActionIn, request: Request) -> dict[str, Any]:
+        return tag_action(get_hub(), body.tags, body.action, confirm=body.confirm, source=request_source(request))
 
     @router.get("/interfaces", tags=["scan"])
     def interfaces() -> list[dict[str, Any]]:
