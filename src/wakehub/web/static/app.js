@@ -996,7 +996,8 @@ async function show(page, slug) {
   }
   const active = document.activeElement;
   const typing = active && active.closest && active.closest("#view input, #view textarea, #view select");
-  if (!document.querySelector("form.hardware-edit") && !typing) render();
+  const addOpen = document.querySelector("form.hardware-form:not(.hidden)");
+  if (!document.querySelector("form.hardware-edit") && !typing && !addOpen) render();
 }
 
 function formData(form) {
