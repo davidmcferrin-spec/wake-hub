@@ -332,6 +332,32 @@ def test_np1601_pages_and_status_xml(monkeypatch, caplog):
     assert caplog.text.count("raw-a5-body") == 1
 
 
+def test_unknown_relay_and_xml_names_and_default_page_stops(monkeypatch):
+    from wakehub.clients.synaccess import parse_status_xml
+
+    monkeypatch.undo()
+    body = "<response><rly0>1</rly0><rly1>x</rly1><rly2>0</rly2></response>"
+    parsed = parse_status_xml(body)
+    assert [item.on for item in parsed.outlets] == [True, None, False]
+    assert parse_outlet_names('<input type="text" name="ON0" value="A &amp; B">') == {1: "A & B"}
+    seen = []
+
+    def handler(request):
+        seen.append(request.url.path)
+        inputs = "".join(
+            f'<input type="text" name="ON{index}" value="Outlet{index + 1}">' for index in range(16)
+        )
+        if request.url.path == "/pwr.htm":
+            return httpx.Response(200, text=f"<form>{inputs}</form>")
+        return httpx.Response(200, text="should not be fetched")
+
+    client = SynaccessClient("192.168.0.12", "admin", "secret", http=httpx.Client(transport=httpx.MockTransport(handler)))
+    assert client.read_outlet_names() == {}
+    assert client.outlet_count == 16
+    assert seen == ["/pwr.htm"]
+    client.close()
+
+
 def test_diagnostics_redact_every_form_of_the_password():
     import base64
     import html

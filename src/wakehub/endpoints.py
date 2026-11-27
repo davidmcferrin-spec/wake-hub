@@ -302,7 +302,7 @@ def outlet_labels(row) -> dict[int, str]:
     return merged
 
 
-def sync_pdu_outlets(hub: Hub, pdu_id: int, count: int, names: dict[int, str]) -> None:
+def sync_pdu_outlets(hub: Hub, pdu_id: int, count: int, names: dict[int, str], *, apply_device: bool = True) -> None:
     current = {row["number"]: row for row in hub.query("SELECT * FROM pdu_outlets WHERE pdu_id = ?", (pdu_id,))}
     row = _row(hub, "pdu", pdu_id)
     user = {}
@@ -320,12 +320,14 @@ def sync_pdu_outlets(hub: Hub, pdu_id: int, count: int, names: dict[int, str]) -
             kept = existing["name"]
         if number in user:
             chosen = user[number]
+        elif not apply_device and kept:
+            chosen = kept
         elif kept and kept not in {"", f"Outlet {number}", previous.get(number, "")}:
             # A name typed in Wake Hub stays when the PDU is read again.
             chosen = kept
         elif device_name:
             chosen = device_name
-        elif kept:
+        elif kept and kept != previous.get(number, ""):
             chosen = kept
         else:
             chosen = f"Outlet {number}"
@@ -373,12 +375,14 @@ def refresh_pdu_outlet_names(hub: Hub, pdu_id: int, *, timeout: float | None = N
     names: dict[int, str] = {}
     count = 0
     names_error = ""
+    read_ok = True
     try:
         try:
             names = client.read_outlet_names()
         except UpstreamError as exc:
             names_error = str(exc)
             names = {}
+            read_ok = False
         count = int(getattr(client, "outlet_count", 0) or 0)
         if not count:
             try:
@@ -394,7 +398,7 @@ def refresh_pdu_outlet_names(hub: Hub, pdu_id: int, *, timeout: float | None = N
         raise UpstreamError(message)
     # Sync while device_outlet_names is still the previous read, so a name
     # the user changed is not treated as the device's last name.
-    sync_pdu_outlets(hub, pdu_id, count or (max(names) if names else 0), names)
+    sync_pdu_outlets(hub, pdu_id, count or (max(names) if names else 0), names, apply_device=read_ok)
     current = _row(hub, "pdu", pdu_id)
     if names:
         stored = {str(number): label for number, label in sorted(names.items())}

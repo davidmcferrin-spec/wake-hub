@@ -254,6 +254,38 @@ def test_outlet_status_does_not_read_names_or_rewrite_a_repeat_failure(client, h
     assert "/outlets.htm" in body
 
 
+def test_a_reverted_device_name_does_not_keep_the_old_learned_name(client, hub, monkeypatch):
+    from wakehub.clients.synaccess import parse_status
+
+    def names(self):
+        self.outlet_count = 2
+        return {1: "Home PC"}
+
+    def status(self, labels=None):
+        return parse_status("11,0.2,22", labels)
+
+    monkeypatch.setattr("wakehub.clients.synaccess.SynaccessClient.read_outlet_names", names)
+    monkeypatch.setattr("wakehub.clients.synaccess.SynaccessClient.status", status)
+    created = client.post("/api/v1/pdus", json={"name": "Rack", "host": "10.8.0.18"})
+    assert created.status_code == 201, created.text
+    pdu_id = created.json()["id"]
+    assert created.json()["outlets"][0]["name"] == "Home PC"
+
+    def reverted(self):
+        self.outlet_count = 2
+        return {}
+
+    monkeypatch.setattr("wakehub.clients.synaccess.SynaccessClient.read_outlet_names", reverted)
+    hub.write(
+        "UPDATE pdus SET device_outlet_names = ? WHERE id = ?",
+        ('{"1": "Home PC"}', pdu_id),
+    )
+    refreshed = client.post(f"/api/v1/pdus/{pdu_id}/outlet-names")
+    assert refreshed.status_code == 200, refreshed.text
+    names_now = {item["number"]: item["name"] for item in refreshed.json()["outlets"]}
+    assert names_now[1] == "Outlet 1"
+
+
 def test_name_refresh_does_not_also_read_status_when_the_page_lists_every_outlet(client, monkeypatch):
     calls = []
 

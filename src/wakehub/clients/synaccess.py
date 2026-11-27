@@ -25,7 +25,7 @@ log = logging.getLogger("wakehub.synaccess")
 @dataclass(frozen=True)
 class Outlet:
     number: int
-    on: bool
+    on: bool | None
     name: str
 
 
@@ -104,15 +104,18 @@ def parse_status(body: str, names: dict[int, str] | None = None) -> PduStatus:
 
 def parse_status_xml(body: str, names: dict[int, str] | None = None, outlet_count: int | None = None) -> PduStatus:
     # rly0 is outlet 1. rly16 is an extra relay on the NP-1601DU, not a 17th outlet.
-    relays: dict[int, bool] = {}
+    relays: dict[int, bool | None] = {}
     for match in re.finditer(r"<rly(\d+)>([^<]*)</rly\1>", body or "", re.IGNORECASE):
         index = int(match.group(1))
         if index >= 16:
             continue
-        value = match.group(2).strip()
-        if value not in {"0", "1"}:
-            continue
-        relays[index] = value == "1"
+        value = html.unescape(match.group(2)).strip()
+        if value == "1":
+            relays[index] = True
+        elif value == "0":
+            relays[index] = False
+        else:
+            relays[index] = None
     if not relays:
         raise UpstreamError("status.xml did not include outlet relays")
     limit = outlet_count if outlet_count else max(relays) + 1
@@ -145,7 +148,7 @@ def parse_status_xml(body: str, names: dict[int, str] | None = None, outlet_coun
 
 def _xml_text(body: str, tag: str) -> str:
     match = re.search(rf"<{tag}>([^<]*)</{tag}>", body or "", re.IGNORECASE)
-    return match.group(1).strip() if match else ""
+    return html.unescape(match.group(1)).strip() if match else ""
 
 
 def _temperature_text(raw: str) -> tuple[str, float | None]:
@@ -607,7 +610,8 @@ class SynaccessClient:
             names, span = collect_outlet_names(body) if response.status_code < 400 else ({}, 0)
             if span:
                 self.outlet_count = max(self.outlet_count, span)
-            if names:
+            # A page that lists outlets, even with only Outlet4-style defaults, is the answer.
+            if names or span:
                 return names
         chosen = first_useful or first_page
         self._log_name_miss(origin, chosen)

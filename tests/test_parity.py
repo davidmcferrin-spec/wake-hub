@@ -98,6 +98,17 @@ def test_every_capability_is_on_the_api_mcp_and_ui(client):
     assert missing == []
 
 
+def test_every_ui_button_is_a_capability(client):
+    pieces = []
+    for path in sorted(STATIC.iterdir()):
+        if path.suffix == ".js":
+            pieces.append(path.read_text())
+    controls = _ui_controls("\n".join(pieces))
+    known = {item.id for item in CAPABILITIES}
+    extra = sorted(set(controls) - known)
+    assert extra == [], extra
+
+
 def test_every_api_operation_is_a_capability(client):
     schema = client.get("/openapi.json").json()
     covered = {(cap.method.lower(), cap.path) for cap in CAPABILITIES}
